@@ -1,0 +1,9 @@
+CompilerFlags:
+  Add: [
+    -xcuda,
+    -arch=sm_86,
+    -I/usr/local/cuda-12.0/include,
+    --cuda-path=/usr/local/cuda-12.0,
+    --query-driver=/usr/local/cuda-12.0/bin/nvcc,
+    -Iinclude
+  ]
