@@ -11,6 +11,9 @@
 #define RL 30.0   // density range (RC +- RL/2)
 // interaction potential
 #define kernelN 31 // kernel size
+#define nu_interaction -8.6565e-14
+#define mu_interaction -1.3670e-20
+
 // degenerate diffusion flux
 #define mDeg 500
 #define jDegDiffPhi0(i) (pow(1.0 - phi[i], mDeg))

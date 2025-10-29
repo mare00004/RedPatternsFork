@@ -10,6 +10,22 @@
     -> downsampling (DSmp)
     -> iteration (Iter)
 */
+
+__global__ void CuKernelTayl(double *psi, double *I) {
+    // get indices
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    // compute convolution integral
+    if ((i >= 8) & (i <= N - 1 - 8))
+        I[i] =
+            nu_interaction *
+                (-psi[i + 2] + 8 * psi[i + 1] + psi[i - 2] - 8 * psi[i - 1]) /
+                (12 * c_IZ) +
+            mu_interaction *
+                (psi[i + 2] - 2 * psi[i + 1] + 2 * psi[i - 1] - psi[i - 2]) /
+                (2 * pow(c_IZ, 3));
+    __syncthreads();
+}
+
 /* phi density integration kernel */
 __global__ void CuKernelInte(double *phi, double *psi) {
     // get indices
