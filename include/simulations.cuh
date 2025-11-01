@@ -1,9 +1,8 @@
-#include "constants.cuh"
 #include "cuda_kernel.cuh"
 #include "cuda_kernel_linear.cuh"
 #include "cuda_utils.cuh"
-#include "definitions.h"
 #include "file.h"
+#include "parameters.cuh"
 #include <stdio.h>
 
 /* kernel function */

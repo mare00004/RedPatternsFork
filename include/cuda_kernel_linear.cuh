@@ -1,5 +1,4 @@
-#include "constants.cuh"
-#include "definitions.h"
+#include "parameters.cuh"
 
 /* Linear Percoll gradient kernel */
 #define PL 8.0

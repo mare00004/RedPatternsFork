@@ -1,5 +1,4 @@
-#include "constants.cuh"
-#include "definitions.h"
+#include "parameters.cuh"
 #include <assert.h>
 #include <cmath>
 #include <fstream>

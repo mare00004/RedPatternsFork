@@ -1,5 +1,4 @@
-#include "constants.cuh"
-#include "definitions.h"
+#include "parameters.cuh"
 
 /* sigmoid parameters */
 #define b2 3.1773e-4

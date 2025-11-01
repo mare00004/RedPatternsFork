@@ -1,5 +1,4 @@
-#include "constants.cuh"
-#include "definitions.h"
+#include "parameters.cuh"
 
 /*
     This contains main CUDA kernels.
