@@ -1,4 +1,4 @@
-#include "constants.cuh"
+#include "parameters.cuh"
 #include <cmath>
 #include <string>
 

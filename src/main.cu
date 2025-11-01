@@ -1,5 +1,5 @@
+#include "cli_arguments_parser.cuh"
 #include "cuda_utils.cuh"
-#include "parameters.cuh"
 #include "simulations.cuh"
 #include <stdio.h>
 
