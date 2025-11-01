@@ -1,3 +1,4 @@
+#include "config.h";
 #include "cuda_kernel.cuh"
 #include "cuda_kernel_linear.cuh"
 #include "cuda_utils.cuh"
@@ -80,7 +81,7 @@ void initPhi(double *f, double *R) {
 }
 
 /* running simulation */
-void runSim() {
+void runSim(SimConfig *cfg) {
     // allocate space for output filename
     char outFileName[19];
     // constants to device memory

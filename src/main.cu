@@ -1,10 +1,13 @@
 #include "cli_arguments_parser.cuh"
+#include "config.h";
 #include "cuda_utils.cuh"
 #include "simulations.cuh"
 #include <stdio.h>
 
 // main function
 int main(int argc, char *argv[]) {
+    SimConfig cfg;
+    setDefaults(&cfg);
     // detect cuda device
     cudaDeviceProp prop;
     checkCuda(cudaGetDeviceProperties(&prop, 0));
@@ -15,6 +18,6 @@ int main(int argc, char *argv[]) {
     // read parameter arguments from command line
     readParameters(argc, argv);
     // run simulation
-    runSim();
+    runSim(&cfg);
     return 0;
 }
