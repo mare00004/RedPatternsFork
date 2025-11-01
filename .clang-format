@@ -1,9 +1,15 @@
 BasedOnStyle: LLVM
+IndentWidth: 4
+ContinuationIndentWidth: 4
+UseTab: Never
+TabWidth: 4
 BreakBeforeBraces: Attach
+AlignAfterOpenBracket: DontAlign
+
+# Keep braced init-lists vertical & respect your manual newlines.
 BinPackArguments: false
 BinPackParameters: false
+AllowAllArgumentsOnNextLine: false
 AllowAllParametersOfDeclarationOnNextLine: false
-IndentWidth: 4
-TabWidth: 4
-UseTab: Never
-AlignAfterOpenBracket: BlockIndent
+Cpp11BracedListStyle: false
+ColumnLimit: 0
