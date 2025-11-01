@@ -1,25 +1,25 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 #include "parameters.cuh"
+#include <stdio.h>
 
 // Tagged Union for Simulation Configuration.
 
-typedef enum { CONV = 0, TAYL = 1 } ModelType;
+typedef enum {
+    CONV = 0,
+    TAYL = 1
+} ModelType;
 
 typedef struct {
     int N;
     double T;
     double DT;
     int NO;
-    double U;
-    double PSI;
-    double gamma;
-    double delta;
-    double kappa;
     char outDir[256];
 } RunParams;
 
 typedef struct {
+    unsigned char _unused;
 } ConvParams;
 
 typedef struct {
@@ -27,32 +27,34 @@ typedef struct {
     double MU;
 } TaylParams;
 
-typedef union {
-    ConvParams Conv;
-    TaylParams Tayl;
+typedef struct {
+    ModelType modelType;
+    double U;
+    double PSI;
+    double gamma;
+    double delta;
+    double kappa;
+    union {
+        ConvParams Conv;
+        TaylParams Tayl;
+    } u;
 } ModelParams;
 
 typedef struct {
-    ModelType modelType;
     RunParams run;
     ModelParams model;
 } SimConfig;
 
 /* API */
-int setDefaults(SimConfig *c) {
-    c->modelType = CONV;
-    c->run.N = N;
-    c->run.T = T;
-    c->run.DT = IT;
-    c->run.NO = NO;
-    c->run.U = U;
-    c->run.PSI = PSI;
-    c->run.gamma = h_gamma;
-    c->run.delta = h_delta;
-    c->run.kappa = h_kappa;
-    strcpy(c->run.outDir, "./");
-
-    return 0;
+void setDefaults(SimConfig *c) {
+    *c = (SimConfig){ .run = { .N = N, .T = T, .DT = IT, .NO = NO },
+        .model = { .modelType = CONV,
+            .U = U,
+            .PSI = PSI,
+            .gamma = h_gamma,
+            .delta = h_delta,
+            .kappa = h_kappa } };
+    sprintf(c->run.outDir, "./");
 }
 
 int loadTOMLConfig(const char *path, SimConfig *c);

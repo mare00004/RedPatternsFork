@@ -1,9 +1,16 @@
-CompilerFlags:
+If:
+  PathMatch: [".*\\.(cu|cuh)$"]
+CompileFlags:
   Add: [
     -xcuda,
-    -arch=sm_86,
-    -I/usr/local/cuda-12.0/include,
+    --cuda-gpu-arch=sm_86,
     --cuda-path=/usr/local/cuda-12.0,
-    --query-driver=/usr/local/cuda-12.0/bin/nvcc,
-    -Iinclude
+    -I/usr/local/cuda-12.0/include,
+    -Iinclude,
+    -Ithird_party/argtable3
   ]
+
+If:
+  PathMatch: [".*\\.(c|h)$"]
+CompileFlags:
+  Add: ["-xc", -Iinclude, -Ithird_party/argtable3]
