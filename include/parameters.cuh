@@ -9,7 +9,7 @@
 // time iteration parameters
 double T = 1200.0;     // [s] total simulation time
 double IT = 0.005;     // [s] time increment
-double NO = 1000;      // [steps] output interval
+int NO = 1000;         // [steps] output interval
 int NT = ceil(T / IT); // number of time steps
 
 const int N = 256; // grid size (N x N)
