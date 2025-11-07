@@ -1,16 +1,24 @@
-If:
-  PathMatch: [".*\\.(cu|cuh)$"]
+# Common flags for everything (optional)
 CompileFlags:
-  Add: [
-    -xcuda,
-    --cuda-gpu-arch=sm_86,
-    --cuda-path=/usr/local/cuda-12.0,
-    -I/usr/local/cuda-12.0/include,
-    -Iinclude,
-    -Ithird_party/argtable3
-  ]
+  Add: [-Iinclude, -Ithird_party/argtable3]
+---
+If:
+  PathMatch: '.*\.(c|h)$'
+CompileFlags:
+  Add: [-xc, -I/home/max/Uni/HDF5/build/HDF_Group/HDF5/2.0.1/include]
+---
+If:
+  PathMatch: '.*\.(cpp|cc|cxx|hpp|hh|hxx)$'
+CompileFlags:
+  Add: [-xc++, -I/home/max/Uni/HDF5/build/HDF_Group/HDF5/2.0.1/include]
+---
+If:
+  PathMatch: '.*\.(cu|cuh)$'
+CompileFlags:
+  Add:
+    - -xcuda
+    - --cuda-gpu-arch=sm_86
+    - --cuda-path=/usr/local/cuda-12.0
+    - -I/usr/local/cuda-12.0/include
+    - -I/home/max/Uni/HDF5/build/HDF_Group/HDF5/2.0.1/include
 
-If:
-  PathMatch: [".*\\.(c|h)$"]
-CompileFlags:
-  Add: ["-xc", -Iinclude, -Ithird_party/argtable3]
