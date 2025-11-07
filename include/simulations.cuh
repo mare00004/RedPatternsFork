@@ -3,6 +3,7 @@
 #include "cuda_kernel_linear.cuh"
 #include "cuda_utils.cuh"
 #include "file.h"
+#include "hdf5_file.h"
 #include "parameters.cuh"
 #include <stdio.h>
 
@@ -82,6 +83,8 @@ void initPhi(double *f, double *R) {
 
 /* running simulation */
 void runSim(SimConfig *cfg) {
+    TSWriter w;
+    ts_open(&w, "test.h5", (hsize_t)cfg->run.N);
     // allocate space for output filename
     char outFileName[19];
     // constants to device memory
@@ -125,6 +128,7 @@ void runSim(SimConfig *cfg) {
         sizeof(double),
         0,
         cudaMemcpyHostToDevice));
+
     // coordinates
     printf("writing coordinate arrays to GPU mem.\n");
     double *R = new double[N]; // density dimension vector
@@ -295,6 +299,12 @@ void runSim(SimConfig *cfg) {
         nBlocksY,
         nThreadsY);
     checkCuda(cudaEventRecord(startEvent, 0));
+
+    /**************************************************************/
+    ts_writeR(&w, R);
+    // ts_writeZ(&w, Z);
+    /**************************************************************/
+
     // iteration loop
     int n_out = NO;
     double t = 0.0;
@@ -367,6 +377,10 @@ void runSim(SimConfig *cfg) {
             sprintf(outFileName, "gP_%010d.dat", i);
             saveVecToDrive(percoll, outFileName);
 
+            /**************************************/
+            ts_append(&w, t, phi);
+            /**************************************/
+
             /* optional output
             sprintf(outFileName,"J_%010d.dat",i);
             saveArrToDrive(J,outFileName);
@@ -425,4 +439,8 @@ void runSim(SimConfig *cfg) {
     delete[] dJ;
     delete[] J;
     delete[] I;
+
+    /****************************/
+    ts_close(&w);
+    /****************************/
 }
