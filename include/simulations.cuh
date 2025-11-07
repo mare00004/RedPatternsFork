@@ -1,4 +1,4 @@
-#include "config.h";
+#include "config.h"
 #include "cuda_kernel.cuh"
 #include "cuda_kernel_linear.cuh"
 #include "cuda_utils.cuh"
@@ -7,7 +7,7 @@
 #include <stdio.h>
 
 /* kernel function */
-#define fLJ(r, sigma)                                                          \
+#define fLJ(r, sigma) \
     (4 * U * (12 * pow(sigma, 12) / pow(r, 13) - 6 * pow(sigma, 6) / pow(r, 7)))
 #define g(r, d, sigmaC) (4e7 * exp(-pow(r - d, 2) / (2 * pow(sigmaC, 2))))
 void genConvKernel() {
@@ -86,29 +86,45 @@ void runSim(SimConfig *cfg) {
     char outFileName[19];
     // constants to device memory
     checkCuda(
-        cudaMemcpyToSymbol(c_IZ, &IZ, sizeof(double), 0, cudaMemcpyHostToDevice)
-    );
+        cudaMemcpyToSymbol(c_IZ, &IZ, sizeof(double), 0, cudaMemcpyHostToDevice));
     checkCuda(
-        cudaMemcpyToSymbol(c_IT, &IT, sizeof(double), 0, cudaMemcpyHostToDevice)
-    );
+        cudaMemcpyToSymbol(c_IT, &IT, sizeof(double), 0, cudaMemcpyHostToDevice));
     checkCuda(cudaMemcpyToSymbol(
-        c_PSI, &PSI, sizeof(double), 0, cudaMemcpyHostToDevice
-    ));
+        c_PSI,
+        &PSI,
+        sizeof(double),
+        0,
+        cudaMemcpyHostToDevice));
     checkCuda(cudaMemcpyToSymbol(
-        c_beta, &h_beta, sizeof(double), 0, cudaMemcpyHostToDevice
-    ));
+        c_beta,
+        &h_beta,
+        sizeof(double),
+        0,
+        cudaMemcpyHostToDevice));
     checkCuda(cudaMemcpyToSymbol(
-        c_alpha, &h_alpha, sizeof(double), 0, cudaMemcpyHostToDevice
-    ));
+        c_alpha,
+        &h_alpha,
+        sizeof(double),
+        0,
+        cudaMemcpyHostToDevice));
     checkCuda(cudaMemcpyToSymbol(
-        c_gamma, &h_gamma, sizeof(double), 0, cudaMemcpyHostToDevice
-    ));
+        c_gamma,
+        &h_gamma,
+        sizeof(double),
+        0,
+        cudaMemcpyHostToDevice));
     checkCuda(cudaMemcpyToSymbol(
-        c_delta, &h_delta, sizeof(double), 0, cudaMemcpyHostToDevice
-    ));
+        c_delta,
+        &h_delta,
+        sizeof(double),
+        0,
+        cudaMemcpyHostToDevice));
     checkCuda(cudaMemcpyToSymbol(
-        c_kappa, &h_kappa, sizeof(double), 0, cudaMemcpyHostToDevice
-    ));
+        c_kappa,
+        &h_kappa,
+        sizeof(double),
+        0,
+        cudaMemcpyHostToDevice));
     // coordinates
     printf("writing coordinate arrays to GPU mem.\n");
     double *R = new double[N]; // density dimension vector
@@ -157,8 +173,7 @@ void runSim(SimConfig *cfg) {
     // (2) write initial values
     printf("write intkernel.\n");
     checkCuda(
-        cudaMemcpy(d_intKernel, intKernel, bytes, cudaMemcpyHostToDevice)
-    );
+        cudaMemcpy(d_intKernel, intKernel, bytes, cudaMemcpyHostToDevice));
 
     /* interaction integral */
     double *psi = new double[N]; // for gathering data from device
@@ -269,8 +284,7 @@ void runSim(SimConfig *cfg) {
         "gamma = %.32e\ndelta = %.32e\nkappa = %.32e\n",
         h_gamma,
         h_delta,
-        h_kappa
-    );
+        h_kappa);
     printf("system size L = %.32e m\n", sysL);
     printf("increment size dz = %.32e m\n", IZ);
     printf(
@@ -279,8 +293,7 @@ void runSim(SimConfig *cfg) {
         nBlocksX,
         nThreadsX,
         nBlocksY,
-        nThreadsY
-    );
+        nThreadsY);
     checkCuda(cudaEventRecord(startEvent, 0));
     // iteration loop
     int n_out = NO;
@@ -292,8 +305,9 @@ void runSim(SimConfig *cfg) {
         CuKernelCmpA<<<numBlocksA, threadsPerBlockA>>>(d_psi, d_alp);
         CuKernelCmpL<<<numBlocksA, threadsPerBlockA>>>(d_psi, d_alp, d_psiIntp);
         CuKernelConv<<<numBlocksA, threadsPerBlockA>>>(
-            d_psiIntp, d_IIntp, d_intKernel
-        );
+            d_psiIntp,
+            d_IIntp,
+            d_intKernel);
         CuKernelDSmp<<<numBlocksD, threadsPerBlockD>>>(d_IIntp, d_I);
         /* density gradient */
         CuKernelGrad<<<numBlocks, threadsPerBlock>>>(d_percoll, t);
@@ -309,8 +323,7 @@ void runSim(SimConfig *cfg) {
             d_psi,
             d_intKernel,
             t,
-            d_gradWing
-        );
+            d_gradWing);
         if ((((i - 1) % n_out) == 0) | (i == 1) | (i == NT)) {
             // retrieve data from GPU mem
             bytes = N * N * sizeof(double);
@@ -318,23 +331,27 @@ void runSim(SimConfig *cfg) {
             checkCuda(cudaMemcpy(J, d_J, bytes, cudaMemcpyDeviceToHost));
             checkCuda(cudaMemcpy(dJ, d_dJ, bytes, cudaMemcpyDeviceToHost));
             checkCuda(
-                cudaMemcpy(I, d_I, N * sizeof(double), cudaMemcpyDeviceToHost)
-            );
+                cudaMemcpy(I, d_I, N * sizeof(double), cudaMemcpyDeviceToHost));
             checkCuda(cudaMemcpy(
-                psi, d_psi, N * sizeof(double), cudaMemcpyDeviceToHost
-            ));
+                psi,
+                d_psi,
+                N * sizeof(double),
+                cudaMemcpyDeviceToHost));
             checkCuda(cudaMemcpy(
                 psiIntp,
                 d_psiIntp,
                 N * sizeof(double) * subDiv,
-                cudaMemcpyDeviceToHost
-            ));
+                cudaMemcpyDeviceToHost));
             checkCuda(cudaMemcpy(
-                gradWing, d_gradWing, N * sizeof(double), cudaMemcpyDeviceToHost
-            ));
+                gradWing,
+                d_gradWing,
+                N * sizeof(double),
+                cudaMemcpyDeviceToHost));
             checkCuda(cudaMemcpy(
-                percoll, d_percoll, N * sizeof(double), cudaMemcpyDeviceToHost
-            ));
+                percoll,
+                d_percoll,
+                N * sizeof(double),
+                cudaMemcpyDeviceToHost));
             // checkCuda( cudaMemcpy(IIntp, d_IIntp, N*sizeof(double)*subDiv,
             // cudaMemcpyDeviceToHost) );
             //  write data to file
@@ -367,13 +384,12 @@ void runSim(SimConfig *cfg) {
             checkCuda(cudaEventRecord(stopEvent, 0));
             checkCuda(cudaEventSynchronize(stopEvent));
             checkCuda(
-                cudaEventElapsedTime(&milliseconds, startEvent, stopEvent)
-            );
+                cudaEventElapsedTime(&milliseconds, startEvent, stopEvent));
             printf("step: %d/%d\n", i, NT);
             printf("runtime (sec): %.5f\n", milliseconds / 1000.0);
             printf(
-                "remaining (sec): %.5f\n", milliseconds / 1000.0 * (NT - i) / i
-            );
+                "remaining (sec): %.5f\n",
+                milliseconds / 1000.0 * (NT - i) / i);
         }
         t += IT;
     }
