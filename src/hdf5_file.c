@@ -1,4 +1,5 @@
 #include "hdf5_file.h"
+#include "H5Apublic.h"
 #include "H5Dpublic.h"
 #include "H5Fpublic.h"
 #include "H5Ipublic.h"
@@ -8,6 +9,26 @@
 #include "H5public.h"
 #include <hdf5.h>
 #include <string.h>
+
+void put_u32_attr(hid_t dset, const char *name, unsigned int v) {
+    hid_t space = H5Screate(H5S_SCALAR);
+    hid_t attr = H5Acreate2(dset, name, H5T_STD_U32LE, space, H5P_DEFAULT, H5P_DEFAULT);
+    H5Awrite(attr, H5T_NATIVE_UINT, &v);
+    H5Aclose(attr);
+    H5Sclose(space);
+}
+
+void put_str_attr(hid_t dset, const char *name, const char *s) {
+    hid_t t = H5Tcopy(H5T_C_S1);
+    H5Tset_size(t, strlen(s) + 1);
+    H5Tset_cset(t, H5T_CSET_UTF8);
+    hid_t space = H5Screate(H5S_SCALAR);
+    hid_t attr = H5Acreate2(dset, name, t, space, H5P_DEFAULT, H5P_DEFAULT);
+    H5Awrite(attr, t, s);
+    H5Aclose(attr);
+    H5Sclose(space);
+    H5Tclose(t);
+}
 
 int ts_open(TSWriter *w, const char *path, hsize_t N) {
     herr_t status;
@@ -37,6 +58,9 @@ int ts_open(TSWriter *w, const char *path, hsize_t N) {
 
         w->dsetTime = H5Dcreate2(w->file, "/time", H5T_IEEE_F64LE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
 
+        put_str_attr(w->dsetTime, "long_name", "time since simulation start");
+        put_str_attr(w->dsetTime, "units", "s");
+
         H5Pclose(dcpl);
         H5Sclose(space);
     }
@@ -54,6 +78,11 @@ int ts_open(TSWriter *w, const char *path, hsize_t N) {
 
         w->dsetPhi = H5Dcreate2(w->file, "/phi", H5T_IEEE_F64LE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
 
+        put_str_attr(w->dsetPhi, "long_name", "time series of specific volume fraction of RBCs");
+        put_str_attr(w->dsetPhi, "units", "volume fractoin (unit-less)");
+        put_str_attr(w->dsetPhi, "coordinates", "time rho z");
+        put_str_attr(w->dsetPhi, "storage_order", "phi[i*N + j] = phi(rho_i, z_j)");
+
         H5Pclose(dcpl);
         H5Sclose(space);
     }
@@ -61,27 +90,38 @@ int ts_open(TSWriter *w, const char *path, hsize_t N) {
     return 0;
 }
 
-int writeVec(TSWriter *w, hid_t *dset, const char *dset_name, double *data) {
+int ts_writeR(TSWriter *w, double *R) {
     herr_t status;
-
     hid_t space = H5Screate_simple(1, (hsize_t[]){ w->N }, NULL);
-
     hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
-    *dset = H5Dcreate2(w->file, dset_name, H5T_IEEE_F64LE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+    w->dsetR = H5Dcreate2(w->file, "rho", H5T_IEEE_F64LE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
 
-    status = H5Dwrite(*dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, data);
-    status = H5Dclose(*dset);
+    put_str_attr(w->dsetR, "long_name", "density");
+    put_str_attr(w->dsetR, "units", "?"); // TODO
+    put_u32_attr(w->dsetR, "N", (unsigned int)w->N);
+
+    status = H5Dwrite(w->dsetR, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, R);
+    status = H5Dclose(w->dsetR);
     status = H5Pclose(dcpl);
     status = H5Sclose(space);
     return 0;
 }
 
-int ts_writeR(TSWriter *w, double *R) {
-    return writeVec(w, &w->dsetR, "rho", R);
-}
-
 int ts_writeZ(TSWriter *w, double *Z) {
-    return writeVec(w, &w->dsetZ, "z", Z);
+    herr_t status;
+    hid_t space = H5Screate_simple(1, (hsize_t[]){ w->N }, NULL);
+    hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
+    w->dsetZ = H5Dcreate2(w->file, "z", H5T_IEEE_F64LE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+
+    put_str_attr(w->dsetZ, "long_name", "height in tube");
+    put_str_attr(w->dsetZ, "units", "?"); // TODO
+    put_u32_attr(w->dsetZ, "N", (unsigned int)w->N);
+
+    status = H5Dwrite(w->dsetZ, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, Z);
+    status = H5Dclose(w->dsetZ);
+    status = H5Pclose(dcpl);
+    status = H5Sclose(space);
+    return 0;
 }
 
 int ts_append(TSWriter *w, double t, const double *phi) {
