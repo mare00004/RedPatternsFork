@@ -61,9 +61,9 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     struct arg_dbl *cli_U = arg_dbl0(NULL, "U", "<double>", "RBC effective interaction energy in Joule");
     struct arg_dbl *cli_PSI =
         arg_dbl0(NULL, "PSI", "<double>", "RBC average volume fraction");
-    struct arg_dbl *cli_gamma = arg_dbl0("g", "gamma", "<double>", NULL);
-    struct arg_dbl *cli_delta = arg_dbl0("d", "delta", "<double>", NULL);
-    struct arg_dbl *cli_kappa = arg_dbl0("k", "kappa", "<double>", NULL);
+    struct arg_dbl *cli_gamma = arg_dbl0("g", "gamma", "<double>", "gamma");
+    struct arg_dbl *cli_delta = arg_dbl0("d", "delta", "<double>", "delta");
+    struct arg_dbl *cli_kappa = arg_dbl0("k", "kappa", "<double>", "kappa");
     struct arg_file *cli_outDir = arg_file0(
         "o",
         "out-dir",
