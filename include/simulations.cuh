@@ -311,14 +311,20 @@ void runSim(SimConfig *cfg) {
     for (int i = 0; i < NT; i++) {
         /* integration */
         CuKernelInte<<<numBlocks, threadsPerBlock>>>(d_phi, d_psi);
-        /* interpolation */
-        CuKernelCmpA<<<numBlocksA, threadsPerBlockA>>>(d_psi, d_alp);
-        CuKernelCmpL<<<numBlocksA, threadsPerBlockA>>>(d_psi, d_alp, d_psiIntp);
-        CuKernelConv<<<numBlocksA, threadsPerBlockA>>>(
-            d_psiIntp,
-            d_IIntp,
-            d_intKernel);
-        CuKernelDSmp<<<numBlocksD, threadsPerBlockD>>>(d_IIntp, d_I);
+        if (cfg->model.modelType == CONV) {
+            /* interpolation */
+            CuKernelCmpA<<<numBlocksA, threadsPerBlockA>>>(d_psi, d_alp);
+            CuKernelCmpL<<<numBlocksA, threadsPerBlockA>>>(d_psi, d_alp, d_psiIntp);
+            CuKernelConv<<<numBlocksA, threadsPerBlockA>>>(
+                d_psiIntp,
+                d_IIntp,
+                d_intKernel);
+            CuKernelDSmp<<<numBlocksD, threadsPerBlockD>>>(d_IIntp, d_I);
+        } else if (cfg->model.modelType == TAYL) {
+            CuKernelTayl<<<numBlocksD, threadsPerBlockD>>>(d_psi, d_I);
+        } else {
+            printf("This branch should never be reached!");
+        }
         /* density gradient */
         CuKernelGrad<<<numBlocks, threadsPerBlock>>>(d_percoll, t);
         CuKernelWing<<<numBlocks, threadsPerBlock>>>(d_percoll, d_gradWing, t);
