@@ -182,7 +182,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
             printf("Usage: %s ", progName);
             arg_print_syntaxv(stdout, argtableTayl, "\n");
         } else {
-            printf("TODO\n");
+            printf("TODO: No correct version found\n");
         }
     }
 
