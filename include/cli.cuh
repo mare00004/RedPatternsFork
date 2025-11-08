@@ -181,8 +181,12 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
             arg_print_errors(stderr, endTayl, progName);
             printf("Usage: %s ", progName);
             arg_print_syntaxv(stdout, argtableTayl, "\n");
+            exitCode = 1;
+            goto exit;
         } else {
             printf("TODO: No correct version found\n");
+            exitCode = 1;
+            goto exit;
         }
     }
 
