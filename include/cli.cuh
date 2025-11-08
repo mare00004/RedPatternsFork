@@ -151,7 +151,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         arg_print_glossary(stdout, argsHelpTayl, "\t%-25s %s\n");
 
         arg_dstr_destroy(ds);
-        exitCode = 0;
+        exitCode = 1;
         goto exit;
     }
 
