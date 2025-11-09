@@ -47,13 +47,17 @@ typedef struct {
 
 /* API */
 void setDefaults(SimConfig *c) {
-    *c = (SimConfig){ .run = { .N = N, .T = T, .DT = IT, .NO = NO },
-        .model = { .modelType = CONV,
+    *c = (SimConfig){
+        .run = { .N = N, .T = T, .DT = IT, .NO = NO },
+        .model = {
+            .modelType = CONV,
             .U = U,
             .PSI = PSI,
             .gamma = h_gamma,
             .delta = h_delta,
-            .kappa = h_kappa } };
+            .kappa = h_kappa,
+            .variant = { .Conv = { 0 } } }
+    };
     sprintf(c->run.outDir, "./");
 }
 
