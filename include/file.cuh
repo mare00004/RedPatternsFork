@@ -3,6 +3,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <stdint.h>
 
 /* saving 2D arrays to disk */
 void saveArrToDrive(double *f, char *outFileName) {
