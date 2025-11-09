@@ -29,7 +29,7 @@ void setCommonArguments(CommonCLIArguments *args, SimConfig *cfg) {
         cfg->run.NO = args->NO->ival[0];
     }
     if (args->outDir->count > 0) {
-        strncpy(cfg->run.outDir, args->outDir->filename[0], 256);
+        strncpy(cfg->run.outDir, args->outDir->filename[0], 255);
     }
     if (args->U->count > 0) {
         cfg->model.U = args->U->dval[0];
