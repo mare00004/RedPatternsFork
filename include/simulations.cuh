@@ -81,12 +81,19 @@ void initPhi(double *f, double *R) {
             f[i + N * j] = f[i + N * j] / phiSum * PSI * (N - 2 * edgeZ);
 }
 
+#define SET_OUT_FILE(FILENAME) \
+    snprintf(outFilePath, sizeof(outFilePath), "%s/%s", cfg->run.outDir, FILENAME)
+
 /* running simulation */
 void runSim(SimConfig *cfg) {
     TSWriter w;
-    ts_open(&w, "test.h5", (hsize_t)cfg->run.N);
-    // allocate space for output filename
-    char outFileName[19];
+    char outFilePath[400];
+    char outFileName[50];
+
+    // snprintf(outFileName, sizeof(outFileName), "%s/run.h5", cfg->run.outDir);
+    SET_OUT_FILE("run.h5");
+    ts_open(&w, outFilePath, (hsize_t)cfg->run.N);
+
     // constants to device memory
     checkCuda(
         cudaMemcpyToSymbol(c_nu, &(cfg->model.variant.Tayl.NU), sizeof(double), 0, cudaMemcpyHostToDevice));
@@ -171,8 +178,8 @@ void runSim(SimConfig *cfg) {
 
     /* interaction kernel */
     genConvKernel();
-    sprintf(outFileName, "intKernel.dat");
-    saveNVecToDrive(intKernel, outFileName, kernelN);
+    SET_OUT_FILE("intKernel.dat");
+    saveNVecToDrive(intKernel, outFilePath, kernelN);
     bytes = kernelN * sizeof(double);
     double *d_intKernel;
     // (1) allocate
@@ -375,17 +382,22 @@ void runSim(SimConfig *cfg) {
             // checkCuda( cudaMemcpy(IIntp, d_IIntp, N*sizeof(double)*subDiv,
             // cudaMemcpyDeviceToHost) );
             //  write data to file
+
             sprintf(outFileName, "phi_%010d.dat", i);
-            saveArrToDrive(phi, outFileName);
+            SET_OUT_FILE(outFileName);
+            saveArrToDrive(phi, outFilePath);
 
             sprintf(outFileName, "psi_%010d.dat", i);
-            saveVecToDrive(psi, outFileName);
+            SET_OUT_FILE(outFileName);
+            saveVecToDrive(psi, outFilePath);
 
             sprintf(outFileName, "gW_%010d.dat", i);
-            saveVecToDrive(gradWing, outFileName);
+            SET_OUT_FILE(outFileName);
+            saveVecToDrive(gradWing, outFilePath);
 
             sprintf(outFileName, "gP_%010d.dat", i);
-            saveVecToDrive(percoll, outFileName);
+            SET_OUT_FILE(outFileName);
+            saveVecToDrive(percoll, outFilePath);
 
             /**************************************/
             ts_append(&w, t, phi);
