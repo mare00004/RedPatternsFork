@@ -84,4 +84,7 @@ __constant__ double c_gamma; // restriction phi 0
 __constant__ double c_delta; // restriction psi 0
 __constant__ double c_kappa; // restriction psi 1
 
+__constant__ double c_nu;
+__constant__ double c_mu;
+
 #endif

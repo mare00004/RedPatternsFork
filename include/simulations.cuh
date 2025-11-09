@@ -89,6 +89,10 @@ void runSim(SimConfig *cfg) {
     char outFileName[19];
     // constants to device memory
     checkCuda(
+        cudaMemcpyToSymbol(c_nu, &(cfg->model.u.Tayl.NU), sizeof(double), 0, cudaMemcpyHostToDevice));
+    checkCuda(
+        cudaMemcpyToSymbol(c_mu, &(cfg->model.u.Tayl.MU), sizeof(double), 0, cudaMemcpyHostToDevice));
+    checkCuda(
         cudaMemcpyToSymbol(c_IZ, &IZ, sizeof(double), 0, cudaMemcpyHostToDevice));
     checkCuda(
         cudaMemcpyToSymbol(c_IT, &IT, sizeof(double), 0, cudaMemcpyHostToDevice));
