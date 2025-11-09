@@ -61,6 +61,34 @@ void setDefaults(SimConfig *c) {
     sprintf(c->run.outDir, "./");
 }
 
+int printConfig(SimConfig *c) {
+    printf("-----------------------\n");
+    printf("-  Simulation Config  -\n");
+    printf("-----------------------\n");
+    printf("-> Run:\n");
+    printf("\t-> N: %d\n", c->run.N);
+    printf("\t-> T: %f\n", c->run.T);
+    printf("\t-> DT: %.5e\n", c->run.DT);
+    printf("\t-> NO: %d\n", c->run.NO);
+    printf("\t-> outDir: %s\n", c->run.outDir);
+    if (c->model.modelType == CONV) {
+        printf("-> Using Convolution-Model:\n");
+    } else {
+        printf("-> Using Taylor-Model:\n");
+    }
+    printf("\t-> U: %.5e\n", c->model.U);
+    printf("\t-> PSI: %.5e\n", c->model.PSI);
+    printf("\t-> gamma: %.5e\n", c->model.gamma);
+    printf("\t-> delta: %.5e\n", c->model.delta);
+    printf("\t-> kappa: %.5e\n", c->model.kappa);
+    if (c->model.modelType == TAYL) {
+        printf("\t-> nu: %.5e\n", c->model.variant.Tayl.NU);
+        printf("\t-> mu: %.5e\n", c->model.variant.Tayl.MU);
+    }
+
+    return 0;
+}
+
 int loadTOMLConfig(const char *path, SimConfig *c);
 int applyCLIOverrides(int argc, char **argv, SimConfig *c);
 int deriveAndValidateOrDie(SimConfig *c);
