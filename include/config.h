@@ -37,7 +37,7 @@ typedef struct {
     union {
         ConvParams Conv;
         TaylParams Tayl;
-    } u;
+    } variant;
 } ModelParams;
 
 typedef struct {

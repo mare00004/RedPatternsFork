@@ -162,10 +162,10 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         setCommonArguments(&commonArgs, cfg);
         cfg->model.modelType = TAYL;
         if (cli_NU->count > 0) {
-            cfg->model.u.Tayl.NU = cli_NU->dval[0];
+            cfg->model.variant.Tayl.NU = cli_NU->dval[0];
         }
         if (cli_MU->count > 0) {
-            cfg->model.u.Tayl.MU = cli_MU->dval[0];
+            cfg->model.variant.Tayl.MU = cli_MU->dval[0];
         }
     } else {
         // No correct version found
