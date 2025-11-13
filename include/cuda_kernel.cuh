@@ -1,3 +1,4 @@
+#include "config.h"
 #include "parameters.cuh"
 
 /*
@@ -10,16 +11,17 @@
     -> iteration (Iter)
 */
 
+// TODO: USE NU, MU!
 __global__ void CuKernelTayl(double *psi, double *I) {
     // get indices
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     // compute convolution integral
     if ((i >= 8) & (i <= N - 1 - 8))
         I[i] =
-            nu_interaction *
+            c_nu *
                 (-psi[i + 2] + 8 * psi[i + 1] + psi[i - 2] - 8 * psi[i - 1]) /
                 (12 * c_IZ) +
-            mu_interaction *
+            c_mu *
                 (psi[i + 2] - 2 * psi[i + 1] + 2 * psi[i - 1] - psi[i - 2]) /
                 (2 * pow(c_IZ, 3));
     __syncthreads();
@@ -108,8 +110,7 @@ __global__ void CuKernelIter(
     double *psi,
     double *convKernel,
     double t,
-    double *gradWing
-) {
+    double *gradWing) {
     // get indices
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int j = blockIdx.y * blockDim.y + threadIdx.y;
@@ -131,15 +132,15 @@ __global__ void CuKernelIter(
         dJ[gi] = (+0.5 / c_IZ * (J[gi + 1] - J[gi - 1]));
         // degenerate diffusion second derivative phi 0
         dJ[gi] -= (-2.0 * (jDegDiffPhi0(gi)) +
-                   1.0 * (jDegDiffPhi0(gi + 1) + jDegDiffPhi0(gi - 1))) /
+                      1.0 * (jDegDiffPhi0(gi + 1) + jDegDiffPhi0(gi - 1))) /
                   (c_IZ * c_IZ) * c_gamma;
         // degenerate diffusion second derivative psi 0
         dJ[gi] -= (-2.0 * (jDegDiffPsi0(gi, i)) +
-                   1.0 * (jDegDiffPsi0(gi, i + 1) + jDegDiffPsi0(gi, i - 1))) /
+                      1.0 * (jDegDiffPsi0(gi, i + 1) + jDegDiffPsi0(gi, i - 1))) /
                   (c_IZ * c_IZ) * c_delta;
         // degenerate diffusion second derivative psi 1
         dJ[gi] += (-2.0 * (jDegDiffPsi1(gi, i)) +
-                   1.0 * (jDegDiffPsi1(gi, i + 1) + jDegDiffPsi1(gi, i - 1))) /
+                      1.0 * (jDegDiffPsi1(gi, i + 1) + jDegDiffPsi1(gi, i - 1))) /
                   (c_IZ * c_IZ) * c_kappa;
     }
     __syncthreads();
