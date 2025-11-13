@@ -1,6 +1,7 @@
 #include "config.h"
 #include "cuda_kernel.cuh"
-#include "cuda_kernel_linear.cuh"
+// #include "cuda_kernel_linear.cuh"
+#include "cuda_kernel_sigmoid.cuh"
 #include "cuda_utils.cuh"
 #include "file.cuh"
 #include "hdf5_file.h"
