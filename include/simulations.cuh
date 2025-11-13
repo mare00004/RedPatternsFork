@@ -400,7 +400,7 @@ void runSim(SimConfig *cfg) {
             saveVecToDrive(percoll, outFilePath);
 
             /**************************************/
-            ts_append(&w, t, phi);
+            ts_append(&w, t, phi, psi);
             /**************************************/
 
             /* optional output

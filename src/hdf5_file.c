@@ -87,6 +87,27 @@ int ts_open(TSWriter *w, const char *path, hsize_t N) {
         H5Sclose(space);
     }
 
+    // Create /psi (extendable along T (T, N) of float32)
+    {
+        int rank = 2;
+        hsize_t dims[2] = { 0, N };
+        hsize_t maxdims[2] = { H5S_UNLIMITED, N };
+        hid_t space = H5Screate_simple(rank, dims, maxdims);
+
+        hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
+        hsize_t chunk[2] = { 1, N };
+        status = H5Pset_chunk(dcpl, rank, chunk);
+
+        w->dsetPsi = H5Dcreate2(w->file, "/psi", H5T_IEEE_F64LE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+
+        put_str_attr(w->dsetPsi, "long_name", "time series of total volume fraction of RBCs");
+        put_str_attr(w->dsetPsi, "units", "total volume fraction (unit-less)");
+        put_str_attr(w->dsetPsi, "coordinates", "time z");
+
+        H5Pclose(dcpl);
+        H5Sclose(space);
+    }
+
     return 0;
 }
 
@@ -124,7 +145,7 @@ int ts_writeZ(TSWriter *w, double *Z) {
     return 0;
 }
 
-int ts_append(TSWriter *w, double t, const double *phi) {
+int ts_append(TSWriter *w, double t, const double *phi, const double *psi) {
     const hsize_t N = w->N;
 
     // Append one phi NxN array
@@ -142,6 +163,29 @@ int ts_append(TSWriter *w, double t, const double *phi) {
         hid_t mspace = H5Screate_simple(3, mdims, NULL);
 
         if (H5Dwrite(w->dsetPhi, H5T_NATIVE_DOUBLE, mspace, fspace, H5P_DEFAULT, phi)) {
+            H5Sclose(mspace);
+            H5Sclose(fspace);
+            return -1;
+        }
+        H5Sclose(mspace);
+        H5Sclose(fspace);
+    }
+
+    // Append one psi N array
+    {
+        hsize_t newSize[2] = { w->t + 1, N };
+        if (H5Dset_extent(w->dsetPsi, newSize) < 0)
+            return -1;
+
+        hid_t fspace = H5Dget_space(w->dsetPsi);
+        hsize_t start[2] = { w->t, 0 };
+        hsize_t count[2] = { 1, N };
+        H5Sselect_hyperslab(fspace, H5S_SELECT_SET, start, NULL, count, NULL);
+
+        hsize_t mdims[2] = { 1, N };
+        hid_t mspace = H5Screate_simple(2, mdims, NULL);
+
+        if (H5Dwrite(w->dsetPsi, H5T_NATIVE_DOUBLE, mspace, fspace, H5P_DEFAULT, psi)) {
             H5Sclose(mspace);
             H5Sclose(fspace);
             return -1;

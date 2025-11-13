@@ -14,6 +14,7 @@ typedef struct {
     hid_t file;     // .h5 file
     hid_t dsetTime; // /time (time, )
     hid_t dsetPhi;  // /phi (time, N, N)
+    hid_t dsetPsi;  // /psi (time, N)
     hid_t dsetZ;
     hid_t dsetR;
     hsize_t N; // Grid Size
@@ -28,7 +29,7 @@ int ts_writeR(TSWriter *w, double *R);
 
 int ts_writeZ(TSWriter *w, double *Z);
 
-int ts_append(TSWriter *w, double t, const double *phi);
+int ts_append(TSWriter *w, double t, const double *phi, const double *psi);
 
 void ts_close(TSWriter *w);
 
