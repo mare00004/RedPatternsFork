@@ -48,7 +48,7 @@ typedef struct {
 /* API */
 void setDefaults(SimConfig *c) {
     *c = (SimConfig){
-        .run = { .N = N, .T = T, .DT = IT, .NO = NO },
+        .run = { .N = N, .T = T, .DT = IT, .NO = NO, .outDir = "./" },
         .model = {
             .modelType = CONV,
             .U = U,
