@@ -6,6 +6,10 @@
 #include <cmath>
 #include <string>
 
+/* TODO
+ * - Do some actual agrument validation
+ */
+
 typedef struct {
     struct arg_dbl *T;
     struct arg_dbl *DT;
@@ -16,6 +20,7 @@ typedef struct {
     struct arg_dbl *delta;
     struct arg_dbl *kappa;
     struct arg_file *outDir;
+    struct arg_str *gradient;
 } CommonCLIArguments;
 
 void setCommonArguments(CommonCLIArguments *args, SimConfig *cfg) {
@@ -46,6 +51,9 @@ void setCommonArguments(CommonCLIArguments *args, SimConfig *cfg) {
     if (args->kappa->count > 0) {
         cfg->model.kappa = args->kappa->dval[0];
     }
+    if (args->gradient->count > 0) {
+        strncpy(cfg->model.gradient, args->gradient->sval[0], textFieldSize - 1);
+    }
 }
 
 int parseArguments(int argc, char **argv, SimConfig *cfg) {
@@ -69,6 +77,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         "out-dir",
         "<file>",
         "directory where simulation data is stored");
+    struct arg_str *cli_gradient = arg_str0(NULL, "gradient", "linear|sigmoid", "Pressure gradient");
 
     CommonCLIArguments commonArgs = {
         .T = cli_T,
@@ -80,18 +89,19 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         .delta = cli_delta,
         .kappa = cli_kappa,
         .outDir = cli_outDir,
+        .gradient = cli_gradient,
     };
 
     // DEFAULT
     struct arg_end *endDefault = arg_end(20);
-    void *argtableDefault[] = { cli_help, cli_T, cli_DT, cli_NO, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, endDefault };
+    void *argtableDefault[] = { cli_help, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, endDefault };
     int nErrorsDefault;
 
     // CONVOLUTION
     struct arg_lit *cli_conv =
         arg_lit1("c", "use-convolution", "use convolution integral");
     struct arg_end *endConv = arg_end(20);
-    void *argtableConv[] = { cli_help, cli_conv, cli_T, cli_DT, cli_NO, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, endConv };
+    void *argtableConv[] = { cli_help, cli_conv, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, endConv };
     int nErrorsConv;
 
     // TAYLOR
@@ -100,7 +110,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     struct arg_dbl *cli_NU = arg_dbl0(NULL, "NU", "<double>", "interaction nu");
     struct arg_dbl *cli_MU = arg_dbl0(NULL, "MU", "<double>", "interaction mu");
     struct arg_end *endTayl = arg_end(20);
-    void *argtableTayl[] = { cli_help, cli_tayl, cli_T, cli_DT, cli_NO, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, cli_NU, cli_MU, endTayl };
+    void *argtableTayl[] = { cli_help, cli_tayl, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, cli_NU, cli_MU, endTayl };
     int nErrorsTayl;
 
     // Parsing
@@ -119,7 +129,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     nErrorsTayl = arg_parse(argc, argv, argtableTayl);
 
     if (cli_help->count > 0) {
-        void *argtableCommon[] = { cli_T, cli_DT, cli_NO, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, endDefault };
+        void *argtableCommon[] = { cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, endDefault };
         void *argsHelpConv[] = { cli_conv, endConv };
         void *argsHelpTayl[] = { cli_tayl, cli_NU, cli_MU, endTayl };
 
@@ -198,6 +208,7 @@ exit:
         cli_T,
         cli_DT,
         cli_NO,
+        cli_gradient,
         cli_U,
         cli_PSI,
         cli_gamma,

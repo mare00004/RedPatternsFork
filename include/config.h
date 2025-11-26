@@ -4,6 +4,7 @@
 #include <stdio.h>
 
 // Tagged Union for Simulation Configuration.
+#define textFieldSize 64
 
 typedef enum {
     CONV = 0,
@@ -29,6 +30,7 @@ typedef struct {
 
 typedef struct {
     ModelType modelType;
+    char gradient[textFieldSize];
     double U;
     double PSI;
     double gamma;
@@ -51,6 +53,7 @@ void setDefaults(SimConfig *c) {
         .run = { .N = N, .T = T, .DT = IT, .NO = NO, .outDir = "./" },
         .model = {
             .modelType = CONV,
+            .gradient = "linear",
             .U = U,
             .PSI = PSI,
             .gamma = h_gamma,
@@ -58,7 +61,6 @@ void setDefaults(SimConfig *c) {
             .kappa = h_kappa,
             .variant = { .Conv = { 0 } } }
     };
-    sprintf(c->run.outDir, "./");
 }
 
 int printConfig(SimConfig *c) {
@@ -76,6 +78,7 @@ int printConfig(SimConfig *c) {
     } else {
         printf("-> Using Taylor-Model:\n");
     }
+    printf("\t-> gradient: %*s\n", textFieldSize, c->model.gradient);
     printf("\t-> U: %.5e\n", c->model.U);
     printf("\t-> PSI: %.5e\n", c->model.PSI);
     printf("\t-> gamma: %.5e\n", c->model.gamma);

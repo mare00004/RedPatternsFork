@@ -1,7 +1,7 @@
 #include "config.h"
 #include "cuda_kernel.cuh"
+#include "gradient.cuh"
 // #include "cuda_kernel_linear.cuh"
-#include "cuda_kernel_sigmoid.cuh"
 #include "cuda_utils.cuh"
 #include "file.cuh"
 #include "hdf5_file.h"
@@ -337,9 +337,15 @@ void runSim(SimConfig *cfg) {
         } else {
             printf("This branch should never be reached!");
         }
-        /* density gradient */
-        CuKernelGrad<<<numBlocks, threadsPerBlock>>>(d_percoll, t);
-        CuKernelWing<<<numBlocks, threadsPerBlock>>>(d_percoll, d_gradWing, t);
+        if (strcmp(cfg->model.gradient, "linear") == 0) {
+            CuKernelGradLinear<<<numBlocks, threadsPerBlock>>>(d_percoll, t);
+            CuKernelWingLinear<<<numBlocks, threadsPerBlock>>>(d_percoll, d_gradWing, t);
+        } else if (strcmp(cfg->model.gradient, "sigmoid") == 0) {
+            CuKernelGradSigmoid<<<numBlocks, threadsPerBlock>>>(d_percoll, t);
+            CuKernelWingSigmoid<<<numBlocks, threadsPerBlock>>>(d_percoll, d_gradWing, t);
+        } else {
+            printf("This branch should never be reached!");
+        }
         /* iteration */
         CuKernelIter<<<numBlocks, threadsPerBlock>>>(
             d_phi,
