@@ -23,6 +23,7 @@ int main(int argc, char *argv[]) {
     h_delta = cfg.model.delta;
     h_kappa = cfg.model.kappa;
     NT = ceil(T / IT);
+    h_beta *= U;
 
     // detect cuda device
     cudaDeviceProp prop;
