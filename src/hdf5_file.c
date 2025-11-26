@@ -224,6 +224,8 @@ int ts_append(TSWriter *w, double t, const double *phi, const double *psi) {
 void ts_close(TSWriter *w) {
     if (w->dsetPhi > 0)
         H5Dclose(w->dsetPhi);
+    if (w->dsetPsi > 0)
+        H5Dclose(w->dsetPsi);
     if (w->dsetTime > 0)
         H5Dclose(w->dsetTime);
     if (w->file > 0)
