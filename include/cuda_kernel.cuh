@@ -119,10 +119,10 @@ __global__ void CuKernelIter(
     // compute physical flux
     double rpTerm;
     if ((i > wingL) & (i < N - 1 - wingL))
-        rpTerm = R[j] + percoll[i] - P0;
+        rpTerm = R[j] - percoll[i] - P0;
     __syncthreads();
     if ((i <= wingL) | (i >= N - 1 - wingL))
-        rpTerm = R[j] + gradWing[i] - P0;
+        rpTerm = R[j] - gradWing[i] - P0;
     __syncthreads();
     J[gi] = (c_alpha * rpTerm + c_beta * I[i]) * phi[gi];
     __syncthreads();
