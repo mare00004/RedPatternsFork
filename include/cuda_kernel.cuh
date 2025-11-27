@@ -12,16 +12,16 @@
 */
 
 // TODO: USE NU, MU!
-__global__ void CuKernelTayl(double *psi, double *I) {
+__global__ void CuKernelTayl(double *psi, double *I, double d_nu, double d_mu) {
     // get indices
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     // compute convolution integral
     if ((i >= 8) & (i <= N - 1 - 8))
         I[i] =
-            c_nu *
+            d_nu *
                 (-psi[i + 2] + 8 * psi[i + 1] + psi[i - 2] - 8 * psi[i - 1]) /
                 (12 * c_IZ) +
-            c_mu *
+            d_mu *
                 (psi[i + 2] - 2 * psi[i + 1] + 2 * psi[i - 1] - psi[i - 2]) /
                 (2 * pow(c_IZ, 3));
     __syncthreads();

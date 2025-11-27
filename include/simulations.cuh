@@ -85,11 +85,15 @@ void initPhi(double *f, double *R) {
 #define SET_OUT_FILE(FILENAME) \
     snprintf(outFilePath, sizeof(outFilePath), "%s/%s", cfg->run.outDir, FILENAME)
 
+__constant__ SimConfig d_cfg;
+
 /* running simulation */
 void runSim(SimConfig *cfg) {
     TSWriter w;
     char outFilePath[400];
     char outFileName[50];
+
+    // cudaMemcpy(&d_cfg, cfg, sizeof(SimConfig), cudaMemcpyHostToDevice);
 
     // snprintf(outFileName, sizeof(outFileName), "%s/run.h5", cfg->run.outDir);
     SET_OUT_FILE("run.h5");
@@ -333,7 +337,8 @@ void runSim(SimConfig *cfg) {
                 d_intKernel);
             CuKernelDSmp<<<numBlocksD, threadsPerBlockD>>>(d_IIntp, d_I);
         } else if (cfg->model.modelType == TAYL) {
-            CuKernelTayl<<<numBlocksD, threadsPerBlockD>>>(d_psi, d_I);
+            // CuKernelTayl<<<numBlocksD, threadsPerBlockD>>>(d_psi, d_I, d_cfg.model.variant.Tayl.NU, d_cfg.model.variant.Tayl.MU);
+            CuKernelTayl<<<numBlocksD, threadsPerBlockD>>>(d_psi, d_I, cfg->model.variant.Tayl.NU, cfg->model.variant.Tayl.MU);
         } else {
             printf("This branch should never be reached!");
         }

@@ -32,9 +32,6 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
         FORCE)
 endif()
 
-# For clangd
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
 # ------------------------------------------------------------------------------------------------
 # argtable 3
 # ------------------------------------------------------------------------------------------------

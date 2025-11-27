@@ -12,6 +12,9 @@ int main(int argc, char *argv[]) {
     if (parseArguments(argc, argv, &cfg)) {
         return EXIT_FAILURE;
     }
+    if (deriveAndValidateOrDie(&cfg)) {
+        return EXIT_FAILURE;
+    }
     printConfig(&cfg);
     // Overwrite constants (like in old readParameters)
     U = cfg.model.U;

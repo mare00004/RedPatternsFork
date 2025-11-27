@@ -108,7 +108,33 @@ TAYLOR:
 
 ## Workflows
 
-...
+### For UdS Members
+
+#### Connecting to Cluster and submitting Jobs
+
+If you are a member of UdS and have access to the SIC GPU Cluster, then you can use the following workflow
+
+ 1. You can access the HTCondor submission node only from within the university network. Normally you need to be on campus or use CiscoAnyConnect as VPN, but you can do the same from the commandline with `sudo openconnect asa1.uni-saarland.de --user <user> --authgroup "UdS"`
+ 2. Then you can connect to the submission node via SSH with `ssh <user>@conduit.hpc.uni-saarland.de`. You will need your passphrase for your ssh-key and your user password.
+ 3. After that you can create a new directory and copy the `sweep.submit` file from the RedPatterns Repository to the cluster. To copy a single file to the cluster (without a gui) you can use `scp`, while connect to your **local** machine: `scp <path-to-file> <user>@<remote>:<path-on-remote>`.
+ 4. Then you have to create a `params.txt` file on the server in the same directory as the `sweep.submit` file. An example `paramters.txt` file can be found in the repository. For each job you specify all the CLI arguments on a single line.
+ 5. To submit all the jobs run `condor_submit sweep.submit`. This prints your `<cluster-id>`.
+ 6. To check if the jobs are running correctly use `condor_q <cluster-id>` or `condor_q -nobatch <cluster-id>.<process-id>` to check the status of a specific job.
+ 7. If you want to see the `stdout` of the a job run `condor_tail -f <cluster-id>.<process-id>`.
+
+At the end of a jobs execution. The logs and simulation data will be copied to your home directory. (WHERE???)
+
+#### Copying the data back
+
+Use:
+
+```bash
+rsync 
+```
+
+### For anyone
+
+#### Analyzing the Data
 
 ## Explanation
 
