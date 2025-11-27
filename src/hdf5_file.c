@@ -10,6 +10,10 @@
 #include <hdf5.h>
 #include <string.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void put_u32_attr(hid_t dset, const char *name, unsigned int v) {
     hid_t space = H5Screate(H5S_SCALAR);
     hid_t attr = H5Acreate2(dset, name, H5T_STD_U32LE, space, H5P_DEFAULT, H5P_DEFAULT);
@@ -231,3 +235,7 @@ void ts_close(TSWriter *w) {
     if (w->file > 0)
         H5Fclose(w->file);
 }
+
+#ifdef __cplusplus
+}
+#endif
