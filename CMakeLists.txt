@@ -9,11 +9,10 @@ project(
 # General Settings
 # ------------------------------------------------------------------------------------------------
 
-
 if(NOT CMAKE_C_STANDARD)
     set(CMAKE_C_STANDARD 99)
     set(CMAKE_C_STANDARD_REQUIRED ON)
-    set(CMAKE_C_EXTENSION OFF)
+    set(CMAKE_C_EXTENSIONS OFF)
 endif()
 
 if(NOT CMAKE_CUDA_STANDARD)
@@ -49,7 +48,8 @@ target_compile_options(argtable3 PRIVATE -Wall -Wextra)
 # ------------------------------------------------------------------------------------------------
 
 find_package(HDF5 COMPONENTS C HL REQUIRED)
-if(TARGET hdf5::hdft)
+
+if(TARGET hdf5::hdf5)
     set(HDF5_LIB_TARGETS hdf5::hdf5 hdf5::hdf5_hl)
 else()
     set(HDF5_LIB_TARGETS ${HDF5_LIBRARIES} ${HDF5_HL_LIBRARIES})
@@ -90,6 +90,7 @@ target_link_libraries(red-patterns
 
 if(HDF5_LIBRARY_DIRS)
     set_target_properties(red-patterns PROPERTIES
-    BUILD_RPATH "${HDF5_LIBRARY_DIRS}"
-    INSTALL_RPATH "${HDF5_LIBRARY_DIRS}")
+        BUILD_RPATH "${HDF5_LIBRARY_DIRS}"
+        INSTALL_RPATH "${HDF5_LIBRARY_DIRS}")
 endif()
+
