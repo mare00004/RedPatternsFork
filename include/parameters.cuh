@@ -32,11 +32,8 @@ double U = 100e-18; // [J] RBC effective interaction energy
 #define Rsigma 4.0f // [g/l] gaussian width
 #define Rmu 1100.0f // [g/l] central RBC density
 
-// Percoll density gradient
-#define gradL 0.06                  // [m] tube length
-#define wingL 30                    // [grid] length of gradient wings
-#define zShift ((sysL - gradL) / 2) // gradient spatial center
-#define P0 1100.0                   // [g/l] central PC density
+#define wingL 30  // [grid] length of gradient wings
+#define P0 1100.0 // [g/l] central percoll density
 
 // host flux prefactors
 double h_beta = 7.4e23; // interaction integral
