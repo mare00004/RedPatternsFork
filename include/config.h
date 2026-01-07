@@ -144,6 +144,13 @@ int deriveAndValidateOrDie(SimConfig *c) {
      **********/
     c->run.NT = ceil(c->run.T / c->run.DT);
 
+    // TODO Make h_alpha SimulationConfig Member!
+    if (strcmp(c->model.gradient, "sigmoid")) {
+        h_alpha = 2.0e-04;
+    } else if (strcmp(c->model.gradient, "linear")) {
+        h_alpha = 2.00e-05;
+    }
+
     return 0;
 }
 

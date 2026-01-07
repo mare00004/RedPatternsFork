@@ -37,7 +37,7 @@ double U = 100e-18; // [J] RBC effective interaction energy
 
 // host flux prefactors
 double h_beta = 7.4e23; // interaction integral
-double h_alpha = 2e-4;  // exp -4 for 20000 g, exp -5 for 2000 g
+double h_alpha = 2e-4;  // exp -4 for 20000 g (sigmoid), exp -5 for 2000 g (linear)
 double h_gamma = 3e-10; // degenerate diffusion restriction phi 0
 double h_delta = 1e-15; // degenerate diffusion restriction psi 0
 double h_kappa = 1e-15; // degenerate diffusion restriction psi 1
