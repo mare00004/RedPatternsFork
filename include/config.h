@@ -134,11 +134,7 @@ int deriveAndValidateOrDie(SimConfig *c) {
         fprintf(stderr, "gradient has to be one of: linear, sigmoid!\n");
         return -1;
     }
-    if (c->model.modelType == CONV) {
-        return 0;
-    } else if (c->model.modelType == TAYL) {
-        return 0;
-    } else {
+    if (!(c->model.modelType == CONV || c->model.modelType == TAYL)) {
         fprintf(stderr, "modelType has to be convolution or taylor!\n");
         return -1;
     }
