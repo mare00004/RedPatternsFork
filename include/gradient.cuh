@@ -9,13 +9,14 @@
  **********/
 
 /* Linear Percoll gradient kernel */
-#define PL 8.0
+#define PL 8.0 // Spread of gradient (in units of density)
 __global__ void CuKernelGradLinear(double *percoll, double t) {
     // get indices
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     double x = IZ * double(i);
     percoll[i] = (x - zShift - gradL / 2) / (gradL / 2) * PL / 2;
 }
+
 __global__ void CuKernelWingLinear(double *percoll, double *gradWing, double t) {
     // get indices
     int i = blockIdx.x * blockDim.x + threadIdx.x;
