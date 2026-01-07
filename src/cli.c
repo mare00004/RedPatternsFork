@@ -1,10 +1,6 @@
-#ifndef CLI_H
-#define CLI_H
 #include "argtable3.h"
-#include "config.h"
-#include "parameters.cuh"
-#include <cmath>
-#include <string>
+#include "sim_types.h"
+#include <string.h>
 
 /* TODO
  * - Do some actual agrument validation
@@ -113,6 +109,28 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     void *argtableTayl[] = { cli_help, cli_tayl, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, cli_NU, cli_MU, endTayl };
     int nErrorsTayl;
 
+    // UNIQUE ARGUMENTS (for freeing argtables)
+    void *argtableUnique[] = {
+        cli_help,
+        cli_conv,
+        cli_tayl,
+        cli_T,
+        cli_DT,
+        cli_NO,
+        cli_gradient,
+        cli_U,
+        cli_PSI,
+        cli_gamma,
+        cli_delta,
+        cli_kappa,
+        cli_outDir,
+        cli_NU,
+        cli_MU,
+        endDefault,
+        endConv,
+        endTayl
+    };
+
     // Parsing
     int exitCode = 0;
     const char *progName = "red-patterns";
@@ -201,68 +219,8 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     }
 
 exit:
-    void *argtableUnique[] = {
-        cli_help,
-        cli_conv,
-        cli_tayl,
-        cli_T,
-        cli_DT,
-        cli_NO,
-        cli_gradient,
-        cli_U,
-        cli_PSI,
-        cli_gamma,
-        cli_delta,
-        cli_kappa,
-        cli_outDir,
-        cli_NU,
-        cli_MU,
-        endDefault,
-        endConv,
-        endTayl
-    };
     arg_freetable(argtableUnique,
         sizeof(argtableUnique) / sizeof(argtableUnique)[0]);
 
     return exitCode;
 }
-
-/* taking arguments */
-void readParameters(int argc, char *argv[]) {
-    int argIdx = 1;
-    // U
-    if (argc > argIdx)
-        U = std::stod(argv[argIdx]);
-    argIdx++;
-    // PSI
-    if (argc > argIdx)
-        PSI = std::stod(argv[argIdx]);
-    argIdx++;
-    // IT
-    if (argc > argIdx)
-        IT = std::stod(argv[argIdx]);
-    argIdx++;
-    // T
-    if (argc > argIdx)
-        T = std::stod(argv[argIdx]);
-    argIdx++;
-    // NO
-    if (argc > argIdx)
-        NO = std::stod(argv[argIdx]);
-    argIdx++;
-    // gamma
-    if (argc > argIdx)
-        h_gamma = std::stod(argv[argIdx]);
-    argIdx++;
-    // delta
-    if (argc > argIdx)
-        h_delta = std::stod(argv[argIdx]);
-    argIdx++;
-    // kappa
-    if (argc > argIdx)
-        h_kappa = std::stod(argv[argIdx]);
-    argIdx++;
-    // re-evalutate parameters
-    NT = ceil(T / IT);
-}
-#endif

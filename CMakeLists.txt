@@ -28,7 +28,7 @@ endif()
 # Use RELEASE builds by default
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING
-        "CHoose the type of Build: Debug Release"
+        "Choose the type of Build: Debug Release"
         FORCE)
 endif()
 
@@ -59,6 +59,13 @@ endif()
 add_executable(red-patterns
     src/main.cu
     src/hdf5_file.c
+    src/config.c
+    src/cli.c
+)
+
+# Enable rdc
+set_target_properties(red-patterns PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
 )
 
 target_include_directories(red-patterns

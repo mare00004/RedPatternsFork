@@ -1,31 +1,30 @@
-#include "cli.cuh"
+#include "cli.h"
 #include "config.h"
 #include "cuda_utils.cuh"
-#include "parameters.cuh"
+#include "gpu_state.cuh"
+#include "sim_types.h"
 #include "simulations.cuh"
 #include <stdio.h>
 
-// main function
+__constant__ SimConfig d_cfg;
+
 int main(int argc, char *argv[]) {
     SimConfig cfg;
+
+    printf("Setting default parameters...\n");
     setDefaults(&cfg);
+
+    printf("Parsing CLI...\n");
     if (parseArguments(argc, argv, &cfg)) {
         return EXIT_FAILURE;
     }
+
+    printf("Validating parameters...\n");
     if (deriveAndValidateOrDie(&cfg)) {
         return EXIT_FAILURE;
     }
+
     printConfig(&cfg);
-    // Overwrite constants (like in old readParameters)
-    U = cfg.model.U;
-    PSI = cfg.model.PSI;
-    IT = cfg.run.DT;
-    T = cfg.run.T;
-    NO = cfg.run.NO;
-    h_gamma = cfg.model.gamma;
-    h_delta = cfg.model.delta;
-    h_kappa = cfg.model.kappa;
-    NT = ceil(T / IT);
 
     // detect cuda device
     cudaDeviceProp prop;
@@ -35,7 +34,9 @@ int main(int argc, char *argv[]) {
     printf("\nDevice Name: %s\n", prop.name);
     printf("Compute Capability: %d.%d\n\n", prop.major, prop.minor);
 
-    // run simulation
-    runSim(&cfg);
+    checkCuda(cudaMemcpyToSymbol(d_cfg, &cfg, sizeof(SimConfig), cudaMemcpyHostToDevice));
+
+    printf("Starting Simulation...\n");
+    runSim(cfg);
     return EXIT_SUCCESS;
 }

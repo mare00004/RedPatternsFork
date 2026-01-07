@@ -1,8 +1,10 @@
-#include "parameters.cuh"
+#include "gpu_state.cuh"
+#include "parameters.h"
+#include "sim_types.h"
 
 // Percoll density gradient
-#define gradL 0.06                  // [m] tube length
-#define zShift ((sysL - gradL) / 2) // gradient spatial center
+#define gradL 0.06                            // [m] tube length
+#define zShift ((d_cfg.run.sysL - gradL) / 2) // gradient spatial center
 
 /**********
  * LINEAR *
@@ -13,13 +15,14 @@
 __global__ void CuKernelGradLinear(double *percoll, double t) {
     // get indices
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    double x = IZ * double(i);
+    double x = d_cfg.run.DZ * double(i);
     percoll[i] = (x - zShift - gradL / 2) / (gradL / 2) * PL / 2;
 }
 
 __global__ void CuKernelWingLinear(double *percoll, double *gradWing, double t) {
     // get indices
     int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int N = d_cfg.run.N;
     // compute gradient wing
     double r1, r2, r3;
     double x1, x2;
@@ -53,7 +56,7 @@ __global__ void CuKernelWingLinear(double *percoll, double *gradWing, double t) 
 
 /* sigmoid parameters */
 #define delta_1 3.1773e-4
-#define z_0 (sysL / 2.0)
+#define z_0 (d_cfg.run.sysL / 2.0)
 #define lambda 0.0338
 #define mu_1 1.1012e-3
 #define mu_2 0.6
@@ -62,8 +65,9 @@ __global__ void CuKernelWingLinear(double *percoll, double *gradWing, double t) 
 /* Sigmoidal Percoll gradient kernel */
 __global__ void CuKernelGradSigmoid(double *percoll, double t) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int N = d_cfg.run.N;
 
-    double z = IZ * double(i);
+    double z = d_cfg.run.DZ * double(i);
     double chi = (z - z_0) / lambda;
     double mu = mu_1 * t + mu_2;
     if (i > double(N - 1) / 2) {
@@ -77,6 +81,7 @@ __global__ void CuKernelGradSigmoid(double *percoll, double t) {
 __global__ void CuKernelWingSigmoid(double *percoll, double *gradWing, double t) {
     // get indices
     int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int N = d_cfg.run.N;
     // compute gradient wing
     double r1, r2, r3;
     double x1, x2;

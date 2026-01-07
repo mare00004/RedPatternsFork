@@ -13,12 +13,16 @@ typedef struct {
     int NT;
     double T;
     double DT;
+    double DZ;
+    double sysL;
     int NO;
     char outDir[256];
 } RunParams;
 
 typedef struct {
-    unsigned char _unused;
+    int kernelN;
+    int subDiv;
+    int M;
 } ConvParams;
 
 typedef struct {
@@ -31,6 +35,8 @@ typedef struct {
     char gradient[textFieldSize];
     double U;
     double PSI;
+    double alpha;
+    double beta;
     double gamma;
     double delta;
     double kappa;

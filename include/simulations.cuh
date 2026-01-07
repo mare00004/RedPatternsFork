@@ -1,20 +1,31 @@
-#include "config.h"
 #include "cuda_kernel.cuh"
-#include "gradient.cuh"
-// #include "cuda_kernel_linear.cuh"
 #include "cuda_utils.cuh"
-#include "file.cuh"
+#include "gradient.cuh"
 #include "hdf5_file.h"
-#include "parameters.cuh"
+#include "parameters.h"
+#include "sim_types.h"
+#include <cuda_runtime_api.h>
+#include <driver_types.h>
 #include <stdio.h>
+#include <vector>
 
 /* kernel function */
-#define fLJ(r, sigma) \
-    (4 * U * (12 * pow(sigma, 12) / pow(r, 13) - 6 * pow(sigma, 6) / pow(r, 7)))
-#define g(r, d, sigmaC) (4e7 * exp(-pow(r - d, 2) / (2 * pow(sigmaC, 2))))
-void genConvKernel() {
+
+inline double fLJ(double r, double sigma, double U) {
+    return (4 * U * (12 * pow(sigma, 12) / pow(r, 13) - 6 * pow(sigma, 6) / pow(r, 7)));
+}
+
+inline double g(double r, double d, double sigmaC) {
+    return 4e7 * exp(-pow(r - d, 2) / (2 * pow(sigmaC, 2)));
+}
+
+void genConvKernel(double *intKernel, double DZ, double U) {
+    // TODO figure out what does do and why i need the outside of the convolution version
+    int kernelN = 31;
+    double subDiv = 256.0;
+
     // compute effective potential
-    double kernelL = (double(kernelN) - 1) * IZ / subDiv;
+    double kernelL = (double(kernelN) - 1) * DZ / subDiv;
     double kernelDZ = kernelL / double(kernelN - 1);
     double subRes = 10000;
     double fineRes = subRes * (double(kernelN + 1) / 2);
@@ -27,15 +38,20 @@ void genConvKernel() {
     double sigmaC = 0.5e-6;
     double eqDist =
         6.58546720106423709125472581993321341542468871921300888061523437500000000000000000e-06;
+
     // use central interval positions
     double sum = 0;
     kernelFine[0] = 0; // avoid divergence of force term at zero
+
     for (int i = 1; i < fineRes; i++) {
+
         fineR = double(i * fineDR);
-        force = fLJ(fineR, sigma);
+        force = fLJ(fineR, sigma, U);
         gpdf = g(fineR, eqDist, sigmaC);
-        if (fineR < 1e-8) // make up for numerical error near divergence
+
+        if (fineR < 1e-8) { // make up for numerical error near divergence
             gpdf = 0.0;
+        }
         kernelFine[i] = sum; // compute integral
         sum = sum + fineDR * force * gpdf;
     }
@@ -57,7 +73,9 @@ void genConvKernel() {
 }
 
 /* initial values for phi */
-void initPhi(double *f, double *R) {
+// TODO wrong || used in statements
+// TODO whats with the coeffiecients before the exponential funciton?
+void initPhi(double *f, double *R, int N, double PSI) {
     double edgeZ = wingL + 2;
     double edgeR = wingL;
     for (int i = 0; i < N; i++)
@@ -83,195 +101,102 @@ void initPhi(double *f, double *R) {
 }
 
 #define SET_OUT_FILE(FILENAME) \
-    snprintf(outFilePath, sizeof(outFilePath), "%s/%s", cfg->run.outDir, FILENAME)
-
-__constant__ SimConfig d_cfg;
+    snprintf(outFilePath, sizeof(outFilePath), "%s/%s", cfg.run.outDir, FILENAME)
 
 /* running simulation */
-void runSim(SimConfig *cfg) {
+void runSim(SimConfig &cfg) {
     TSWriter w;
     char outFilePath[400];
-    char outFileName[50];
 
-    // cudaMemcpy(&d_cfg, cfg, sizeof(SimConfig), cudaMemcpyHostToDevice);
+    // TODO some values might not exist if i a not using the convolution version
+    int N = cfg.run.N;
+    int vecSize = N * sizeof(double);
+    int matSize = N * N * sizeof(double);
 
-    // snprintf(outFileName, sizeof(outFileName), "%s/run.h5", cfg->run.outDir);
+    int M, kernelN, kernelSize, interpolationSize;
+    if (cfg.model.modelType == CONV) {
+        M = cfg.model.variant.Conv.M;
+        kernelN = cfg.model.variant.Conv.kernelN;
+        kernelSize = kernelN * sizeof(double);
+        interpolationSize = M * sizeof(double);
+    }
+
+    printf("Creating save file...\n");
     SET_OUT_FILE("run.h5");
-    ts_open(&w, outFilePath, (hsize_t)cfg->run.N);
+    ts_open(&w, outFilePath, (hsize_t)cfg.run.N);
 
-    // constants to device memory
-    checkCuda(
-        cudaMemcpyToSymbol(c_nu, &(cfg->model.variant.Tayl.NU), sizeof(double), 0, cudaMemcpyHostToDevice));
-    checkCuda(
-        cudaMemcpyToSymbol(c_mu, &(cfg->model.variant.Tayl.MU), sizeof(double), 0, cudaMemcpyHostToDevice));
-    checkCuda(
-        cudaMemcpyToSymbol(c_IZ, &IZ, sizeof(double), 0, cudaMemcpyHostToDevice));
-    checkCuda(
-        cudaMemcpyToSymbol(c_IT, &IT, sizeof(double), 0, cudaMemcpyHostToDevice));
-    checkCuda(cudaMemcpyToSymbol(
-        c_PSI,
-        &PSI,
-        sizeof(double),
-        0,
-        cudaMemcpyHostToDevice));
-    checkCuda(cudaMemcpyToSymbol(
-        c_beta,
-        &h_beta,
-        sizeof(double),
-        0,
-        cudaMemcpyHostToDevice));
-    checkCuda(cudaMemcpyToSymbol(
-        c_alpha,
-        &h_alpha,
-        sizeof(double),
-        0,
-        cudaMemcpyHostToDevice));
-    checkCuda(cudaMemcpyToSymbol(
-        c_gamma,
-        &h_gamma,
-        sizeof(double),
-        0,
-        cudaMemcpyHostToDevice));
-    checkCuda(cudaMemcpyToSymbol(
-        c_delta,
-        &h_delta,
-        sizeof(double),
-        0,
-        cudaMemcpyHostToDevice));
-    checkCuda(cudaMemcpyToSymbol(
-        c_kappa,
-        &h_kappa,
-        sizeof(double),
-        0,
-        cudaMemcpyHostToDevice));
+    printf("Allocating host memory...\n");
+    std::vector<double> h_R(N);
+    std::vector<double> h_phi(N * N);
+    std::vector<double> h_J(N * N);
+    std::vector<double> h_dJ(N * N);
+    std::vector<double> h_psi(N);
+    std::vector<double> h_I(N);
+    std::vector<double> h_percoll(N);
+    std::vector<double> h_gradWing(N);
+    std::vector<double> h_intKernel(N); // Only needs kernelN < N many elements, but kernelN is not defined for TAYL version
 
-    // coordinates
-    printf("writing coordinate arrays to GPU mem.\n");
-    double *R = new double[N]; // density dimension vector
-    for (int j = 0; j < N; j++)
-        R[j] = RC - RL / 2 + RL * (double(j) / double(N - 1));
-    int bytes = 0; // size of array or vector
-    // R device array
-    bytes = N * sizeof(double);
-    double *d_R; // R on device
-    // (1) allocate
-    checkCuda(cudaMalloc((void **)&d_R, bytes));
-    // (2) write initial values
-    checkCuda(cudaMemcpy(d_R, R, bytes, cudaMemcpyHostToDevice));
-    // arrays of volumetric density and flux
-    printf("writing flux and density arrays to GPU mem.\n");
-    double *phi = new double[N * N];
-    double *dJ = new double[N * N];
-    double *J = new double[N * N];
-    // write initial values (calculated from R)
-    initPhi(phi, R);
-    /* write initial condition to drive
-    sprintf(outFileName,"initPhi.dat");
-    saveArrToDrive(phi,outFileName);*/
-    // device arrays
-    bytes = N * N * sizeof(double);
-    double *d_phi, *d_dJ, *d_J;
-    // (1) allocate
-    checkCuda(cudaMalloc((void **)&d_phi, bytes));
-    checkCuda(cudaMalloc((void **)&d_dJ, bytes));
-    checkCuda(cudaMalloc((void **)&d_J, bytes));
-    // (2) write initial values
-    checkCuda(cudaMemcpy(d_phi, phi, bytes, cudaMemcpyHostToDevice));
-    checkCuda(cudaMemset(d_dJ, 0, bytes));
-    checkCuda(cudaMemset(d_J, 0, bytes));
-    printf("writing vectors to GPU mem.\n");
+    printf("Allocating device memory...\n");
+    double *d_R, *d_phi, *d_J, *d_dJ, *d_intKernel, *d_I, *d_psi, *d_psiIntp, *d_IIntp, *d_percoll, *d_gradWing, *d_b, *d_c, *d_d;
+    cudaMalloc(&d_R, vecSize);
+    cudaMalloc(&d_phi, matSize);
+    cudaMalloc(&d_J, matSize);
+    cudaMalloc(&d_dJ, matSize);
+    cudaMalloc(&d_I, vecSize);
+    cudaMalloc(&d_psi, vecSize);
+    cudaMalloc(&d_percoll, vecSize);
+    cudaMalloc(&d_gradWing, vecSize);
+    cudaMalloc(&d_b, vecSize);
+    cudaMalloc(&d_c, vecSize);
+    cudaMalloc(&d_d, vecSize);
 
-    /* interaction kernel */
-    genConvKernel();
-    SET_OUT_FILE("intKernel.dat");
-    saveNVecToDrive(intKernel, outFilePath, kernelN);
-    bytes = kernelN * sizeof(double);
-    double *d_intKernel;
-    // (1) allocate
-    printf("allocate intkernel.\n");
-    checkCuda(cudaMalloc((void **)&d_intKernel, bytes));
-    // (2) write initial values
-    printf("write intkernel.\n");
-    checkCuda(
-        cudaMemcpy(d_intKernel, intKernel, bytes, cudaMemcpyHostToDevice));
+    if (cfg.model.modelType == CONV) {
+        cudaMalloc(&d_intKernel, kernelN);
+        cudaMalloc(&d_psiIntp, interpolationSize);
+        cudaMalloc(&d_IIntp, interpolationSize);
+    }
 
-    /* interaction integral */
-    double *psi = new double[N]; // for gathering data from device
-    double *I = new double[N];   // for gathering data from device
-    bytes = N * sizeof(double);
-    double *d_I;
-    // (1) allocate
-    printf("allocate integral.\n");
-    checkCuda(cudaMalloc((void **)&d_I, bytes));
-    // (2) write initial values
-    printf("write integral.\n");
-    checkCuda(cudaMemset(d_I, 0, bytes));
+    printf("Initializing device memory...\n");
+    // Initializing density coordinate rho.
+    for (int j = 0; j < N; j++) {
+        h_R[j] = RC - RL / 2 + RL * (double(j) / double(N - 1));
+    }
+    cudaMemcpy(d_R, h_R.data(), vecSize, cudaMemcpyHostToDevice);
 
-    /* psi - volume fraction */
-    printf("allocate psi.\n");
-    bytes = N * sizeof(double);
-    double *d_psi;
-    // (1) allocate
-    checkCuda(cudaMalloc((void **)&d_psi, bytes));
-    printf("write psi.\n");
-    // (2) write initial values
-    checkCuda(cudaMemset(d_psi, 0, bytes));
+    // Initializing phi.
+    initPhi(h_phi.data(), h_R.data(), N, cfg.model.PSI);
+    cudaMemcpy(d_phi, h_phi.data(), matSize, cudaMemcpyHostToDevice);
 
-    /* interpolated psi */
-    printf("allocate interpolated psi.\n");
-    bytes = sizeof(double) * M;
-    double *d_psiIntp;
-    // (1) allocate
-    checkCuda(cudaMalloc((void **)&d_psiIntp, bytes));
-    printf("write psi.\n");
-    // (2) write initial values
-    checkCuda(cudaMemset(d_psiIntp, 0, bytes));
+    // Initializing fluxes.
+    cudaMemset(d_J, 0, matSize);
+    cudaMemset(d_dJ, 0, matSize);
 
-    /* interpolated I integral */
-    printf("allocate interpolated I.\n");
-    bytes = sizeof(double) * M;
-    double *d_IIntp;
-    // (1) allocate
-    checkCuda(cudaMalloc((void **)&d_IIntp, bytes));
-    printf("write psi.\n");
-    // (2) write initial values
-    checkCuda(cudaMemset(d_IIntp, 0, bytes));
+    if (cfg.model.modelType == CONV) {
+        // Initializing convolution kernel
+        genConvKernel(h_intKernel.data(), cfg.run.DZ, cfg.model.U);
+        cudaMemcpy(d_intKernel, h_intKernel.data(), kernelSize, cudaMemcpyHostToDevice);
 
-    /* percoll - gradient */
-    printf("allocate percoll.\n");
-    double *percoll = new double[N];
-    for (int k = 0; k < N; k++)
-        percoll[k] = 0.0;
+        // Initializing interpolated psi.
+        cudaMemset(d_psiIntp, 0, interpolationSize);
 
-    // percoll device array
-    bytes = N * sizeof(double);
-    double *d_percoll; // R on device
-    // (1) allocate
-    checkCuda(cudaMalloc((void **)&d_percoll, bytes));
-    // (2) write initial values
-    checkCuda(cudaMemcpy(d_percoll, percoll, bytes, cudaMemcpyHostToDevice));
+        // Initializing interpolated integral.
+        cudaMemset(d_IIntp, 0, interpolationSize);
+    }
 
-    // gradient wing
-    printf("allocate gradient wing.\n");
-    double *gradWing = new double[N];
-    for (int i = 0; i < N; i++)
-        gradWing[i] = 0.0;
-    // gradient wing device array
-    bytes = N * sizeof(double);
-    double *d_gradWing; // R on device
-    // (1) allocate
-    checkCuda(cudaMalloc((void **)&d_gradWing, bytes));
-    // (2) write initial values
-    checkCuda(cudaMemcpy(d_gradWing, gradWing, bytes, cudaMemcpyHostToDevice));
+    // Interaction integral.
+    cudaMemset(d_I, 0, vecSize);
 
-    // arrays for interpolation computation
-    bytes = (M - 1) * sizeof(double);
-    double *d_alp;
-    checkCuda(cudaMalloc((void **)&d_alp, bytes));
-    checkCuda(cudaMemset(d_alp, 0, bytes));
+    // Initializing psi.
+    cudaMemset(d_psi, 0, vecSize);
 
-    // output interpolation
-    double psiIntp[int(M)];
+    // Initializing percoll gradient and gradient wing.
+    cudaMemset(d_percoll, 0, vecSize);
+    cudaMemset(d_gradWing, 0, vecSize);
+
+    // Initialize arrays for spline interpolation.
+    cudaMemset(d_b, 0, vecSize);
+    cudaMemset(d_c, 0, vecSize);
+    cudaMemset(d_d, 0, vecSize);
 
     printf("starting timer.\n");
     // start time measurement
@@ -279,6 +204,7 @@ void runSim(SimConfig *cfg) {
     cudaEvent_t startEvent, stopEvent;
     checkCuda(cudaEventCreate(&startEvent));
     checkCuda(cudaEventCreate(&stopEvent));
+
     printf("defining grid and starting loop.\n");
     // Kernel invocation
     int nBlocksX, nBlocksY, nThreadsX, nThreadsY;
@@ -292,65 +218,59 @@ void runSim(SimConfig *cfg) {
     dim3 numBlocks(nBlocksX, nBlocksY);
     dim3 threadsPerBlock(nThreadsX, nThreadsY);
 
-    dim3 numBlocksA(subDiv, 1);
-    dim3 threadsPerBlockA(N, 1);
-
     dim3 numBlocksD(1, 1);
     dim3 threadsPerBlockD(N, 1);
 
-    printf("N = %d, M = %d\n", N, M);
-    printf("alpha = %.32e\nbeta = %.32e\n", h_alpha, h_beta);
-    printf(
-        "gamma = %.32e\ndelta = %.32e\nkappa = %.32e\n",
-        h_gamma,
-        h_delta,
-        h_kappa);
-    printf("system size L = %.32e m\n", sysL);
-    printf("increment size dz = %.32e m\n", IZ);
-    printf(
-        "launching with\n nBlocksX\t| nThreadsX\t| nBlocksY\t| nThreadsY\n "
-        "%d\t\t| %d\t\t| %d\t\t| %d\n",
-        nBlocksX,
-        nThreadsX,
-        nBlocksY,
-        nThreadsY);
     checkCuda(cudaEventRecord(startEvent, 0));
 
     /**************************************************************/
-    ts_writeR(&w, R);
+    ts_writeR(&w, h_R.data());
     // ts_writeZ(&w, Z);
     /**************************************************************/
 
     // iteration loop
-    int n_out = NO;
+    int n_out = cfg.run.NO;
+    int NT = cfg.run.NT;
+    int DT = cfg.run.DT;
     double t = 0.0;
     for (int i = 0; i < NT; i++) {
         /* integration */
         CuKernelInte<<<numBlocks, threadsPerBlock>>>(d_phi, d_psi);
-        if (cfg->model.modelType == CONV) {
-            /* interpolation */
-            CuKernelCmpA<<<numBlocksA, threadsPerBlockA>>>(d_psi, d_alp);
-            CuKernelCmpL<<<numBlocksA, threadsPerBlockA>>>(d_psi, d_alp, d_psiIntp);
+
+        if (cfg.model.modelType == CONV) {
+            dim3 numBlocksA(cfg.model.variant.Conv.subDiv, 1);
+            dim3 threadsPerBlockA(N, 1);
+            size_t shared_mem = 3ull * N * sizeof(double);
+
+            int subDiv = cfg.model.variant.Conv.subDiv;
+            int kernelN = cfg.model.variant.Conv.kernelN;
+
+            CuKernelSplineCoeffs<<<1, 1, shared_mem>>>(d_psi, d_b, d_c, d_d, N);
+            CuKernelSplineEval<<<numBlocksA, threadsPerBlockA>>>(d_psi, d_b, d_c, d_d, d_psiIntp, N, M, subDiv);
             CuKernelConv<<<numBlocksA, threadsPerBlockA>>>(
                 d_psiIntp,
                 d_IIntp,
-                d_intKernel);
-            CuKernelDSmp<<<numBlocksD, threadsPerBlockD>>>(d_IIntp, d_I);
-        } else if (cfg->model.modelType == TAYL) {
-            // CuKernelTayl<<<numBlocksD, threadsPerBlockD>>>(d_psi, d_I, d_cfg.model.variant.Tayl.NU, d_cfg.model.variant.Tayl.MU);
-            CuKernelTayl<<<numBlocksD, threadsPerBlockD>>>(d_psi, d_I, cfg->model.variant.Tayl.NU, cfg->model.variant.Tayl.MU);
+                d_intKernel,
+                M,
+                kernelN,
+                subDiv);
+            CuKernelSplineDownSample<<<numBlocksD, threadsPerBlockD>>>(d_IIntp, d_I, subDiv);
+        } else if (cfg.model.modelType == TAYL) {
+            CuKernelTayl<<<numBlocksD, threadsPerBlockD>>>(d_psi, d_I, cfg.model.variant.Tayl.NU, cfg.model.variant.Tayl.MU);
         } else {
             printf("This branch should never be reached!");
         }
-        if (strcmp(cfg->model.gradient, "linear") == 0) {
+
+        if (strcmp(cfg.model.gradient, "linear") == 0) {
             CuKernelGradLinear<<<numBlocks, threadsPerBlock>>>(d_percoll, t);
             CuKernelWingLinear<<<numBlocks, threadsPerBlock>>>(d_percoll, d_gradWing, t);
-        } else if (strcmp(cfg->model.gradient, "sigmoid") == 0) {
+        } else if (strcmp(cfg.model.gradient, "sigmoid") == 0) {
             CuKernelGradSigmoid<<<numBlocks, threadsPerBlock>>>(d_percoll, t);
             CuKernelWingSigmoid<<<numBlocks, threadsPerBlock>>>(d_percoll, d_gradWing, t);
         } else {
             printf("This branch should never be reached!");
         }
+
         /* iteration */
         CuKernelIter<<<numBlocks, threadsPerBlock>>>(
             d_phi,
@@ -360,88 +280,36 @@ void runSim(SimConfig *cfg) {
             d_R,
             d_I,
             d_psi,
-            d_intKernel,
             t,
             d_gradWing);
+
+        cudaDeviceSynchronize();
+
         if ((((i - 1) % n_out) == 0) | (i == 1) | (i == NT)) {
             // retrieve data from GPU mem
-            bytes = N * N * sizeof(double);
-            checkCuda(cudaMemcpy(phi, d_phi, bytes, cudaMemcpyDeviceToHost));
-            checkCuda(cudaMemcpy(J, d_J, bytes, cudaMemcpyDeviceToHost));
-            checkCuda(cudaMemcpy(dJ, d_dJ, bytes, cudaMemcpyDeviceToHost));
-            checkCuda(
-                cudaMemcpy(I, d_I, N * sizeof(double), cudaMemcpyDeviceToHost));
-            checkCuda(cudaMemcpy(
-                psi,
-                d_psi,
-                N * sizeof(double),
-                cudaMemcpyDeviceToHost));
-            checkCuda(cudaMemcpy(
-                psiIntp,
-                d_psiIntp,
-                N * sizeof(double) * subDiv,
-                cudaMemcpyDeviceToHost));
-            checkCuda(cudaMemcpy(
-                gradWing,
-                d_gradWing,
-                N * sizeof(double),
-                cudaMemcpyDeviceToHost));
-            checkCuda(cudaMemcpy(
-                percoll,
-                d_percoll,
-                N * sizeof(double),
-                cudaMemcpyDeviceToHost));
-            // checkCuda( cudaMemcpy(IIntp, d_IIntp, N*sizeof(double)*subDiv,
-            // cudaMemcpyDeviceToHost) );
-            //  write data to file
-
-            sprintf(outFileName, "phi_%010d.dat", i);
-            SET_OUT_FILE(outFileName);
-            saveArrToDrive(phi, outFilePath);
-
-            sprintf(outFileName, "psi_%010d.dat", i);
-            SET_OUT_FILE(outFileName);
-            saveVecToDrive(psi, outFilePath);
-
-            sprintf(outFileName, "gW_%010d.dat", i);
-            SET_OUT_FILE(outFileName);
-            saveVecToDrive(gradWing, outFilePath);
-
-            sprintf(outFileName, "gP_%010d.dat", i);
-            SET_OUT_FILE(outFileName);
-            saveVecToDrive(percoll, outFilePath);
+            checkCuda(cudaMemcpy(h_phi.data(), d_phi, matSize, cudaMemcpyDeviceToHost));
+            checkCuda(cudaMemcpy(h_I.data(), d_I, vecSize, cudaMemcpyDeviceToHost));
+            checkCuda(cudaMemcpy(h_psi.data(), d_psi, vecSize, cudaMemcpyDeviceToHost));
 
             /**************************************/
-            ts_append(&w, t, phi, psi);
+            ts_append(&w, t, h_phi.data(), h_psi.data());
             /**************************************/
-
-            /* optional output
-            sprintf(outFileName,"J_%010d.dat",i);
-            saveArrToDrive(J,outFileName);
-            sprintf(outFileName,"dJ_%010d.dat",i);
-            saveArrToDrive(dJ,outFileName);
-            sprintf(outFileName,"I_%010d.dat",i);
-            saveVecToDrive(I,outFileName);
-
-
-            sprintf(outFileName,"pit_%010d.dat",i);
-            saveIntVecToDrive(psiIntp,outFileName);
-            */
 
             // measure time
             checkCuda(cudaEventRecord(stopEvent, 0));
             checkCuda(cudaEventSynchronize(stopEvent));
-            checkCuda(
-                cudaEventElapsedTime(&milliseconds, startEvent, stopEvent));
+            checkCuda(cudaEventElapsedTime(&milliseconds, startEvent, stopEvent));
+
             printf("step: %d/%d\n", i, NT);
             printf("runtime (sec): %.5f\n", milliseconds / 1000.0);
-            printf(
-                "remaining (sec): %.5f\n",
-                milliseconds / 1000.0 * (NT - i) / i);
+            printf("remaining (sec): %.5f\n", milliseconds / 1000.0 * (NT - i) / i);
         }
-        t += IT;
+
+        t += DT;
     }
+
     printf("finished.\n\n");
+
     // stop timer
     checkCuda(cudaEventRecord(stopEvent, 0));
     checkCuda(cudaEventSynchronize(stopEvent));
@@ -456,23 +324,20 @@ void runSim(SimConfig *cfg) {
     checkCuda(cudaEventDestroy(startEvent));
     checkCuda(cudaEventDestroy(stopEvent));
 
-    checkCuda(cudaFree(d_phi));
-    checkCuda(cudaFree(d_dJ));
-    checkCuda(cudaFree(d_J));
-    checkCuda(cudaFree(d_R));
-    checkCuda(cudaFree(d_percoll));
-    checkCuda(cudaFree(d_I));
-    checkCuda(cudaFree(d_intKernel));
-    checkCuda(cudaFree(d_psi));
-    checkCuda(cudaFree(d_psiIntp));
-    checkCuda(cudaFree(d_IIntp));
-    checkCuda(cudaFree(d_alp));
-    checkCuda(cudaFree(d_gradWing));
-
-    delete[] phi;
-    delete[] dJ;
-    delete[] J;
-    delete[] I;
+    cudaFree(d_R);
+    cudaFree(d_phi);
+    cudaFree(d_J);
+    cudaFree(d_dJ);
+    cudaFree(d_intKernel);
+    cudaFree(d_I);
+    cudaFree(d_psi);
+    cudaFree(d_psiIntp);
+    cudaFree(d_IIntp);
+    cudaFree(d_percoll);
+    cudaFree(d_gradWing);
+    cudaFree(d_b);
+    cudaFree(d_c);
+    cudaFree(d_d);
 
     /****************************/
     ts_close(&w);
