@@ -92,7 +92,7 @@ __global__ void CuKernelSplineEval(
 
     int k = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (k >= M - 1) {
+    if (k >= M) {
         return;
     }
 
