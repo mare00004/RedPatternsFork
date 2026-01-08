@@ -6,8 +6,6 @@
 #include "simulations.cuh"
 #include <stdio.h>
 
-__constant__ SimConfig d_cfg;
-
 int main(int argc, char *argv[]) {
     SimConfig cfg;
 
@@ -34,7 +32,11 @@ int main(int argc, char *argv[]) {
     printf("\nDevice Name: %s\n", prop.name);
     printf("Compute Capability: %d.%d\n\n", prop.major, prop.minor);
 
-    checkCuda(cudaMemcpyToSymbol(d_cfg, &cfg, sizeof(SimConfig), cudaMemcpyHostToDevice));
+    cudaError_t err = cudaMemcpyToSymbol(d_cfg, &cfg, sizeof(SimConfig));
+    if (err != cudaSuccess) {
+        fprintf(stderr, "CRITICAL: Failed to copy config to GPU: %s\n", cudaGetErrorString(err));
+        exit(1);
+    }
 
     printf("Starting Simulation...\n");
     runSim(cfg);
