@@ -63,6 +63,7 @@ add_executable(red-patterns
     src/cli.c
     src/gpu_state.cu
     src/simulations.cu
+    src/cuda_kernel.cu
 )
 
 # Enable rdc
