@@ -64,12 +64,12 @@ __global__ void CuKernelSplineCoeffs(
         }
 
         // Natural boundary conditions
-        mu[256 - 1] = 0.0;
-        ze[256 - 1] = 0.0;
-        c[256 - 1] = 0.0;
+        mu[N - 1] = 0.0;
+        ze[N - 1] = 0.0;
+        c[N - 1] = 0.0;
 
         // Backwards substitution
-        for (int i = 256 - 2; i >= 0; i--) {
+        for (int i = N - 2; i >= 0; i--) {
             c[i] = ze[i] - mu[i] * c[i + 1];
             b[i] = (y[i + 1] - y[i]) - (c[i + 1] + 2.0 * c[i]) / 3.0;
             d[i] = (c[i + 1] - c[i]) / 3.0;
