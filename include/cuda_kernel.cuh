@@ -26,14 +26,10 @@ __global__ void CuKernelInte(double *phi, double *psi) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     double sum = 0.0;
 
-    __syncthreads();
-
     // discrete sum integration
     for (int k = 0; k < d_cfg.run.N; k++) {
         sum += phi[k * d_cfg.run.N + i]; // TODO multiply by Delta rho?
     }
-
-    __syncthreads();
 
     psi[i] = sum;
 }
@@ -118,10 +114,7 @@ __global__ void CuKernelSplineDownSample(double *IIntp, double *I, int subDiv) {
     // get indices
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int j = i * subDiv;
-    I[i] = 0;
-    __syncthreads();
     I[i] = IIntp[j];
-    __syncthreads();
 }
 
 /* convolution kernel */
