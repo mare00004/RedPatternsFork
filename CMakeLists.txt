@@ -61,6 +61,8 @@ add_executable(red-patterns
     src/hdf5_file.c
     src/config.c
     src/cli.c
+    src/gpu_state.cu
+    src/simulations.cu
 )
 
 # Enable rdc
