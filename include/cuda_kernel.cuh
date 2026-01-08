@@ -45,7 +45,6 @@ __global__ void CuKernelSplineCoeffs(
     extern __shared__ double shared[]; // Layout [mu | ze]
     double *mu = shared;
     double *ze = shared + N;
-    double alpha;
 
     /**
      * This is a sequential implementation of the Thomas-Algorithm.
@@ -57,8 +56,8 @@ __global__ void CuKernelSplineCoeffs(
         ze[0] = 0.0;
 
         // Forward sweep
-        for (int i = 1; i <= 256 - 2; i++) {
-            alpha = 3.0 * (y[i + 1] - y[i]) / 1.0 - 3.0 * (y[i] - y[i - 1]) / 1.0;
+        for (int i = 1; i <= N - 2; i++) {
+            const double alpha = 3.0 * (y[i + 1] - y[i]) / 1.0 - 3.0 * (y[i] - y[i - 1]) / 1.0;
             const double denom = 4.0 - mu[i - 1];
             mu[i] = 1.0 / denom;
             ze[i] = (alpha - ze[i - 1]) / denom;
