@@ -1,0 +1,102 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run Simulation - Convolution, Sigmoid",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.launchTargetPath}",
+            "args": [
+                "--use-convolution",
+                "--T=1800.0",
+                "--DT=0.0005",
+                "--NO=3000",
+                "--gradient=sigmoid",
+                "--U=1.1115e-16",
+                "--PSI=0.02",
+                "--gamma=1.8e-10",
+                "--delta=1e-11",
+                "--kappa=1e-25",
+                "--out-dir=${workspaceFolder}/data/conv_sigmoid",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                {
+                    "name": "LD_LIBRARY_PATH",
+                    "value": "${env:LD_LIBRARY_PATH}:${command:cmake.buildDirectory}"
+                }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "preLaunchTask": "${defaultBuildTask}"
+        },
+        {
+            "name": "Debug CUDA - Convolution, Sigmoid",
+            "type": "cuda-gdb",
+            "request": "launch",
+            "program": "${command:cmake.launchTargetPath}",
+            "miDebuggerPath": "/usr/local/cuda-13.0/bin/cuda-gdb",
+            "args": [
+                "--use-convolution",
+                "--T=100.0",
+                "--DT=0.05",
+                "--NO=3000",
+                "--gradient=sigmoid",
+                "--U=1.1115e-16",
+                "--PSI=0.02",
+                "--gamma=1.8e-10",
+                "--delta=1e-11",
+                "--kappa=1e-25",
+                "--out-dir=${workspaceFolder}/data/conv_sigmoid"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                {
+                    "name": "LD_LIBRARY_PATH",
+                    "value": "${env:LD_LIBRARY_PATH}:${command:cmake.buildDirectory}"
+                }
+            ],
+            // "preLaunchTask" ensures CMake builds before you debug
+            "preLaunchTask": "${defaultBuildTask}"
+        },
+        {
+            "name": "Debug Host - Convolution, Sigmoid",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.launchTargetPath}",
+            "args": [
+                "--use-convolution",
+                "--T=10.0",
+                "--DT=0.05",
+                "--NO=500",
+                "--gradient=sigmoid",
+                "--U=1.1115e-16",
+                "--PSI=0.02",
+                "--gamma=1.8e-10",
+                "--delta=1e-11",
+                "--kappa=1e-25",
+                "--out-dir=${workspaceFolder}/data/conv_sigmoid"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                {
+                    "name": "LD_LIBRARY_PATH", 
+                    "value": "${env:LD_LIBRARY_PATH}:${command:cmake.buildDirectory}"
+                }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "${defaultBuildTask}"
+        },
+    ]
+}

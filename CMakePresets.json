@@ -1,0 +1,56 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 15,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "base-linux",
+            "hidden": true,
+            "description": "Base configuration for Linux/WSL with Mamba",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "CMAKE_CUDA_STANDARD": "14",
+                "CMAKE_C_STANDARD": "99"
+            },
+            "environment": {
+                "CMAKE_PREFIX_PATH": "$env{CONDA_PREFIX}" 
+            }
+        },
+        {
+            "name": "dev-debug",
+            "displayName": "Development (Debug)",
+            "description": "Debug build with CUDA debug symbols",
+            "inherits": "base-linux",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_CUDA_ARCHITECTURES": "86",
+                "CMAKE_CUDA_FLAGS_DEBUG": "-g -G -O0"
+            }
+        },
+        {
+            "name": "release",
+            "displayName": "Release",
+            "description": "Optimized release build",
+            "inherits": "base-linux",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_CUDA_ARCHITECTURES": "86"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "debug",
+            "configurePreset": "dev-debug"
+        },
+        {
+            "name": "release",
+            "configurePreset": "release"
+        }
+    ]
+}
