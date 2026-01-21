@@ -1,0 +1,14 @@
+name: cuda-dev
+channels:
+  - conda-forge
+dependencies:
+  - cmake
+  - make
+  - pkg-config
+  - gcc_linux-64
+  - gxx_linux-64
+  # - cuda-toolkit also installs a cuda-gdb package which does not work for some reason
+  - cuda-nvcc
+  - cuda-cudart-dev
+  - cuda-driver-dev
+  - hdf5=1.14
