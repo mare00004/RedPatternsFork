@@ -2,7 +2,7 @@
 #include "sim_types.h"
 #include <string.h>
 
-/* TODO
+/* TODO:
  * - Do some actual agrument validation
  */
 
