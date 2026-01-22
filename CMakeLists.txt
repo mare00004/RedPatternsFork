@@ -3,7 +3,12 @@ cmake_minimum_required(VERSION 3.15...4.2)
 project(
     MyProject VERSION 0.1
     DESCRIPTION "Red Pattern Simulation"
-    LANGUAGES C CUDA)
+    LANGUAGES C CXX CUDA)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_INCLUDES OFF)
+set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_OBJECTS OFF)
+set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES OFF)
 
 # ------------------------------------------------------------------------------------------------
 # General Settings
@@ -22,8 +27,9 @@ endif()
 
 # Default to Ampere architecture
 if (NOT CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES 86)
+    set(CMAKE_CUDA_ARCHITECTURES native) 
 endif()
+
 
 # Use RELEASE builds by default
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -65,6 +71,20 @@ add_executable(red-patterns
     src/simulations.cu
     src/cuda_kernel.cu
 )
+
+if(CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
+    foreach(std_dir ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES})
+        target_compile_options(red-patterns PRIVATE
+            $<$<COMPILE_LANGUAGE:CUDA>:-isystem${std_dir}>
+        )
+    endforeach()
+endif()
+
+if(CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES)
+    target_include_directories(red-patterns SYSTEM PRIVATE
+        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+    )
+endif()
 
 # Enable rdc
 set_target_properties(red-patterns PROPERTIES
