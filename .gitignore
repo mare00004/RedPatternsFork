@@ -9,3 +9,4 @@ data/
 .git
 .cache
 DOCKER_TOKEN
+analysis/__marimo__/*
