@@ -11,7 +11,7 @@ void setDefaults(SimConfig *c) {
     double fineDZ = 1.041412353515625e-6;
     int subDiv = 256;
     int M = (N - 1) * subDiv + 1;
-    double sysL = (double)M * fineDZ;
+    double sysL = (double)(M - 1) * fineDZ;
     double DZ = sysL / ((double)N - 1);
 
     *c = (SimConfig){
