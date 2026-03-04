@@ -14,6 +14,7 @@ typedef struct {
     double T;
     double DT;
     double DZ;
+    double fineDZ;
     double sysL;
     int NO;
     char outDir[256];

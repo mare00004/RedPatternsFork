@@ -8,9 +8,11 @@
 /* API */
 void setDefaults(SimConfig *c) {
     int N = 256;
-    double DZ = 1.041412353515625e-6;
+    double fineDZ = 1.041412353515625e-6;
     int subDiv = 256;
     int M = (N - 1) * subDiv + 1;
+    double sysL = (double)M * fineDZ;
+    double DZ = sysL / ((double)N - 1);
 
     *c = (SimConfig){
         .run = {
@@ -19,7 +21,8 @@ void setDefaults(SimConfig *c) {
             .T = 1200,
             .DT = 0.005,
             .DZ = DZ,
-            .sysL = (double)M * DZ,
+            .fineDZ = fineDZ,
+            .sysL = sysL,
             .NO = 2000,
             .outDir = "./",
         },
@@ -35,7 +38,7 @@ void setDefaults(SimConfig *c) {
             .kappa = 1e-15,
             .variant = {
                 .Conv = (ConvParams){
-                    .kernelN = 31, // TODO why 31?
+                    .kernelN = 31, // TODO: why 31?
                     .subDiv = 256,
                     .M = M,
                 },
