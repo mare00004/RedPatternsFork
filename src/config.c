@@ -108,7 +108,7 @@ int deriveAndValidateOrDie(SimConfig *c) {
         fprintf(stderr, "U needs to be positive\n");
         return -1;
     }
-    if (strcmp(c->model.gradient, "linear") != 0 && strcmp(c->model.gradient, "sigmoid")) {
+    if (strcmp(c->model.gradient, "linear") != 0 && strcmp(c->model.gradient, "sigmoid") != 0) {
         fprintf(stderr, "gradient has to be one of: linear, sigmoid!\n");
         return -1;
     }
@@ -122,9 +122,9 @@ int deriveAndValidateOrDie(SimConfig *c) {
      **********/
     c->run.NT = ceil(c->run.T / c->run.DT);
 
-    if (strcmp(c->model.gradient, "sigmoid")) {
+    if (strcmp(c->model.gradient, "sigmoid") != 0) {
         c->model.alpha = 2.0e-04;
-    } else if (strcmp(c->model.gradient, "linear")) {
+    } else if (strcmp(c->model.gradient, "linear") != 0) {
         c->model.alpha = 2.0e-05;
     }
 
