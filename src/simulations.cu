@@ -216,20 +216,11 @@ void runSim(SimConfig &cfg) {
     checkCuda(cudaEventCreate(&stopEvent));
 
     printf("defining grid and starting loop.\n");
-    // Kernel invocation
-    int nBlocksX, nBlocksY, nThreadsX, nThreadsY;
-    // grid layout, usually max threads in X dimension (1024)
 
-    nThreadsX = N;
-    nThreadsY = 1;
-    nBlocksX = 1;
-    nBlocksY = N;
-
-    dim3 numBlocks(nBlocksX, nBlocksY);
-    dim3 threadsPerBlock(nThreadsX, nThreadsY);
-
-    dim3 numBlocksD(1, 1);
-    dim3 threadsPerBlockD(N, 1);
+    dim3 blockN(N, 1);
+    dim3 gridN((N + blockN.x - 1) / blockN.x, 1);
+    dim3 block2D(N, 1);
+    dim3 grid2D((N + block2D.x - 1) / block2D.x, N);
 
     checkCuda(cudaEventRecord(startEvent, 0));
 
@@ -245,39 +236,40 @@ void runSim(SimConfig &cfg) {
     double t = 0.0;
     for (int i = 0; i < NT; i++) {
         /* integration */
-        CuKernelInte<<<dim3(1, N), dim3(N, 1)>>>(d_phi, d_psi);
+        CuKernelInte<<<gridN, blockN>>>(d_phi, d_psi);
 
         if (cfg.model.modelType == CONV) {
-            dim3 numBlocksA(cfg.model.variant.Conv.subDiv, 1);
-            dim3 threadsPerBlockA(N, 1);
+            dim3 blockM(N, 1);
+            dim3 gridM((M + blockM.x - 1) / blockM.x, 1);
+
             size_t shared_mem = 3ull * N * sizeof(double);
 
             int subDiv = cfg.model.variant.Conv.subDiv;
             int kernelN = cfg.model.variant.Conv.kernelN;
 
             CuKernelSplineCoeffs<<<1, 1, shared_mem>>>(d_psi, d_b, d_c, d_d, N);
-            CuKernelSplineEval<<<numBlocksA, threadsPerBlockA>>>(d_psi, d_b, d_c, d_d, d_psiIntp, N, M, subDiv);
-            CuKernelConv<<<numBlocksA, threadsPerBlockA>>>(
+            CuKernelSplineEval<<<gridM, blockM>>>(d_psi, d_b, d_c, d_d, d_psiIntp, N, M, subDiv);
+            CuKernelConv<<<gridM, blockM>>>(
                 d_psiIntp,
                 d_IIntp,
                 d_intKernel,
                 M,
                 kernelN,
                 subDiv);
-            CuKernelSplineDownSample<<<numBlocksD, threadsPerBlockD>>>(d_IIntp, d_I, subDiv);
+            CuKernelSplineDownSample<<<gridN, blockN>>>(d_IIntp, d_I, subDiv);
         } else if (cfg.model.modelType == TAYL) {
-            CuKernelTayl<<<numBlocksD, threadsPerBlockD>>>(d_psi, d_I, cfg.model.variant.Tayl.NU, cfg.model.variant.Tayl.MU);
+            CuKernelTayl<<<gridN, blockN>>>(d_psi, d_I, cfg.model.variant.Tayl.NU, cfg.model.variant.Tayl.MU);
         } else {
             printf("This branch should never be reached!");
         }
 
         // TODO: Store which model is used outside the loop! Maybe make a gradientType Enum
         if (strcmp(cfg.model.gradient, "linear") == 0) {
-            CuKernelGradLinear<<<1, N>>>(d_percoll, t);
-            CuKernelWingLinear<<<numBlocks, threadsPerBlock>>>(d_percoll, d_gradWing, t);
+            CuKernelGradLinear<<<gridN, blockN>>>(d_percoll, t);
+            CuKernelWingLinear<<<gridN, blockN>>>(d_percoll, d_gradWing, t);
         } else if (strcmp(cfg.model.gradient, "sigmoid") == 0) {
-            CuKernelGradSigmoid<<<dim3(1, N), dim3(N, 1)>>>(d_percoll, t);
-            CuKernelWingSigmoid<<<dim3(1, N), dim3(N, 1)>>>(d_percoll, d_gradWing, t);
+            CuKernelGradSigmoid<<<gridN, blockN>>>(d_percoll, t);
+            CuKernelWingSigmoid<<<gridN, blockN>>>(d_percoll, d_gradWing, t);
             if (i == 1000) {
                 cudaMemcpy(h_percoll.data(), d_percoll, vecSize, cudaMemcpyDeviceToHost);
                 ts_writeZ(&w, h_percoll.data());
@@ -287,7 +279,7 @@ void runSim(SimConfig &cfg) {
         }
 
         /* iteration */
-        CuKernelIter<<<numBlocks, threadsPerBlock>>>(
+        CuKernelIter<<<grid2D, block2D>>>(
             d_phi,
             d_J,
             d_dJ,
