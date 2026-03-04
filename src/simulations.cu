@@ -245,7 +245,7 @@ void runSim(SimConfig &cfg) {
             dim3 blockM(N, 1);
             dim3 gridM((M + blockM.x - 1) / blockM.x, 1);
 
-            size_t shared_mem = 3ull * N * sizeof(double);
+            size_t shared_mem = 2ull * N * sizeof(double);
 
             int subDiv = cfg.model.variant.Conv.subDiv;
             int kernelN = cfg.model.variant.Conv.kernelN;
