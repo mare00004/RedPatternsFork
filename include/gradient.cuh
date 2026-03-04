@@ -55,29 +55,62 @@ __global__ void CuKernelWingLinear(double *percoll, double *gradWing, double t) 
  *********************************************************/
 
 /* sigmoid parameters */
-#define delta_1 3.1773e-4
-#define z_0 (d_cfg.run.sysL / 2.0)
-#define lambda 0.0338
-#define mu_1 1.1012e-3
-#define mu_2 0.6
-#define delta_2 1.5205
-
+#define b2 3.1773e-4
+#define b3 (0.06 / 2)
+#define b4 0.0338
+#define b5 1.1012e-3
+#define b6 0.6
+#define b7 1.5205
 /* Sigmoidal Percoll gradient kernel */
 __global__ void CuKernelGradSigmoid(double *percoll, double t) {
+    // get indices
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int N = d_cfg.run.N;
-
-    double z = d_cfg.run.DZ * double(i);
-    double chi = (z - z_0) / lambda;
-    double mu = mu_1 * t + mu_2;
+    double x = d_cfg.run.DZ * double(i);
     if (i > double(N - 1) / 2) {
-        // Equivalent to chi > 0
-        percoll[i] = delta_1 * pow(t, delta_2) * (chi / pow(1 - pow(chi, mu), 1 / mu));
-    } else if (i < double(N - 1) / 2) {
-        // Equivalent to chi < 0
-        percoll[i] = delta_1 * pow(t, delta_2) * (chi / pow(1 + pow(chi, mu), 1 / mu));
+        double debug = +b2 * pow(t, b7) * (x - zShift - b3) / b4 / pow(1 - pow((x - zShift - b3) / b4, b5 * t + b6), 1 / (b5 * t + b6));
+        percoll[i] = debug;
     }
+    if (i < double(N - 1) / 2)
+        percoll[i] = -b2 * pow(t, b7) * (-x + zShift + b3) / b4 / pow(1 - pow((-x + zShift + b3) / b4, b5 * t + b6), 1 / (b5 * t + b6));
 }
+
+// TEST:
+/* sigmoid parameters */
+// #define delta_1 3.1773e-4
+// #define z_0 (d_cfg.run.sysL / 2.0)
+// #define lambda 0.0338
+// #define mu_1 1.1012e-3
+// #define mu_2 0.6
+// #define delta_2 1.5205
+//
+// __global__ void CuKernelGradSigmoid(double *percoll, double t) {
+//     int i = blockIdx.x * blockDim.x + threadIdx.x;
+//     int N = d_cfg.run.N;
+//
+//     // double z = d_cfg.run.DZ * double(i);
+//     double z = (d_cfg.run.sysL / ((double)N - 1.0)) * double(i);
+//     double mu = mu_1 * t + mu_2;
+//
+//     double chi = (z - z_0) / lambda;
+//     double abs_chi = fabs(chi);
+//
+//     /*
+//      * In the experiment the tube length was exactely 6cm. That means the measured lambda value was large enough to ensure that abs_chi < 1.
+//      * In the simulation however the system length was slightly increased to around 6.8cm, which means that lambda is no longer large enough
+//      * to ensure that abs_chi is between 0 and 1, which would leed to NaN values in the denominator.
+//      * SOLUTION: We clamp abs_chi to be smaller than 1
+//      */
+//     if (abs_chi >= 2.0) {
+//         abs_chi = 1.0 - 1e-9;
+//         // percoll[i] = 0.0;
+//         // return;
+//     }
+//
+//     double denom = pow(1.0 - pow(abs_chi, mu), 1.0 / mu);
+//     percoll[i] = delta_1 * pow(t, delta_2) * (chi / denom);
+// }
+
 __global__ void CuKernelWingSigmoid(double *percoll, double *gradWing, double t) {
     // get indices
     int i = blockIdx.x * blockDim.x + threadIdx.x;
