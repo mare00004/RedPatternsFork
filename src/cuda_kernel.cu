@@ -1,3 +1,4 @@
+#include "cmath"
 #include "cuda_kernel.cuh"
 #include "gpu_state.cuh"
 #include "parameters.h"
@@ -113,6 +114,9 @@ __global__ void CuKernelSplineEval(
 __global__ void CuKernelSplineDownSample(double *IIntp, double *I, int subDiv) {
     // get indices
     int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= d_cfg.run.N) {
+        return;
+    }
     int j = i * subDiv;
     I[i] = IIntp[j];
 }
@@ -122,11 +126,14 @@ __global__ void CuKernelConv(double *psi, double *I, double *convKernel, int M, 
     // get indices
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
+    if (i >= M) {
+        return;
+    }
+
     // compute convolution integral
     double sum = 0.0;
     int d = (kernelN - 1) / 2;
 
-    __syncthreads();
     for (int k = 0; k < kernelN; k++) {
         if ((i + (k - d) >= 0) && (i + (k - d) < M)) {
             sum += psi[i + (k - d)] * convKernel[k] * (d_cfg.run.fineDZ);
@@ -135,7 +142,18 @@ __global__ void CuKernelConv(double *psi, double *I, double *convKernel, int M, 
 
     I[i] = sum;
 
-    __syncthreads();
+/*
+ * Precompute degenerate diffusion power factors. For each i in [0, N-1],
+ * psiPow0[i] = pow(1.0 - psi[i], mDeg) and psiPow1[i] = pow(psi[i], mDeg).
+ * This kernel runs with a 1D grid over N elements.
+ */
+__global__ void CuKernelDegDiffPow(double *psi, double *psiPow0, double *psiPow1) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < d_cfg.run.N) {
+        double val = psi[i];
+        psiPow0[i] = pow(1.0 - val, mDeg);
+        psiPow1[i] = pow(val, mDeg);
+    }
 }
 
 /* main time iteration */
@@ -160,32 +178,36 @@ __global__ void CuKernelIter(
 
     // compute physical flux
     double rpTerm;
-    if ((i > wingL) & (i < N - 1 - wingL))
+    if ((i > wingL) && (i < N - 1 - wingL)) {
+
         rpTerm = R[j] + percoll[i] - P0;
-    __syncthreads();
-    if ((i <= wingL) | (i >= N - 1 - wingL))
+    }
+    if ((i <= wingL) || (i >= N - 1 - wingL)) {
         rpTerm = R[j] + gradWing[i] - P0;
-    __syncthreads();
+    }
+
     J[gi] = (d_cfg.model.alpha * rpTerm + d_cfg.model.beta * I[i]) * phi[gi];
-    __syncthreads();
+
     // compute flux derivative
     if ((i >= 4) & (i <= N - 1 - 4)) {
         // physical flux first derivative
         dJ[gi] = (+0.5 / DZ * (J[gi + 1] - J[gi - 1]));
-        // degenerate diffusion second derivative phi 0
-        dJ[gi] -= (-2.0 * (jDegDiffPhi0(gi)) +
-                      1.0 * (jDegDiffPhi0(gi + 1) + jDegDiffPhi0(gi - 1))) /
-                  (DZ * DZ) * d_cfg.model.gamma;
-        // degenerate diffusion second derivative psi 0
-        dJ[gi] -= (-2.0 * (jDegDiffPsi0(gi, i)) +
-                      1.0 * (jDegDiffPsi0(gi, i + 1) + jDegDiffPsi0(gi, i - 1))) /
-                  (DZ * DZ) * d_cfg.model.delta;
-        // degenerate diffusion second derivative psi 1
-        dJ[gi] += (-2.0 * (jDegDiffPsi1(gi, i)) +
-                      1.0 * (jDegDiffPsi1(gi, i + 1) + jDegDiffPsi1(gi, i - 1))) /
-                  (DZ * DZ) * d_cfg.model.kappa;
+        // degenerate diffusion second derivative for phi (no precomputation needed)
+        double ddPhi0_i = jDegDiffPhi0(gi);
+        double ddPhi0_p1 = jDegDiffPhi0(gi + 1);
+        double ddPhi0_m1 = jDegDiffPhi0(gi - 1);
+        dJ[gi] -= (-2.0 * ddPhi0_i + (ddPhi0_p1 + ddPhi0_m1)) / (DZ * DZ) * d_cfg.model.gamma;
+        // degenerate diffusion second derivative for psi using precomputed power arrays
+        double deg0 = psiPow0[i] * fabs(phi[gi]);
+        double deg0_p1 = psiPow0[i + 1] * fabs(phi[gi + 1]);
+        double deg0_m1 = psiPow0[i - 1] * fabs(phi[gi - 1]);
+        dJ[gi] -= (-2.0 * deg0 + (deg0_p1 + deg0_m1)) / (DZ * DZ) * d_cfg.model.delta;
+        double deg1 = -psiPow1[i] * fabs(phi[gi]);
+        double deg1_p1 = -psiPow1[i + 1] * fabs(phi[gi + 1]);
+        double deg1_m1 = -psiPow1[i - 1] * fabs(phi[gi - 1]);
+        dJ[gi] += (-2.0 * deg1 + (deg1_p1 + deg1_m1)) / (DZ * DZ) * d_cfg.model.kappa;
     }
-    __syncthreads();
+
     // compute euler step
     phi[gi] = phi[gi] + d_cfg.run.DT * dJ[gi];
 }
