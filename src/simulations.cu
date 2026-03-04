@@ -343,16 +343,19 @@ void runSim(SimConfig &cfg) {
     cudaFree(d_phi);
     cudaFree(d_J);
     cudaFree(d_dJ);
-    cudaFree(d_intKernel);
     cudaFree(d_I);
     cudaFree(d_psi);
-    cudaFree(d_psiIntp);
-    cudaFree(d_IIntp);
     cudaFree(d_percoll);
     cudaFree(d_gradWing);
     cudaFree(d_b);
     cudaFree(d_c);
     cudaFree(d_d);
+
+    if (cfg.model.modelType == CONV) {
+        cudaFree(d_intKernel);
+        cudaFree(d_psiIntp);
+        cudaFree(d_IIntp);
+    }
 
     /****************************/
     ts_close(&w);
