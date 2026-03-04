@@ -161,7 +161,7 @@ void runSim(SimConfig &cfg) {
     cudaMalloc(&d_d, vecSize);
 
     if (cfg.model.modelType == CONV) {
-        cudaMalloc(&d_intKernel, kernelN);
+        cudaMalloc(&d_intKernel, kernelSize);
         cudaMalloc(&d_psiIntp, interpolationSize);
         cudaMalloc(&d_IIntp, interpolationSize);
     }
