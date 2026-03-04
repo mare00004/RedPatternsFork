@@ -134,11 +134,11 @@
       "type": "cuda-gdb",
       "request": "launch",
       "program": "${command:cmake.launchTargetPath}",
-      "miDebuggerPath": "/usr/local/cuda-13.0/bin/cuda-gdb",
+      "miDebuggerPath": "/home/max/miniforge3/envs/cuda-dev/bin/cuda-gdb",
       "args": [
         "--use-taylor",
-        "--T=1800.0",
-        "--DT=5e-05",
+        "--T=60.0",
+        "--DT=5e-04",
         "--NO=30000",
         "--gradient=sigmoid",
         "--U=1.1115e-16",
@@ -158,7 +158,8 @@
           "value": "${env:LD_LIBRARY_PATH}:${command:cmake.buildDirectory}"
         }
       ],
-      "preLaunchTask": "${defaultBuildTask}"
+      "preLaunchTask": "CMake: build (debug)"
     }
   ]
 }
+
