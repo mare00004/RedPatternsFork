@@ -8,7 +8,7 @@ __global__ void CuKernelTayl(double *psi, double *I, double nu, double mu) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
     // compute convolution integral
-    if ((i >= 8) & (i <= d_cfg.run.N - 1 - 8)) {
+    if ((i >= 8) && (i <= d_cfg.run.N - 1 - 8)) {
         I[i] =
             nu *
                 (-psi[i + 2] + 8 * psi[i + 1] + psi[i - 2] - 8 * psi[i - 1]) /
@@ -129,7 +129,7 @@ __global__ void CuKernelConv(double *psi, double *I, double *convKernel, int M, 
     __syncthreads();
     for (int k = 0; k < kernelN; k++) {
         if ((i + (k - d) >= 0) && (i + (k - d) < M)) {
-            sum += psi[i + (k - d)] * convKernel[k] * (d_cfg.run.DZ / subDiv);
+            sum += psi[i + (k - d)] * convKernel[k] * (d_cfg.run.fineDZ);
         }
     }
 
@@ -161,10 +161,10 @@ __global__ void CuKernelIter(
     // compute physical flux
     double rpTerm;
     if ((i > wingL) & (i < N - 1 - wingL))
-        rpTerm = R[j] - percoll[i] - P0;
+        rpTerm = R[j] + percoll[i] - P0;
     __syncthreads();
     if ((i <= wingL) | (i >= N - 1 - wingL))
-        rpTerm = R[j] - gradWing[i] - P0;
+        rpTerm = R[j] + gradWing[i] - P0;
     __syncthreads();
     J[gi] = (d_cfg.model.alpha * rpTerm + d_cfg.model.beta * I[i]) * phi[gi];
     __syncthreads();
