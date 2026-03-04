@@ -104,12 +104,21 @@ void initPhi(double *f, double *R, int N, double PSI) {
 #define SET_OUT_FILE(FILENAME) \
     snprintf(outFilePath, sizeof(outFilePath), "%s/%s", cfg.run.outDir, FILENAME)
 
+// FIX:
+#define DEBUG_APPEND()                                                               \
+    do {                                                                             \
+        printf("\n [DEBUG] \n");                                                     \
+        checkCuda(cudaMemcpy(h_phi.data(), d_phi, matSize, cudaMemcpyDeviceToHost)); \
+        checkCuda(cudaMemcpy(h_psi.data(), d_psi, vecSize, cudaMemcpyDeviceToHost)); \
+        ts_append(&w, 0.0, h_phi.data(), h_psi.data());                              \
+    } while (0)
+
 /* running simulation */
 void runSim(SimConfig &cfg) {
     TSWriter w;
     char outFilePath[400];
 
-    // TODO some values might not exist if i a not using the convolution version
+    // TODO some values might not exist if i am not using the convolution version
     int N = cfg.run.N;
     int vecSize = N * sizeof(double);
     int matSize = N * N * sizeof(double);
@@ -236,7 +245,7 @@ void runSim(SimConfig &cfg) {
     double t = 0.0;
     for (int i = 0; i < NT; i++) {
         /* integration */
-        CuKernelInte<<<dim3(1), dim3(N)>>>(d_phi, d_psi);
+        CuKernelInte<<<dim3(1, N), dim3(N, 1)>>>(d_phi, d_psi);
 
         if (cfg.model.modelType == CONV) {
             dim3 numBlocksA(cfg.model.variant.Conv.subDiv, 1);
@@ -262,12 +271,17 @@ void runSim(SimConfig &cfg) {
             printf("This branch should never be reached!");
         }
 
+        // TODO: Store which model is used outside the loop! Maybe make a gradientType Enum
         if (strcmp(cfg.model.gradient, "linear") == 0) {
-            CuKernelGradLinear<<<numBlocks, threadsPerBlock>>>(d_percoll, t);
+            CuKernelGradLinear<<<1, N>>>(d_percoll, t);
             CuKernelWingLinear<<<numBlocks, threadsPerBlock>>>(d_percoll, d_gradWing, t);
         } else if (strcmp(cfg.model.gradient, "sigmoid") == 0) {
-            CuKernelGradSigmoid<<<numBlocks, threadsPerBlock>>>(d_percoll, t);
-            CuKernelWingSigmoid<<<numBlocks, threadsPerBlock>>>(d_percoll, d_gradWing, t);
+            CuKernelGradSigmoid<<<dim3(1, N), dim3(N, 1)>>>(d_percoll, t);
+            CuKernelWingSigmoid<<<dim3(1, N), dim3(N, 1)>>>(d_percoll, d_gradWing, t);
+            if (i == 1000) {
+                cudaMemcpy(h_percoll.data(), d_percoll, vecSize, cudaMemcpyDeviceToHost);
+                ts_writeZ(&w, h_percoll.data());
+            }
         } else {
             printf("This branch should never be reached!");
         }
