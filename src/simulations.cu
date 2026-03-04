@@ -33,7 +33,7 @@ void genConvKernel(double *intKernel, double DZ, double U) {
     double force;
     double fineR;
     double gpdf;
-    double kernelFine[int(fineRes)];
+    std::vector<double> kernelFine(int(fineRes), 0.0);
     double fineDR = kernelDZ / subRes; // only take positive values
     double sigma = 5.6e-6;
     double sigmaC = 0.5e-6;
@@ -61,7 +61,7 @@ void genConvKernel(double *intKernel, double DZ, double U) {
     for (int i = 0; i < fineRes; i++)
         kernelFine[i] = kernelFine[int(fineRes) - 1] - kernelFine[i];
     // sampling of kernel
-    intKernel[(kernelN + 1) / 2] = 0;
+    intKernel[(kernelN - 1) / 2] = 0;
     double kernelZ;
     for (int i = (kernelN + 1) / 2; i < kernelN; i++) {
         kernelZ = double(i * kernelDZ) - kernelL / 2;
