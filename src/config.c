@@ -122,9 +122,9 @@ int deriveAndValidateOrDie(SimConfig *c) {
      **********/
     c->run.NT = ceil(c->run.T / c->run.DT);
 
-    if (strcmp(c->model.gradient, "sigmoid") != 0) {
+    if (strcmp(c->model.gradient, "sigmoid") == 0) {
         c->model.alpha = 2.0e-04;
-    } else if (strcmp(c->model.gradient, "linear") != 0) {
+    } else if (strcmp(c->model.gradient, "linear") == 0) {
         c->model.alpha = 2.0e-05;
     }
 
