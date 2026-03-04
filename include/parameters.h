@@ -1,5 +1,6 @@
 #ifndef PARAMETERS_H
 #define PARAMETERS_H
+#include <cmath>
 
 // density dimension
 #define RC 1100.0 // central density
@@ -15,8 +16,8 @@
 // degenerate diffusion flux
 #define mDeg 500
 #define jDegDiffPhi0(i) (pow(1.0 - phi[i], mDeg))
-#define jDegDiffPsi0(gi, i) (pow(1.0 - psi[i], mDeg) * abs(phi[gi]))
-#define jDegDiffPsi1(gi, i) (-pow(psi[i], mDeg)) * abs(phi[gi])
+#define jDegDiffPsi0(gi, i) ((pow(1.0 - psi[i], mDeg) * fabs(phi[gi])))
+#define jDegDiffPsi1(gi, i) ((-pow(psi[i], mDeg)) * fabs(phi[gi]))
 
 /********
  * MISC *
