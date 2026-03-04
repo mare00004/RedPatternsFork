@@ -228,7 +228,7 @@ def _(file_picker, mo, plot_run):
         mo.md("Please pick a file to plot!")
     )
 
-    plot_run(file_picker.path(), vmin=-0.0, vmax=0.2)
+    plot_run(file_picker.path(), vmin=-0.0, vmax=0.5)
     return
 
 
