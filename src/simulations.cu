@@ -147,7 +147,7 @@ void runSim(SimConfig &cfg) {
     std::vector<double> h_intKernel(N); // Only needs kernelN < N many elements, but kernelN is not defined for TAYL version
 
     printf("Allocating device memory...\n");
-    double *d_R, *d_phi, *d_J, *d_dJ, *d_intKernel, *d_I, *d_psi, *d_psiIntp, *d_IIntp, *d_percoll, *d_gradWing, *d_b, *d_c, *d_d;
+    double *d_R, *d_phi, *d_J, *d_dJ, *d_intKernel, *d_I, *d_psi, *d_psiIntp, *d_IIntp, *d_percoll, *d_gradWing, *d_b, *d_c, *d_d, *d_psiPow0, *d_psiPow1;
     cudaMalloc(&d_R, vecSize);
     cudaMalloc(&d_phi, matSize);
     cudaMalloc(&d_J, matSize);
@@ -159,6 +159,9 @@ void runSim(SimConfig &cfg) {
     cudaMalloc(&d_b, vecSize);
     cudaMalloc(&d_c, vecSize);
     cudaMalloc(&d_d, vecSize);
+
+    cudaMalloc(&d_psiPow0, vecSize); // pow(1.0 - psi, mDeg)
+    cudaMalloc(&d_psiPow1, vecSize); // pow(psi, mDeg)
 
     if (cfg.model.modelType == CONV) {
         cudaMalloc(&d_intKernel, kernelSize);
@@ -278,6 +281,8 @@ void runSim(SimConfig &cfg) {
             printf("This branch should never be reached!");
         }
 
+        CuKernelDegDiffPow<<<gridN, blockN>>>(d_psi, d_psiPow0, d_psiPow1);
+
         /* iteration */
         CuKernelIter<<<grid2D, block2D>>>(
             d_phi,
@@ -287,6 +292,8 @@ void runSim(SimConfig &cfg) {
             d_R,
             d_I,
             d_psi,
+            d_psiPow0,
+            d_psiPow1,
             t,
             d_gradWing);
 
@@ -348,6 +355,9 @@ void runSim(SimConfig &cfg) {
         cudaFree(d_psiIntp);
         cudaFree(d_IIntp);
     }
+
+    cudaFree(d_psiPow0);
+    cudaFree(d_psiPow1);
 
     /****************************/
     ts_close(&w);

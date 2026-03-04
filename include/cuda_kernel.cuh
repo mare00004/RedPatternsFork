@@ -19,6 +19,7 @@ __global__ void CuKernelSplineEval(
     int subDiv);
 __global__ void CuKernelSplineDownSample(double *IIntp, double *I, int subDiv);
 __global__ void CuKernelConv(double *psi, double *I, double *convKernel, int M, int kernelN, int subDiv);
+__global__ void CuKernelDegDiffPow(double *psi, double *psiPow0, double *psiPow1);
 __global__ void CuKernelIter(
     double *phi,
     double *J,
@@ -27,5 +28,7 @@ __global__ void CuKernelIter(
     double *R,
     double *I,
     double *psi,
+    double *psiPow0,
+    double *psiPow1,
     double t,
     double *gradWing);
