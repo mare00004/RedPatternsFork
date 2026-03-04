@@ -141,6 +141,7 @@ __global__ void CuKernelConv(double *psi, double *I, double *convKernel, int M, 
     }
 
     I[i] = sum;
+}
 
 /*
  * Precompute degenerate diffusion power factors. For each i in [0, N-1],
@@ -165,6 +166,8 @@ __global__ void CuKernelIter(
     double *R,
     double *I,
     double *psi,
+    double *psiPow0,
+    double *psiPow1,
     double t,
     double *gradWing) {
 
