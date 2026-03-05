@@ -8,13 +8,15 @@ You can build the simulation from source using [CMake](https://cmake.org/) or do
 
 ### Building from Source
 
-You need to have the following packages installed
+You need to have the following dependencies installed to run the simulation.
 
- - [CMake](https://cliutils.gitlab.io/modern-cmake/chapters/intro/installing.html) Version >=3.15 installed
- - [CUDA](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/)
- - [HDF5](https://www.hdfgroup.org/download-hdf5/)
+- [CMake](https://cliutils.gitlab.io/modern-cmake/chapters/intro/installing.html) Version >=3.15
+- [CUDA](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/)
+- [HDF5](https://www.hdfgroup.org/download-hdf5/)
 
-and then run the following code from within the project directory
+You can either install those manually or via [mamba](https://mamba.readthedocs.io/en/latest/) with the given `environments.yml` file, by running `mamba actiave cuda-dev` from inside the project directory.
+
+To build the project run:
 
 ```bash
 mkdir build
@@ -24,7 +26,7 @@ cmake ..
 cmake --build .
 ```
 
-This will build a binary called `red-patterns` for Ampere type NVIDIA GPUs assuming you have all the necessary dependencies installed on your `PATH` ([see](https://en.wikipedia.org/wiki/PATH_(variable))). If you do not have CUDA (or nvcc) and HDF5 on your `PATH` , then you need to tell CMake where they live
+This will build a binary called `red-patterns` for Ampere type NVIDIA GPUs assuming you have all the necessary dependencies installed on your `PATH` ([see](<https://en.wikipedia.org/wiki/PATH_(variable)>)) which will be the case when using [mamba]. If you do not have CUDA (or nvcc) and HDF5 on your `PATH` , then you need to tell CMake where they live
 
 ```bash
 mkdir build
@@ -39,8 +41,8 @@ cmake --build .
 
 The paths should look something like this:
 
- - CUDA: `*/cuda-<version>/bin/nvcc`
- - HDF5: `*/HDF5/build/HDF5_Group/HDF5/<version>`
+- CUDA: `*/cuda-<version>/bin/nvcc`
+- HDF5: `*/HDF5/build/HDF5_Group/HDF5/<version>`
 
 And if you want to compile for a different GPU architecture you need to add the flag `-DCMAKE_CUDA_ARCHITECTURES=<arch>`. The general build command looks like this:
 
@@ -58,16 +60,16 @@ cmake --build .
 
 ## Running
 
-In order to run the simulation you will need to have a CUDA capable GPU on your system.
+In order to run the simulation you will need to have a CUDA capable GPU on your system. You can check this with `nvidia-smi`.
 
 You can change the following parameters for the simulation via the command line:
 
- - $N = ...$ ...
- - ...
+- $N = ...$ ...
+- ...
 
 Any parameter you don't change will take on one of the following default parameters:
 
- - ...
+- ...
 
 Theoretically you could run the simulation without any parameters with `./red-patterns` (from within `./build`). Or you could only selectively overwrite the paramters that you actually want to change.
 
@@ -102,9 +104,17 @@ TAYLOR:
 
 ## Analyzing the Output
 
- - What is HDF5
- - How can you inspect the data
- - Link to notebook
+The result of running the simulation with a given set of parameters will be a single [HDF5] file called `run.h5` stored inside the folder given by `--out-dir`. This file contains the data produced by the simulation as well as all the configuration to reproduce the data. That means as long as you have the `run.h5` file you can easily reproduce any simulation later by:
+
+1. Getting the commit hash
+2. Cloning the [repository]()
+3. Building the simulation and rerunning it with the same parameters using `... hdf5 get arg_line attribute ...`
+
+[HDF5] has well supported libraries so you can analyize the data yourself, but this repository also contains a couple of notebooks that might be helpful. See [???]
+
+The structure of the HDF5 file is:
+
+...
 
 ## Workflows
 
@@ -114,13 +124,13 @@ TAYLOR:
 
 If you are a member of UdS and have access to the SIC GPU Cluster, then you can use the following workflow
 
- 1. You can access the HTCondor submission node only from within the university network. Normally you need to be on campus or use CiscoAnyConnect as VPN, but you can do the same from the commandline with `sudo openconnect asa1.uni-saarland.de --user <user> --authgroup "UdS"`
- 2. Then you can connect to the submission node via SSH with `ssh <user>@conduit.hpc.uni-saarland.de`. You will need your passphrase for your ssh-key and your user password.
- 3. After that you can create a new directory and copy the `sweep.submit` file from the RedPatterns Repository to the cluster. To copy a single file to the cluster (without a gui) you can use `scp`, while connect to your **local** machine: `scp <path-to-file> <user>@<remote>:<path-on-remote>`.
- 4. Then you have to create a `params.txt` file on the server in the same directory as the `sweep.submit` file. An example `paramters.txt` file can be found in the repository. For each job you specify all the CLI arguments on a single line.
- 5. To submit all the jobs run `condor_submit sweep.submit`. This prints your `<cluster-id>`.
- 6. To check if the jobs are running correctly use `condor_q <cluster-id>` or `condor_q -nobatch <cluster-id>.<process-id>` to check the status of a specific job.
- 7. If you want to see the `stdout` of the a job run `condor_tail -f <cluster-id>.<process-id>`.
+1.  You can access the HTCondor submission node only from within the university network. Normally you need to be on campus or use CiscoAnyConnect as VPN, but you can do the same from the commandline with `sudo openconnect asa1.uni-saarland.de --user <user> --authgroup "UdS"`
+2.  Then you can connect to the submission node via SSH with `ssh <user>@conduit.hpc.uni-saarland.de`. You will need your passphrase for your ssh-key and your user password.
+3.  After that you can create a new directory and copy the `sweep.submit` file from the RedPatterns Repository to the cluster. To copy a single file to the cluster (without a gui) you can use `scp`, while connect to your **local** machine: `scp <path-to-file> <user>@<remote>:<path-on-remote>`.
+4.  Then you have to create a `params.txt` file on the server in the same directory as the `sweep.submit` file. An example `paramters.txt` file can be found in the repository. For each job you specify all the CLI arguments on a single line.
+5.  To submit all the jobs run `condor_submit sweep.submit`. This prints your `<cluster-id>`.
+6.  To check if the jobs are running correctly use `condor_q <cluster-id>` or `condor_q -nobatch <cluster-id>.<process-id>` to check the status of a specific job.
+7.  If you want to see the `stdout` of the a job run `condor_tail -f <cluster-id>.<process-id>`.
 
 At the end of a jobs execution. The logs and simulation data will be copied to your home directory. (WHERE???)
 
@@ -129,12 +139,16 @@ At the end of a jobs execution. The logs and simulation data will be copied to y
 Use:
 
 ```bash
-rsync 
+rsync
 ```
+
+#### Or analyzing it directely on the server
+
+...
 
 ### For anyone
 
-#### Analyzing the Data
+...
 
 ## Explanation
 
