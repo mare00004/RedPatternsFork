@@ -10,7 +10,12 @@ void setDefaults(SimConfig *c) {
     int N = 256;
     double fineDZ = 1.041412353515625e-6;
     int subDiv = 256;
+
+    /*
+     * To reproduce the old code use: `int M = (N)*subDiv + 1;`
+     */
     int M = (N - 1) * subDiv + 1;
+
     double sysL = (double)(M - 1) * fineDZ;
     double DZ = sysL / ((double)N - 1);
 
