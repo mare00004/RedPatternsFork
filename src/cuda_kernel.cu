@@ -26,6 +26,9 @@ __global__ void CuKernelTayl(double *psi, double *I, double nu, double mu) {
 __global__ void CuKernelInte(double *phi, double *psi) {
     // get indices
     int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= d_cfg.run.N) {
+        return;
+    }
     double sum = 0.0;
 
     // discrete sum integration
