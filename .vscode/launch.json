@@ -1,0 +1,165 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Simulation - Convolution, Sigmoid",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "args": [
+        "--use-convolution",
+        "--T=1800.0",
+        "--DT=0.0005",
+        "--NO=3000",
+        "--gradient=sigmoid",
+        "--U=1.1115e-16",
+        "--PSI=0.02",
+        "--gamma=1.8e-10",
+        "--delta=1e-11",
+        "--kappa=1e-25",
+        "--out-dir=${workspaceFolder}/data/conv_sigmoid"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [
+        {
+          "name": "LD_LIBRARY_PATH",
+          "value": "${env:LD_LIBRARY_PATH}:${command:cmake.buildDirectory}"
+        }
+      ],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "preLaunchTask": "${defaultBuildTask}"
+    },
+    {
+      "name": "Debug CUDA - Convolution, Sigmoid",
+      "type": "cuda-gdb",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "miDebuggerPath": "/usr/local/cuda-13.0/bin/cuda-gdb",
+      "args": [
+        "--use-convolution",
+        "--T=100.0",
+        "--DT=0.05",
+        "--NO=3000",
+        "--gradient=sigmoid",
+        "--U=1.1115e-16",
+        "--PSI=0.02",
+        "--gamma=1.8e-10",
+        "--delta=1e-11",
+        "--kappa=1e-25",
+        "--out-dir=${workspaceFolder}/data/conv_sigmoid"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [
+        {
+          "name": "LD_LIBRARY_PATH",
+          "value": "${env:LD_LIBRARY_PATH}:${command:cmake.buildDirectory}"
+        }
+      ],
+      // "preLaunchTask" ensures CMake builds before you debug
+      "preLaunchTask": "${defaultBuildTask}"
+    },
+    {
+      "name": "Debug Host - Convolution, Sigmoid",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "args": [
+        "--use-convolution",
+        "--T=10.0",
+        "--DT=0.05",
+        "--NO=500",
+        "--gradient=sigmoid",
+        "--U=1.1115e-16",
+        "--PSI=0.02",
+        "--gamma=1.8e-10",
+        "--delta=1e-11",
+        "--kappa=1e-25",
+        "--out-dir=${workspaceFolder}/data/conv_sigmoid"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [
+        {
+          "name": "LD_LIBRARY_PATH",
+          "value": "${env:LD_LIBRARY_PATH}:${command:cmake.buildDirectory}"
+        }
+      ],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ],
+      "preLaunchTask": "${defaultBuildTask}"
+    },
+    {
+      "name": "Debug Host - Taylor, Sigmoid",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "args": [
+        "--use-taylor",
+        "--T=1800.0",
+        "--DT=5e-05",
+        "--NO=30000",
+        "--gradient=sigmoid",
+        "--U=1.1115e-16",
+        "--PSI=0.02",
+        "--gamma=1.8e-10",
+        "--delta=1e-11",
+        "--kappa=0.0",
+        "--NU=-1.6049962938777745e-29",
+        "--MU=-7.052525226362305e-36",
+        "--out-dir=${workspaceFolder}/data/tayl_sigmoid"
+      ],
+      "externalConsole": false,
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [
+        {
+          "name": "LD_LIBRARY_PATH",
+          "value": "${env:LD_LIBRARY_PATH}:${command:cmake.buildDirectory}"
+        }
+      ],
+      "preLaunchTask": "CMake: build release"
+    },
+    {
+      "name": "Debug CUDA - Taylor, Sigmoid",
+      "type": "cuda-gdb",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "miDebuggerPath": "/home/max/miniforge3/envs/cuda-dev/bin/cuda-gdb",
+      "args": [
+        "--use-taylor",
+        "--T=60.0",
+        "--DT=5e-04",
+        "--NO=30000",
+        "--gradient=sigmoid",
+        "--U=1.1115e-16",
+        "--PSI=0.02",
+        "--gamma=1.8e-10",
+        "--delta=1e-11",
+        "--kappa=0.0",
+        "--NU=-1.6049962938777745e-29",
+        "--MU=-7.052525226362305e-36",
+        "--out-dir=${workspaceFolder}/data/tayl_sigmoid"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [
+        {
+          "name": "LD_LIBRARY_PATH",
+          "value": "${env:LD_LIBRARY_PATH}:${command:cmake.buildDirectory}"
+        }
+      ],
+      "preLaunchTask": "CMake: build (debug)"
+    }
+  ]
+}
+

@@ -1,100 +1,21 @@
 #ifndef CONFIG_H
 #define CONFIG_H
-#include "parameters.cuh"
-#include <stdio.h>
 
-// Tagged Union for Simulation Configuration.
-#define textFieldSize 64
+#include "sim_types.h"
 
-typedef enum {
-    CONV = 0,
-    TAYL = 1
-} ModelType;
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-typedef struct {
-    int N;
-    double T;
-    double DT;
-    int NO;
-    char outDir[256];
-} RunParams;
-
-typedef struct {
-    unsigned char _unused;
-} ConvParams;
-
-typedef struct {
-    double NU;
-    double MU;
-} TaylParams;
-
-typedef struct {
-    ModelType modelType;
-    char gradient[textFieldSize];
-    double U;
-    double PSI;
-    double gamma;
-    double delta;
-    double kappa;
-    union {
-        ConvParams Conv;
-        TaylParams Tayl;
-    } variant;
-} ModelParams;
-
-typedef struct {
-    RunParams run;
-    ModelParams model;
-} SimConfig;
-
-/* API */
-void setDefaults(SimConfig *c) {
-    *c = (SimConfig){
-        .run = { .N = N, .T = T, .DT = IT, .NO = NO, .outDir = "./" },
-        .model = {
-            .modelType = CONV,
-            .gradient = "linear",
-            .U = U,
-            .PSI = PSI,
-            .gamma = h_gamma,
-            .delta = h_delta,
-            .kappa = h_kappa,
-            .variant = { .Conv = { 0 } } }
-    };
-}
-
-int printConfig(SimConfig *c) {
-    printf("-----------------------\n");
-    printf("-  Simulation Config  -\n");
-    printf("-----------------------\n");
-    printf("-> Run:\n");
-    printf("\t-> N: %d\n", c->run.N);
-    printf("\t-> T: %f\n", c->run.T);
-    printf("\t-> DT: %.5e\n", c->run.DT);
-    printf("\t-> NO: %d\n", c->run.NO);
-    printf("\t-> outDir: %s\n", c->run.outDir);
-    if (c->model.modelType == CONV) {
-        printf("-> Using Convolution-Model:\n");
-    } else {
-        printf("-> Using Taylor-Model:\n");
-    }
-    printf("\t-> gradient: %*s\n", textFieldSize, c->model.gradient);
-    printf("\t-> U: %.5e\n", c->model.U);
-    printf("\t-> PSI: %.5e\n", c->model.PSI);
-    printf("\t-> gamma: %.5e\n", c->model.gamma);
-    printf("\t-> delta: %.5e\n", c->model.delta);
-    printf("\t-> kappa: %.5e\n", c->model.kappa);
-    if (c->model.modelType == TAYL) {
-        printf("\t-> nu: %.5e\n", c->model.variant.Tayl.NU);
-        printf("\t-> mu: %.5e\n", c->model.variant.Tayl.MU);
-    }
-
-    return 0;
-}
-
+void setDefaults(SimConfig *c);
+int printConfig(SimConfig *c);
 int loadTOMLConfig(const char *path, SimConfig *c);
 int applyCLIOverrides(int argc, char **argv, SimConfig *c);
 int deriveAndValidateOrDie(SimConfig *c);
 int writeResolvedConfig(const SimConfig *c);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

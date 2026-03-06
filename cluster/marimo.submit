@@ -1,0 +1,28 @@
+universe = docker
+docker_image = ghcr.io/marimo-team/marimo:latest-data
+docker_network_type = host
+
+executable = run-marimo.sh
+
+should_transfer_files = IF_NEEDED
+when_to_transfer_output = ON_EXIT
+
+batch_name = marimo
+
++InteractiveJob = True
+
+ID = $(Cluster).$(Process)
+environment = "one=1"
+
+output =  logs/marimo.$(ID).out
+error = logs/marimo.$(ID).err
+log = logs/marimo.$(ID).log
+
+request_cpus = 2
+request_memory = 4GB
+
+requirements = UidDomain == "cs.uni-saarland.de"
+getenv = HOME
++WantGPUHomeMounted = true
+
+queue 1

@@ -7,6 +7,7 @@ request_cpus = 16
 request_memory = 16 GB
 request_disk = 16 GB
 
+max_idle = 100
 
 should_transfer_files = IF_NEEDED
 when_to_transfer_output = ON_EXIT
@@ -22,7 +23,6 @@ error = logs/$(ClusterId).$(ProcId).err
 
 requirements = (UidDomain == "cs.uni-saarland.de") && (GPUs_Capability >= 7.0) && (GPUs_GlobalMemoryMb >= 16000)
 +WantGPUHomeMounted = true
-# +WantScratchMounted = true
++WantScratchMounted = true
 
 queue argline from params.txt
-

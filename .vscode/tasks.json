@@ -1,0 +1,103 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "cmake",
+			"label": "CMake: build (release)",
+			"command": "build",
+			"targets": [
+				"all"
+			],
+			"preset": "release",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"problemMatcher": [],
+			"detail": "CMake template build task"
+		},
+		{
+			"type": "cmake",
+			"label": "CMake: build (debug)",
+			"command": "build",
+			"targets": [
+				"all"
+			],
+			"preset": "debug",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"problemMatcher": [],
+			"detail": "Builds with Debug symbols"
+		},
+		{
+			"label": "Run Simulation - Taylor, Sigmoid",
+			"type": "shell",
+			"command": "${command:cmake.launchTargetPath}",
+			"args": [
+				"--use-taylor",
+				"--T=600.0",
+				"--DT=5e-04",
+				"--NO=30000",
+				"--gradient=sigmoid",
+				"--U=1.1115e-16",
+				"--PSI=0.02",
+				"--gamma=1.8e-10",
+				"--delta=1e-11",
+				"--kappa=0.0",
+				"--NU=-1.6049962938777745e-29",
+				"--MU=-7.052525226362305e-36",
+				"--out-dir=${workspaceFolder}/data/tayl_sigmoid"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"LD_LIBRARY_PATH": "${command:cmake.buildDirectory}"
+				}
+			},
+			"dependsOn": "CMake: build (release)",
+			"presentation": {
+				"echo": true,
+				"reveal": "always", // Switch focus to terminal
+				"focus": true, // Focus the cursor in the terminal
+				"panel": "new", // Create a new terminal for every run (optional)
+				"showReuseMessage": false
+			}
+		},
+		{
+			"label": "Run Simulation (tiny) - Taylor, Sigmoid",
+			"type": "shell",
+			"command": "${workspaceFolder}/build/release/red-patterns",
+			"args": [
+				"--use-taylor",
+				"--T=60.0",
+				"--DT=5e-04",
+				"--NO=1000",
+				"--gradient=sigmoid",
+				"--U=1.1115e-16",
+				"--PSI=0.02",
+				"--gamma=1.8e-10",
+				"--delta=1e-11",
+				"--kappa=0.0",
+				"--NU=-1.6049962938777745e-29",
+				"--MU=-7.052525226362305e-36",
+				"--out-dir=${workspaceFolder}/data/tayl_sigmoid"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"LD_LIBRARY_PATH": "${command:cmake.buildDirectory}"
+				}
+			},
+			"dependsOn": "CMake: build release",
+			"presentation": {
+				"echo": true,
+				"reveal": "always", // Switch focus to terminal
+				"focus": true, // Focus the cursor in the terminal
+				"panel": "new", // Create a new terminal for every run (optional)
+				"showReuseMessage": false
+			}
+		}
+	]
+}

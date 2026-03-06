@@ -1,0 +1,21 @@
+name: cuda-dev
+channels:
+  - conda-forge
+  - nvidia/label/cuda-12.8.0
+
+dependencies:
+  # CUDA toolkit (nvcc, headers, libs, tools)
+  - cuda-toolkit=12.8.*
+  - cuda-nvcc=12.8.*
+
+  # Host toolchain (handy for consistency across machines)
+  - gcc_linux-64=14.*
+  - gxx_linux-64=14.*
+
+  # Build & debug tools
+  - cmake
+  - pkg-config
+  - gdb
+  
+  # HDF5
+  - hdf5=1.14

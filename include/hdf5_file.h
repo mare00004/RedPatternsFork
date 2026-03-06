@@ -37,4 +37,4 @@ void ts_close(TSWriter *w);
 }
 #endif
 
-#endif
+#endif // HDF5_FILE_H

@@ -1,0 +1,60 @@
+# ---------- MACROS ----------
+# You can change the following MACROS while submitting a
+# job by running: 
+# 	condor_submit VAR1=VALUE1 VAR2=VALUE2 ... sweep.submit
+
+# Stable commit by default
+COMMIT_HASH = $(COMMIT_HASH:1935885)
+
+# Directory where the results of a sweep are stored, by default this is the same director where the submit file lives
+RUN_DIR = $(RUN_DIR:$(SUBMIT_FILE_DIR))
+
+# File containing the parameters for the sweep, by default this is `params.txt`.
+# Each run is specified as a single line with the CLI arguments for that specific run.
+PARAMS_FILE = $(PARAMS_FILE:params.txt)
+
+# A tag that you can set for each run, so that you can more easily monitor them.
+RUN_TAG = $(RUN_TAG:sweep)
+
+
+# ---------- DOCKER ----------
+
+universe = docker
+docker_image = mare00004/cuda-hdf5-dev:$(COMMIT_HASH)
+docker_pull_policy = always
+
+# ---------- HARDWARE ----------
+
+request_gpus = 1
+request_cpus = 16
+request_memory = 16 GB
+request_disk = 16 GB
+
+# I want to be able to use the /scratch and the /home/<user> directory
+requirements = (UidDomain == "cs.uni-saarland.de") && (GPUs_Capability >= 7.0) && (GPUs_GlobalMemoryMb >= 16000)
++WantGPUHomeMounted = true
++WantScratchMounted = true
+
+# ---------- JOBS ----------
+
+# Only keep 100 sitting IDLE at once. That means if you submit more than 100 jobs they won't be queued all at once.
+max_idle = 100
+
+should_transfer_files = IF_NEEDED
+when_to_transfer_output = ON_EXIT
+
+initialdir = $(RUN_DIR)
+batch_name = $(RUN_TAG)
+
+executable = run-sim.sh
+arguments = $(argline)
+
+# Make the following variables available in the environment of the executable
+environment = "JOB_ID=$(ClusterId).$(ProcId) RUN_TAG=$(RUN_TAG) COMMIT_HASH=$(COMMIT_HASH)"
+
+log = logs/$(ClusterId).$(ProcId).log
+output = logs/$(ClusterId).$(ProcId).out
+error = logs/$(ClusterId).$(ProcId).err
+
+
+queue argline from $(PARAMS_FILE)
