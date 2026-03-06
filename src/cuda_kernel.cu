@@ -126,24 +126,42 @@ __global__ void CuKernelSplineDownSample(double *IIntp, double *I, int subDiv) {
 
 /* convolution kernel */
 __global__ void CuKernelConv(double *psi, double *I, double *convKernel, int M, int kernelN, int subDiv) {
-    // get indices
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (i >= M) {
-        return;
+    // Optimized 1D convolution kernel using constant memory for the kernel
+    // coefficients and shared memory tiling for input data. The convKernel
+    // parameter is unused but kept for signature compatibility.
+    extern __shared__ double s_psi[];
+    int tid = threadIdx.x;
+    int gid = blockIdx.x * blockDim.x + tid;
+    int halo = (kernelN - 1) / 2;
+    int blockStart = blockIdx.x * blockDim.x;
+    // load central data
+    if (gid < M) {
+        s_psi[tid + halo] = psi[gid];
+    } else {
+        s_psi[tid + halo] = 0.0;
     }
-
-    // compute convolution integral
-    double sum = 0.0;
-    int d = (kernelN - 1) / 2;
-
-    for (int k = 0; k < kernelN; k++) {
-        if ((i + (k - d) >= 0) && (i + (k - d) < M)) {
-            sum += psi[i + (k - d)] * convKernel[k] * (d_cfg.run.fineDZ);
+    // load left halo
+    if (tid < halo) {
+        int leftIdx = blockStart + tid - halo;
+        s_psi[tid] = (leftIdx >= 0 ? psi[leftIdx] : 0.0);
+    }
+    // load right halo
+    if (tid >= blockDim.x - halo) {
+        int offset = tid - (blockDim.x - halo);
+        int rightIdx = blockStart + tid + halo;
+        int sIdx = halo + blockDim.x + offset;
+        s_psi[sIdx] = (rightIdx < M ? psi[rightIdx] : 0.0);
+    }
+    __syncthreads();
+    // perform convolution if in bounds
+    if (gid < M) {
+        double acc = 0.0;
+        for (int k = 0; k < kernelN; ++k) {
+            acc += s_psi[tid + k] * convKernel[k];
         }
+        // apply scale factor outside the loop for efficiency
+        I[gid] = acc * d_cfg.run.DZ / subDiv;
     }
-
-    I[i] = sum;
 }
 
 /*
