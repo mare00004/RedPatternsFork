@@ -79,7 +79,7 @@ __global__ void CuKernelGradSigmoid(double *percoll, double t) {
      * to ensure that abs_chi is between 0 and 1, which would leed to NaN values in the denominator.
      * SOLUTION: We clamp abs_chi to be smaller than 1
      */
-    if (abs_chi >= 2.0) {
+    if (abs_chi >= 1.0) {
         abs_chi = 1.0 - 1e-9;
     }
 
