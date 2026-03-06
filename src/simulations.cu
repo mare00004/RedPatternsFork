@@ -252,14 +252,16 @@ void runSim(SimConfig &cfg) {
 
             CuKernelSplineCoeffs<<<1, 1, shared_mem>>>(d_psi, d_b, d_c, d_d, N);
             CuKernelSplineEval<<<gridM, blockM>>>(d_psi, d_b, d_c, d_d, d_psiIntp, N, M, subDiv);
-            CuKernelConv<<<gridM, blockM>>>(
+
+            CuKernelConv<<<gridM, blockM, (N + kernelN - 1) * sizeof(double)>>>(
                 d_psiIntp,
                 d_IIntp,
                 d_intKernel,
                 M,
                 kernelN,
                 subDiv);
-            CuKernelSplineDownSample<<<gridN, blockN>>>(d_IIntp, d_I, subDiv);
+
+            CuKernelSplineDownSample<<<1, blockN>>>(d_IIntp, d_I, subDiv);
         } else if (cfg.model.modelType == TAYL) {
             CuKernelTayl<<<gridN, blockN>>>(d_psi, d_I, cfg.model.variant.Tayl.NU, cfg.model.variant.Tayl.MU);
         } else {
