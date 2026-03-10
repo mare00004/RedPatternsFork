@@ -17,9 +17,9 @@ The general command looks as follows:
 condor_submit COMMIT_HASH=... RUN_DIR=... PARAMS_FILE=... RUN_TAG=... sweep.submit
 ```
 
-The sweep.submit file internally calls the `run-sim.sh` script, which is a wrapper around the main simulation binary. After the sweep is done you fill find a `logs/` and a `results/` director inside `RUN_DIR` with one subdirectory for each run, identified by its Process- and Job-ID.
+The sweep.submit file internally calls the `run-sim.sh` script, which is a wrapper around the main simulation binary. After the sweep is done you will find a `logs/` and a `results/` director inside `RUN_DIR` with one subdirectory for each run, identified by its Process- and Job-ID.
 
-> [!info] Tips
+> [!TIP]
 >
 > - You can check the status of (all) your jobs with `condor_q -nobatch`. If you know the `RUN_TAG` then you can use `condor_q -batch-name <RUN_TAG>`.
 
