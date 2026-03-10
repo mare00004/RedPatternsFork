@@ -3,6 +3,7 @@
 
 #include "H5Ipublic.h"
 #include "H5public.h"
+#include "sim_types.h"
 #include <hdf5.h>
 
 #ifdef __cplusplus
@@ -15,22 +16,12 @@ typedef struct {
     hid_t dsetTime; // /time (time, )
     hid_t dsetPhi;  // /phi (time, N, N)
     hid_t dsetPsi;  // /psi (time, N)
-    hid_t dsetZ;
-    hid_t dsetR;
-    hsize_t N; // Grid Size
-    hsize_t t; // Current Time Step [Idx]
+    hsize_t N;      // Grid Size
+    hsize_t t;      // Current Time Step [Idx]
 } TSWriter;
 
-int ts_open(TSWriter *w, const char *path, hsize_t N);
-
-int writeVec(TSWriter *w, hid_t *dset, const char *dset_name, double *data);
-
-int ts_writeR(TSWriter *w, double *R);
-
-int ts_writeZ(TSWriter *w, double *Z);
-
+int ts_create(TSWriter *w, const char *path, const SimConfig *cfg, const double *rho, const double *z);
 int ts_append(TSWriter *w, double t, const double *phi, const double *psi);
-
 void ts_close(TSWriter *w);
 
 #ifdef __cplusplus

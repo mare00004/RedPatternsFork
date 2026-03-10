@@ -101,22 +101,11 @@ void initPhi(double *f, double *R, int N, double PSI) {
             f[i + N * j] = f[i + N * j] / phiSum * PSI * (N - 2 * edgeZ);
 }
 
-#define SET_OUT_FILE(FILENAME) \
-    snprintf(outFilePath, sizeof(outFilePath), "%s/%s", cfg.run.outDir, FILENAME)
-
-// FIX:
-#define DEBUG_APPEND()                                                               \
-    do {                                                                             \
-        printf("\n [DEBUG] \n");                                                     \
-        checkCuda(cudaMemcpy(h_phi.data(), d_phi, matSize, cudaMemcpyDeviceToHost)); \
-        checkCuda(cudaMemcpy(h_psi.data(), d_psi, vecSize, cudaMemcpyDeviceToHost)); \
-        ts_append(&w, 0.0, h_phi.data(), h_psi.data());                              \
-    } while (0)
-
 /* running simulation */
 void runSim(SimConfig &cfg) {
     TSWriter w;
     char outFilePath[400];
+    snprintf(outFilePath, sizeof(outFilePath), "%s/%s", cfg.run.outDir, "run.h5");
 
     // TODO some values might not exist if i am not using the convolution version
     int N = cfg.run.N;
@@ -131,12 +120,9 @@ void runSim(SimConfig &cfg) {
         interpolationSize = M * sizeof(double);
     }
 
-    printf("Creating save file...\n");
-    SET_OUT_FILE("run.h5");
-    ts_open(&w, outFilePath, (hsize_t)cfg.run.N);
-
     printf("Allocating host memory...\n");
     std::vector<double> h_R(N);
+    std::vector<double> h_Z(N);
     std::vector<double> h_phi(N * N);
     std::vector<double> h_J(N * N);
     std::vector<double> h_dJ(N * N);
@@ -175,6 +161,10 @@ void runSim(SimConfig &cfg) {
         h_R[j] = RC - RL / 2 + RL * (double(j) / double(N - 1));
     }
     cudaMemcpy(d_R, h_R.data(), vecSize, cudaMemcpyHostToDevice);
+
+    for (int j = 0; j < N; j++) {
+        h_Z[j] = (double)j * cfg.run.sysL / (cfg.run.N - 1);
+    }
 
     // Initializing phi.
     initPhi(h_phi.data(), h_R.data(), N, cfg.model.PSI);
@@ -227,10 +217,8 @@ void runSim(SimConfig &cfg) {
 
     checkCuda(cudaEventRecord(startEvent, 0));
 
-    /**************************************************************/
-    ts_writeR(&w, h_R.data());
-    // ts_writeZ(&w, Z);
-    /**************************************************************/
+    printf("Creating save file...\n");
+    ts_create(&w, outFilePath, &cfg, h_R.data(), h_Z.data());
 
     // iteration loop
     int n_out = cfg.run.NO;
@@ -275,10 +263,6 @@ void runSim(SimConfig &cfg) {
         } else if (strcmp(cfg.model.gradient, "sigmoid") == 0) {
             CuKernelGradSigmoid<<<gridN, blockN>>>(d_percoll, t);
             CuKernelWingSigmoid<<<gridN, blockN>>>(d_percoll, d_gradWing, t);
-            if (i == 1000) {
-                cudaMemcpy(h_percoll.data(), d_percoll, vecSize, cudaMemcpyDeviceToHost);
-                ts_writeZ(&w, h_percoll.data());
-            }
         } else {
             printf("This branch should never be reached!");
         }
@@ -307,9 +291,7 @@ void runSim(SimConfig &cfg) {
             checkCuda(cudaMemcpy(h_I.data(), d_I, vecSize, cudaMemcpyDeviceToHost));
             checkCuda(cudaMemcpy(h_psi.data(), d_psi, vecSize, cudaMemcpyDeviceToHost));
 
-            /**************************************/
             ts_append(&w, t, h_phi.data(), h_psi.data());
-            /**************************************/
 
             // measure time
             checkCuda(cudaEventRecord(stopEvent, 0));

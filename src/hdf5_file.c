@@ -7,6 +7,8 @@
 #include "H5Spublic.h"
 #include "H5Tpublic.h"
 #include "H5public.h"
+#include "sim_types.h"
+#include <H5Gpublic.h>
 #include <hdf5.h>
 #include <string.h>
 
@@ -14,15 +16,48 @@
 extern "C" {
 #endif
 
-void put_u32_attr(hid_t dset, const char *name, unsigned int v) {
+/*
+ * Write an UNSIGNED INT attribute to an object.
+ */
+void writeU32Attr(hid_t loc_id, const char *name, unsigned int v) {
     hid_t space = H5Screate(H5S_SCALAR);
-    hid_t attr = H5Acreate2(dset, name, H5T_STD_U32LE, space, H5P_DEFAULT, H5P_DEFAULT);
+    hid_t attr = H5Acreate2(loc_id, name, H5T_STD_U32LE, space, H5P_DEFAULT, H5P_DEFAULT);
     H5Awrite(attr, H5T_NATIVE_UINT, &v);
     H5Aclose(attr);
     H5Sclose(space);
 }
 
-void put_str_attr(hid_t dset, const char *name, const char *s) {
+/*
+ * Write a DOUBLE attribute to an object.
+ */
+void writeF64Attr(hid_t loc_id, const char *name, double value) {
+    hid_t space = H5Screate(H5S_SCALAR);
+    hid_t attr = H5Acreate2(loc_id, name, H5T_IEEE_F64LE, space, H5P_DEFAULT, H5P_DEFAULT);
+    H5Awrite(attr, H5T_NATIVE_DOUBLE, &value);
+    H5Aclose(attr);
+    H5Sclose(space);
+}
+
+/*
+ * Write a fixed length STRING with `nchars` characters (withtout `\0`) attribute to an object.
+ */
+void writeFixedStrAttr(hid_t loc_id, const char *name, const char *value, size_t nchars) {
+    // Create fixed size string attribute type
+    hid_t type_id = H5Tcopy(H5T_C_S1);
+    size_t str_len = nchars + 1; // Space for NULL terminator
+    H5Tset_size(type_id, str_len);
+    H5Tset_strpad(type_id, H5T_STR_NULLPAD);
+
+    hid_t space_id = H5Screate(H5S_SCALAR);
+    hid_t attr_id = H5Acreate2(loc_id, name, type_id, space_id, H5P_DEFAULT, H5P_DEFAULT);
+    H5Awrite(attr_id, type_id, value);
+
+    H5Aclose(attr_id);
+    H5Tclose(type_id);
+    H5Sclose(space_id);
+}
+
+void writeStrAttr(hid_t dset, const char *name, const char *s) {
     hid_t t = H5Tcopy(H5T_C_S1);
     H5Tset_size(t, strlen(s) + 1);
     H5Tset_cset(t, H5T_CSET_UTF8);
@@ -34,118 +69,150 @@ void put_str_attr(hid_t dset, const char *name, const char *s) {
     H5Tclose(t);
 }
 
-int ts_open(TSWriter *w, const char *path, hsize_t N) {
-    herr_t status;
+hid_t createExtendableF64Dataset(
+    hid_t loc_id,
+    const char *name,
+    int rank,
+    const hsize_t *dims,
+    const hsize_t *maxDims,
+    const hsize_t *chunkDims) {
+    hid_t space, dcpl, dset;
+
+    space = H5Screate_simple(rank, dims, maxDims);
+    dcpl = H5Pcreate(H5P_DATASET_CREATE);
+    H5Pset_chunk(dcpl, rank, chunkDims);
+    dset = H5Dcreate2(loc_id, name, H5T_IEEE_F64LE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+
+    H5Pclose(dcpl);
+    H5Sclose(space);
+    return dset;
+}
+
+/*
+ * Write the Simulation Configuration to the `file` mirroring the `SimConfig` tagged union.
+ */
+void writeConfig(hid_t file, const SimConfig *cfg) {
+    hid_t g_config, g_run, g_model, g_variant, g_active;
+
+    g_config = H5Gcreate2(file, "config", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    g_run = H5Gcreate2(g_config, "run", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    g_model = H5Gcreate2(g_config, "model", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    g_variant = H5Gcreate2(g_model, "variant", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+
+    /* /config/run */
+    writeU32Attr(g_run, "N", cfg->run.N);
+    writeU32Attr(g_run, "NT", cfg->run.NT);
+    writeF64Attr(g_run, "T", cfg->run.T);
+    writeF64Attr(g_run, "DT", cfg->run.DT);
+    writeF64Attr(g_run, "DZ", cfg->run.DZ);
+    writeU32Attr(g_run, "NO", cfg->run.NO);
+    writeF64Attr(g_run, "fineDZ", cfg->run.fineDZ);
+    writeF64Attr(g_run, "sysL", cfg->run.sysL);
+
+    /* /config/model */
+    writeFixedStrAttr(g_model, "modelType", (cfg->model.modelType == CONV) ? "CONV" : "TAYL", 4);
+    writeFixedStrAttr(g_model, "gradient", cfg->model.gradient, 65);
+    writeF64Attr(g_model, "U", cfg->model.U);
+    writeF64Attr(g_model, "PSI", cfg->model.PSI);
+    writeF64Attr(g_model, "alpha", cfg->model.alpha);
+    writeF64Attr(g_model, "beta", cfg->model.beta);
+    writeF64Attr(g_model, "gamma", cfg->model.gamma);
+    writeF64Attr(g_model, "delta", cfg->model.delta);
+    writeF64Attr(g_model, "kappa", cfg->model.kappa);
+
+    if (cfg->model.modelType == CONV) {
+        g_active = H5Gcreate2(g_variant, "conv", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+
+        writeU32Attr(g_active, "kernelN", cfg->model.variant.Conv.kernelN);
+        writeU32Attr(g_active, "subDiv", cfg->model.variant.Conv.subDiv);
+        writeU32Attr(g_active, "M", cfg->model.variant.Conv.M);
+    } else {
+        g_active = H5Gcreate2(g_variant, "tayl", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+
+        writeF64Attr(g_active, "NU", cfg->model.variant.Tayl.NU);
+        writeF64Attr(g_active, "MU", cfg->model.variant.Tayl.MU);
+    }
+
+    H5Gclose(g_active);
+    H5Gclose(g_variant);
+    H5Gclose(g_model);
+    H5Gclose(g_run);
+    H5Gclose(g_config);
+}
+
+hid_t writeF64Vec(hid_t loc_id, const char *name, hsize_t n, const double *buf) {
+    hid_t space, dset;
+    hsize_t dims[1] = { n };
+
+    space = H5Screate_simple(1, dims, NULL);
+    dset = H5Dcreate2(loc_id, name, H5T_IEEE_F64LE, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    H5Dwrite(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, buf);
+
+    H5Sclose(space);
+
+    return dset;
+}
+
+/*
+ * Create the hdf5 file with metadata, configuration data and fixed datasets, as well as the extendible datasets.
+ */
+int ts_create(TSWriter *w, const char *path, const SimConfig *cfg, const double *rho, const double *z) {
+    int N = cfg->run.N;
 
     // Initialize Write
     memset(w, 0, sizeof(*w));
-    w->N = N;
     w->t = 0;
+    w->N = N;
 
     w->file = H5Fcreate(path, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
-    if (w->file < 0)
+    if (w->file < 0) {
         return -1;
-
-    /* ATTRIBUTES */
-    /*    TODO    */
-
-    // Create /time (extendable 1-D float32)
-    {
-        int rank = 1;
-        hsize_t dims[1] = { 0 };
-        hsize_t maxdims[1] = { H5S_UNLIMITED };
-        hid_t space = H5Screate_simple(rank, dims, maxdims);
-
-        hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
-        hsize_t chunk[1] = { 1024 };
-        status = H5Pset_chunk(dcpl, 1, chunk);
-
-        w->dsetTime = H5Dcreate2(w->file, "/time", H5T_IEEE_F64LE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
-
-        put_str_attr(w->dsetTime, "long_name", "time since simulation start");
-        put_str_attr(w->dsetTime, "units", "s");
-
-        H5Pclose(dcpl);
-        H5Sclose(space);
     }
 
-    // Create /phi (extendable along T (T, N, N) of float32)
-    {
-        int rank = 3;
-        hsize_t dims[3] = { 0, N, N };
-        hsize_t maxdims[3] = { H5S_UNLIMITED, N, N };
-        hid_t space = H5Screate_simple(rank, dims, maxdims);
+    // TODO: Metadata
 
-        hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
-        hsize_t chunk[3] = { 1, N, N };
-        status = H5Pset_chunk(dcpl, rank, chunk);
+    /* /config */
+    writeConfig(w->file, cfg);
 
-        w->dsetPhi = H5Dcreate2(w->file, "/phi", H5T_IEEE_F64LE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+    /* /time (extendable 1-D float64) */
+    w->dsetTime = createExtendableF64Dataset(w->file, "time", 1, (hsize_t[]){ 0 }, (hsize_t[]){ H5S_UNLIMITED }, (hsize_t[]){ 1024 });
+    writeStrAttr(w->dsetTime, "long_name", "time since simulation start");
+    writeStrAttr(w->dsetTime, "units", "s");
 
-        put_str_attr(w->dsetPhi, "long_name", "time series of specific volume fraction of RBCs");
-        put_str_attr(w->dsetPhi, "units", "volume fractoin (unit-less)");
-        put_str_attr(w->dsetPhi, "coordinates", "time rho z");
-        put_str_attr(w->dsetPhi, "storage_order", "phi[i*N + j] = phi(rho_i, z_j)");
+    /* /cords */
+    hid_t g_coords = H5Gcreate2(w->file, "coords", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
 
-        H5Pclose(dcpl);
-        H5Sclose(space);
-    }
+    /* /cords/rho */
+    hid_t rho_ds = writeF64Vec(g_coords, "rho", N, rho);
+    writeStrAttr(rho_ds, "long_name", "density");
+    writeStrAttr(rho_ds, "units", "?"); // TODO:
+    writeU32Attr(rho_ds, "N", (unsigned int)N);
+    H5Dclose(rho_ds);
 
-    // Create /psi (extendable along T (T, N) of float32)
-    {
-        int rank = 2;
-        hsize_t dims[2] = { 0, N };
-        hsize_t maxdims[2] = { H5S_UNLIMITED, N };
-        hid_t space = H5Screate_simple(rank, dims, maxdims);
+    hid_t z_ds = writeF64Vec(g_coords, "z", N, z);
+    writeStrAttr(z_ds, "long_name", "height in tube");
+    writeStrAttr(z_ds, "units", "m");
+    writeU32Attr(z_ds, "N", (unsigned int)N);
+    H5Dclose(z_ds);
 
-        hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
-        hsize_t chunk[2] = { 1, N };
-        status = H5Pset_chunk(dcpl, rank, chunk);
+    H5Gclose(g_coords);
 
-        w->dsetPsi = H5Dcreate2(w->file, "/psi", H5T_IEEE_F64LE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+    /* /fields */
+    hid_t g_fields = H5Gcreate2(w->file, "fields", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
 
-        put_str_attr(w->dsetPsi, "long_name", "time series of total volume fraction of RBCs");
-        put_str_attr(w->dsetPsi, "units", "total volume fraction (unit-less)");
-        put_str_attr(w->dsetPsi, "coordinates", "time z");
+    /* /fields/phi -> extendable along T (T, N, N) of float64 */
+    w->dsetPhi = createExtendableF64Dataset(g_fields, "phi", 3, (hsize_t[]){ 0, N, N }, (hsize_t[]){ H5S_UNLIMITED, N, N }, (hsize_t[]){ 1, N, N });
+    writeStrAttr(w->dsetPhi, "long_name", "time series of specific volume fraction of RBCs");
+    writeStrAttr(w->dsetPhi, "units", "volume fractoin (unit-less)");
+    writeStrAttr(w->dsetPhi, "coordinates", "time rho z");
+    writeStrAttr(w->dsetPhi, "storage_order", "phi[i*N + j] = phi(rho_i, z_j)");
 
-        H5Pclose(dcpl);
-        H5Sclose(space);
-    }
+    /* /fields/psi -> extendable along T (T, N) of float64 */
+    w->dsetPsi = createExtendableF64Dataset(g_fields, "psi", 2, (hsize_t[]){ 0, N }, (hsize_t[]){ H5S_UNLIMITED, N }, (hsize_t[]){ 1, N });
+    writeStrAttr(w->dsetPsi, "long_name", "time series of total volume fraction of RBCs");
+    writeStrAttr(w->dsetPsi, "units", "total volume fraction (unit-less)");
+    writeStrAttr(w->dsetPsi, "coordinates", "time z");
 
-    return 0;
-}
-
-int ts_writeR(TSWriter *w, double *R) {
-    herr_t status;
-    hid_t space = H5Screate_simple(1, (hsize_t[]){ w->N }, NULL);
-    hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
-    w->dsetR = H5Dcreate2(w->file, "rho", H5T_IEEE_F64LE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
-
-    put_str_attr(w->dsetR, "long_name", "density");
-    put_str_attr(w->dsetR, "units", "?"); // TODO
-    put_u32_attr(w->dsetR, "N", (unsigned int)w->N);
-
-    status = H5Dwrite(w->dsetR, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, R);
-    status = H5Dclose(w->dsetR);
-    status = H5Pclose(dcpl);
-    status = H5Sclose(space);
-    return 0;
-}
-
-int ts_writeZ(TSWriter *w, double *Z) {
-    herr_t status;
-    hid_t space = H5Screate_simple(1, (hsize_t[]){ w->N }, NULL);
-    hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
-    w->dsetZ = H5Dcreate2(w->file, "z", H5T_IEEE_F64LE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
-
-    put_str_attr(w->dsetZ, "long_name", "height in tube");
-    put_str_attr(w->dsetZ, "units", "?"); // TODO
-    put_u32_attr(w->dsetZ, "N", (unsigned int)w->N);
-
-    status = H5Dwrite(w->dsetZ, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, Z);
-    status = H5Dclose(w->dsetZ);
-    status = H5Pclose(dcpl);
-    status = H5Sclose(space);
     return 0;
 }
 
@@ -217,6 +284,7 @@ int ts_append(TSWriter *w, double t, const double *phi, const double *psi) {
             H5Sclose(fspace);
             return -1;
         }
+
         H5Sclose(mspace);
         H5Sclose(fspace);
     }
