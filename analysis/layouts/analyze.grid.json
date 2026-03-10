@@ -16,6 +16,14 @@
         "position": null
       },
       {
+        "position": [
+          0,
+          0,
+          6,
+          26
+        ]
+      },
+      {
         "position": null
       },
       {
@@ -23,33 +31,19 @@
       },
       {
         "position": [
-          0,
-          0,
           6,
-          21
+          0,
+          18,
+          26
         ]
       },
       {
         "position": [
-          6,
           0,
-          10,
-          22
+          26,
+          8,
+          19
         ]
-      },
-      {
-        "position": null
-      },
-      {
-        "position": [
-          6,
-          22,
-          10,
-          22
-        ]
-      },
-      {
-        "position": null
       }
     ]
   }
