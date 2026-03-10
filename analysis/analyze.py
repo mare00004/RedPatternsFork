@@ -12,7 +12,7 @@
 import marimo
 
 __generated_with = "0.20.4"
-app = marimo.App(width="full")
+app = marimo.App(width="full", layout_file="layouts/analyze.grid.json")
 
 
 @app.cell
