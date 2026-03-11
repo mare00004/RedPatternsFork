@@ -1,0 +1,7 @@
+#ifndef BUILD_INFO_H
+#define BUILD_INFO_H
+
+#define RP_BUILD_GIT_COMMIT "@RP_GIT_COMMIT@"
+#define RP_BUILD_GIT_DESCRIBE "@RP_GIT_DESCRIBE@"
+
+#endif

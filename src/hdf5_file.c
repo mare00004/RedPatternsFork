@@ -7,6 +7,7 @@
 #include "H5Spublic.h"
 #include "H5Tpublic.h"
 #include "H5public.h"
+#include "build_info.h"
 #include "sim_types.h"
 #include <H5Gpublic.h>
 #include <hdf5.h>
@@ -169,7 +170,8 @@ int ts_create(TSWriter *w, const char *path, const SimConfig *cfg, const double 
         return -1;
     }
 
-    // TODO: Metadata
+    writeStrAttr(w->file, "git_commit", RP_BUILD_GIT_COMMIT);
+    writeStrAttr(w->file, "git_describe", RP_BUILD_GIT_DESCRIBE);
 
     /* /config */
     writeConfig(w->file, cfg);

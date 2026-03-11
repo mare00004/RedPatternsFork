@@ -59,6 +59,38 @@ else()
 endif()
 
 # ------------------------------------------------------------------------------------------------
+# Git Info
+# ------------------------------------------------------------------------------------------------
+find_package(Git QUIET)
+
+set(RP_GIT_COMMIT "unknown")
+set(RP_GIT_DESCRIBE "unknown")
+
+if(Git_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --verify HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE RP_GIT_COMMIT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} describe --always --tags --dirty
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE RP_GIT_DESCRIBE
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+endif()
+
+configure_file(
+    ${CMAKE_SOURCE_DIR}/cmake/build_info.h.in
+    ${CMAKE_BINARY_DIR}/generated/build_info.h
+    @ONLY
+)
+
+# ------------------------------------------------------------------------------------------------
 # Main executable
 # ------------------------------------------------------------------------------------------------
 
@@ -95,6 +127,7 @@ target_include_directories(red-patterns
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/argtable3
+        ${CMAKE_BINARY_DIR}/generated
         ${HDF5_INCLUDE_DIRS}
 )
 
