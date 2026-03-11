@@ -295,6 +295,10 @@ int ts_append(TSWriter *w, double t, const double *phi, const double *psi) {
     return 0;
 }
 
+void ts_postRunInfo(TSWriter *w, double runTime) {
+    writeU32Attr(w->file, "runtime", (unsigned int)runTime);
+}
+
 void ts_close(TSWriter *w) {
     if (w->dsetPhi > 0)
         H5Dclose(w->dsetPhi);

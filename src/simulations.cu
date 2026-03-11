@@ -318,6 +318,8 @@ void runSim(SimConfig &cfg) {
     printf("   total time (ms): %f\n", milliseconds);
     printf("   average time (ms): %f\n", milliseconds / NT);
 
+    ts_postRunInfo(&w, milliseconds / 1000);
+
     // delete arrays and free memory
     checkCuda(cudaEventDestroy(startEvent));
     checkCuda(cudaEventDestroy(stopEvent));

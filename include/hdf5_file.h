@@ -22,6 +22,12 @@ typedef struct {
 
 int ts_create(TSWriter *w, const char *path, const SimConfig *cfg, const double *rho, const double *z);
 int ts_append(TSWriter *w, double t, const double *phi, const double *psi);
+
+/*
+ * Add additional information to the HDF5 File.
+ *  `runTime` in seconds
+ */
+void ts_postRunInfo(TSWriter *w, double runTime);
 void ts_close(TSWriter *w);
 
 #ifdef __cplusplus
