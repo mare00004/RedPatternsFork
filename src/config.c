@@ -3,7 +3,6 @@
 #include <dirent.h>
 #include <math.h>
 #include <stdio.h>
-#include <string.h>
 
 /* API */
 void setDefaults(SimConfig *c) {
@@ -33,7 +32,7 @@ void setDefaults(SimConfig *c) {
         },
         .model = {
             .modelType = CONV,
-            .gradient = "linear",
+            .gradientType = LINEAR,
             .U = 100e-18,
             .PSI = 0.02,
             .alpha = 2.0e-05,
@@ -68,7 +67,7 @@ int printConfig(SimConfig *c) {
     } else {
         printf("-> Using Taylor-Model:\n");
     }
-    printf("\t-> gradient: %*s\n", textFieldSize, c->model.gradient); // TODO strip whitespace
+    printf("-> Using %s gradient", (c->model.gradientType == LINEAR) ? "linear" : "sigmoid");
     printf("\t-> U: %.5e\n", c->model.U);
     printf("\t-> PSI: %.5e\n", c->model.PSI);
     printf("\t-> gamma: %.5e\n", c->model.gamma);
@@ -113,7 +112,7 @@ int deriveAndValidateOrDie(SimConfig *c) {
         fprintf(stderr, "U needs to be positive\n");
         return -1;
     }
-    if (strcmp(c->model.gradient, "linear") != 0 && strcmp(c->model.gradient, "sigmoid") != 0) {
+    if (!(c->model.gradientType == LINEAR || c->model.gradientType == SIGMOID)) {
         fprintf(stderr, "gradient has to be one of: linear, sigmoid!\n");
         return -1;
     }
@@ -127,10 +126,10 @@ int deriveAndValidateOrDie(SimConfig *c) {
      **********/
     c->run.NT = ceil(c->run.T / c->run.DT);
 
-    if (strcmp(c->model.gradient, "sigmoid") == 0) {
-        c->model.alpha = 2.0e-04;
-    } else if (strcmp(c->model.gradient, "linear") == 0) {
+    if (c->model.gradientType == LINEAR) {
         c->model.alpha = 2.0e-05;
+    } else if (c->model.gradientType == SIGMOID) {
+        c->model.alpha = 2.0e-04;
     }
 
     return 0;

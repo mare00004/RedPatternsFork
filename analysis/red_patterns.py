@@ -55,7 +55,7 @@ class TaylVariant:
 @dataclass
 class ModelParamsData:
     modelType: Literal["CONV", "TAYL"]
-    gradient: str
+    gradientType: Literal["LINEAR", "SIGMOID"]
     U: float
     PSI: float
     alpha: float
@@ -158,7 +158,7 @@ class RunData:
 
             model = ModelParamsData(
                 modelType=model_type,
-                gradient=str(model_attrs["gradient"]),
+                gradientType=str(model_attrs["gradientType"]),
                 U=float(model_attrs["U"]),
                 PSI=float(model_attrs["PSI"]),
                 alpha=float(model_attrs["alpha"]),

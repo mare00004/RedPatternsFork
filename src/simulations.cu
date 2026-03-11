@@ -256,11 +256,10 @@ void runSim(SimConfig &cfg) {
             printf("This branch should never be reached!");
         }
 
-        // TODO: Store which model is used outside the loop! Maybe make a gradientType Enum
-        if (strcmp(cfg.model.gradient, "linear") == 0) {
+        if (cfg.model.gradientType == LINEAR) {
             CuKernelGradLinear<<<gridN, blockN>>>(d_percoll, t);
             CuKernelWingLinear<<<gridN, blockN>>>(d_percoll, d_gradWing, t);
-        } else if (strcmp(cfg.model.gradient, "sigmoid") == 0) {
+        } else if (cfg.model.gradientType == SIGMOID) {
             CuKernelGradSigmoid<<<gridN, blockN>>>(d_percoll, t);
             CuKernelWingSigmoid<<<gridN, blockN>>>(d_percoll, d_gradWing, t);
         } else {

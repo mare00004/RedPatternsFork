@@ -59,7 +59,7 @@ def _(Path, RunData, pd):
                 row = {
                     "run_h5": str(run_data.path),
                     "model": cfg.model.modelType,
-                    "gradient": cfg.model.gradient,
+                    "gradient": cfg.model.gradientType,
                     "T": cfg.run.T,
                     "DT": cfg.run.DT,
                     "U": cfg.model.U,

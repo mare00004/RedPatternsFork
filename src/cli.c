@@ -48,7 +48,13 @@ void setCommonArguments(CommonCLIArguments *args, SimConfig *cfg) {
         cfg->model.kappa = args->kappa->dval[0];
     }
     if (args->gradient->count > 0) {
-        strncpy(cfg->model.gradient, args->gradient->sval[0], textFieldSize - 1);
+        char gradientTypeStr[textFieldSize];
+        strncpy(gradientTypeStr, args->gradient->sval[0], textFieldSize - 1);
+        if (strcmp(gradientTypeStr, "linear") == 0) {
+            cfg->model.gradientType = LINEAR;
+        } else if (strcmp(gradientTypeStr, "sigmoid") == 0) {
+            cfg->model.gradientType = SIGMOID;
+        }
     }
 }
 

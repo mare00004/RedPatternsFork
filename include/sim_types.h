@@ -8,6 +8,11 @@ typedef enum {
     TAYL = 1
 } ModelType;
 
+typedef enum {
+    LINEAR = 0,
+    SIGMOID = 1,
+} GradientType;
+
 typedef struct {
     int N;
     int NT;
@@ -33,7 +38,7 @@ typedef struct {
 
 typedef struct {
     ModelType modelType;
-    char gradient[textFieldSize];
+    GradientType gradientType;
     double U;
     double PSI;
     double alpha;
