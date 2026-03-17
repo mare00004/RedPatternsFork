@@ -2,7 +2,7 @@
     SI units for physical parameters
 */
 // spatial dimension
-#define sysL (M*1.041412353515625e-6) //[m] system length
+#define sysL ((M-1) * dx_fine)
 // density dimension
 #define RC 1100.0 // central density
 #define RL 30.0 // density range (RC +- RL/2)
@@ -28,7 +28,7 @@
 #define Rmu 1100.0f // [g/l] central RBC density   
 // interpolation
 #define subDiv 256.0 // subdivision
-#define M int(N*subDiv + 1) // size of interpolated grid
+#define M int((N-1)*subDiv + 1) 
 // Percoll density gradient
 #define gradL 0.06 // [m] tube length
 #define wingL 30 // [grid] length of gradient wings
