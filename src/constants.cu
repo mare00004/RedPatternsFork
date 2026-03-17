@@ -13,7 +13,7 @@ const int N = 256; // grid size (N x N)
 // time iteration parameters
 uint32_t NT = ceil(T/IT); // number of time steps
 // spatial coordinate 
-const double IZ = sysL/(N-1); //[m] space increment
+const double IZ = (sysL / M) * subDiv; //[m] space increment
 // host flux prefactors
 double h_beta = 7.4e23; // interaction integral
 double h_alpha = 2e-4; // exp -4 for 20000 g, exp -5 for 2000 g
