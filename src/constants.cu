@@ -12,8 +12,9 @@ double NO = 1000; // [steps] output interval
 const int N = 256; // grid size (N x N)
 // time iteration parameters
 uint32_t NT = ceil(T/IT); // number of time steps
-// spatial coordinate 
-const double IZ = (sysL / M) * subDiv; //[m] space increment
+// spatial coordinate
+const double dx_fine = 1.041412353515625e-6; 
+const double IZ = dx_fine * subDiv; 
 // host flux prefactors
 double h_beta = 7.4e23; // interaction integral
 double h_alpha = 2e-4; // exp -4 for 20000 g, exp -5 for 2000 g
