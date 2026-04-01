@@ -1,4 +1,8 @@
+Documentation:
+  CommentFormat: Doxygen
 CompileFlags:
+  Add:
+    - "-Wdocumentation"
   Remove:
     - "-forward-unknown-to-host-compiler"
     - "-rdc=true"
