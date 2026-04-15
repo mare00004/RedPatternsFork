@@ -102,8 +102,10 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     // CONVOLUTION
     struct arg_lit *cli_conv =
         arg_lit1("c", "use-convolution", "use convolution integral");
+    struct arg_file *cli_kernelFile =
+        arg_file0(NULL, "kernel-file", "<file>", "external HDF5 convolution kernel file");
     struct arg_end *endConv = arg_end(20);
-    void *argtableConv[] = { cli_help, cli_conv, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, endConv };
+    void *argtableConv[] = { cli_help, cli_conv, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, cli_kernelFile, endConv };
     int nErrorsConv;
 
     // TAYLOR
@@ -130,6 +132,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         cli_delta,
         cli_kappa,
         cli_outDir,
+        cli_kernelFile,
         cli_NU,
         cli_MU,
         endDefault,
@@ -154,7 +157,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
 
     if (cli_help->count > 0) {
         void *argtableCommon[] = { cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, endDefault };
-        void *argsHelpConv[] = { cli_conv, endConv };
+        void *argsHelpConv[] = { cli_conv, cli_kernelFile, endConv };
         void *argsHelpTayl[] = { cli_tayl, cli_NU, cli_MU, endTayl };
 
         arg_dstr_t ds = arg_dstr_create();
@@ -192,6 +195,10 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     if (nErrorsDefault == 0 || nErrorsConv == 0) {
         setCommonArguments(&commonArgs, cfg);
         cfg->model.modelType = CONV;
+        if (cli_kernelFile->count > 0) {
+            strncpy(cfg->model.variant.Conv.kernelFile, cli_kernelFile->filename[0], sizeof(cfg->model.variant.Conv.kernelFile) - 1);
+            cfg->model.variant.Conv.kernelFile[sizeof(cfg->model.variant.Conv.kernelFile) - 1] = '\0';
+        }
     } else if (nErrorsTayl == 0) {
         setCommonArguments(&commonArgs, cfg);
         cfg->model.modelType = TAYL;

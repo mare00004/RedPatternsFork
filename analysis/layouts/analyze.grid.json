@@ -1,8 +1,8 @@
 {
   "type": "grid",
   "data": {
-    "columns": 24,
-    "rowHeight": 20,
+    "columns": 27,
+    "rowHeight": 25,
     "maxWidth": 1400,
     "bordered": true,
     "cells": [
@@ -20,7 +20,7 @@
           0,
           0,
           6,
-          26
+          21
         ]
       },
       {
@@ -33,16 +33,16 @@
         "position": [
           6,
           0,
-          18,
-          26
+          17,
+          21
         ]
       },
       {
         "position": [
           0,
-          26,
-          8,
-          19
+          21,
+          23,
+          17
         ]
       }
     ]

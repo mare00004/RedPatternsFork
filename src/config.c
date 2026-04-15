@@ -3,6 +3,7 @@
 #include <dirent.h>
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 /* API */
 void setDefaults(SimConfig *c) {
@@ -45,6 +46,7 @@ void setDefaults(SimConfig *c) {
                     .kernelN = 31, // TODO: why 31?
                     .subDiv = 256,
                     .M = M,
+                    .kernelFile = "",
                 },
             },
         }
@@ -76,6 +78,8 @@ int printConfig(SimConfig *c) {
     if (c->model.modelType == TAYL) {
         printf("\t-> nu: %.5e\n", c->model.variant.Tayl.NU);
         printf("\t-> mu: %.5e\n", c->model.variant.Tayl.MU);
+    } else if (strlen(c->model.variant.Conv.kernelFile) > 0) {
+        printf("\t-> kernel file: %s\n", c->model.variant.Conv.kernelFile);
     }
 
     return 0;
@@ -119,6 +123,14 @@ int deriveAndValidateOrDie(SimConfig *c) {
     if (!(c->model.modelType == CONV || c->model.modelType == TAYL)) {
         fprintf(stderr, "modelType has to be convolution or taylor!\n");
         return -1;
+    }
+    if (c->model.modelType == CONV && strlen(c->model.variant.Conv.kernelFile) > 0) {
+        FILE *kernelFile = fopen(c->model.variant.Conv.kernelFile, "rb");
+        if (kernelFile == NULL) {
+            fprintf(stderr, "%s is not a readable kernel file\n", c->model.variant.Conv.kernelFile);
+            return -1;
+        }
+        fclose(kernelFile);
     }
 
     /**********

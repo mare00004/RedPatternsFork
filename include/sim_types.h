@@ -29,6 +29,7 @@ typedef struct {
     int kernelN;
     int subDiv;
     int M;
+    char kernelFile[256];
 } ConvParams;
 
 typedef struct {

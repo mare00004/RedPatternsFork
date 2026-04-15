@@ -2,6 +2,7 @@
 #include "H5Apublic.h"
 #include "H5Dpublic.h"
 #include "H5Fpublic.h"
+#include "H5Gpublic.h"
 #include "H5Ipublic.h"
 #include "H5Ppublic.h"
 #include "H5Spublic.h"
@@ -9,8 +10,8 @@
 #include "H5public.h"
 #include "build_info.h"
 #include "sim_types.h"
-#include <H5Gpublic.h>
 #include <hdf5.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifdef __cplusplus
@@ -127,6 +128,7 @@ void writeConfig(hid_t file, const SimConfig *cfg) {
         writeU32Attr(g_active, "kernelN", cfg->model.variant.Conv.kernelN);
         writeU32Attr(g_active, "subDiv", cfg->model.variant.Conv.subDiv);
         writeU32Attr(g_active, "M", cfg->model.variant.Conv.M);
+        writeStrAttr(g_active, "kernelSource", strlen(cfg->model.variant.Conv.kernelFile) > 0 ? cfg->model.variant.Conv.kernelFile : "internal");
     } else {
         g_active = H5Gcreate2(g_variant, "tayl", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
 
@@ -154,10 +156,96 @@ hid_t writeF64Vec(hid_t loc_id, const char *name, hsize_t n, const double *buf) 
     return dset;
 }
 
+int loadConvKernelFile(const char *path, double **kernelValues, int *kernelN) {
+    hid_t file = -1;
+    hid_t dset = -1;
+    hid_t space = -1;
+    hsize_t dims[1] = { 0 };
+    double *values = NULL;
+    int status = -1;
+
+    *kernelValues = NULL;
+    *kernelN = 0;
+
+    file = H5Fopen(path, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) {
+        goto cleanup;
+    }
+
+    dset = H5Dopen2(file, "/kernel/values", H5P_DEFAULT);
+    if (dset < 0) {
+        goto cleanup;
+    }
+
+    space = H5Dget_space(dset);
+    if (space < 0 || H5Sget_simple_extent_ndims(space) != 1) {
+        goto cleanup;
+    }
+
+    if (H5Sget_simple_extent_dims(space, dims, NULL) < 0 || dims[0] == 0 || (dims[0] % 2) == 0) {
+        goto cleanup;
+    }
+
+    values = (double *)malloc((size_t)dims[0] * sizeof(double));
+    if (values == NULL) {
+        goto cleanup;
+    }
+
+    if (H5Dread(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, values) < 0) {
+        goto cleanup;
+    }
+
+    *kernelValues = values;
+    *kernelN = (int)dims[0];
+    values = NULL;
+    status = 0;
+
+cleanup:
+    if (values != NULL) {
+        free(values);
+    }
+    if (space >= 0) {
+        H5Sclose(space);
+    }
+    if (dset >= 0) {
+        H5Dclose(dset);
+    }
+    if (file >= 0) {
+        H5Fclose(file);
+    }
+
+    return status;
+}
+
+void writeConvKernelData(hid_t file, const SimConfig *cfg, const double *convKernel, int convKernelN) {
+    hid_t g_conv;
+    hid_t dset;
+
+    if (cfg->model.modelType != CONV || convKernel == NULL || convKernelN <= 0) {
+        return;
+    }
+
+    g_conv = H5Gopen2(file, "/config/model/variant/conv", H5P_DEFAULT);
+    if (g_conv < 0) {
+        return;
+    }
+
+    dset = writeF64Vec(g_conv, "kernel_values", (hsize_t)convKernelN, convKernel);
+    H5Dclose(dset);
+    H5Gclose(g_conv);
+}
+
 /*
  * Create the hdf5 file with metadata, configuration data and fixed datasets, as well as the extendible datasets.
  */
-int ts_create(TSWriter *w, const char *path, const SimConfig *cfg, const double *rho, const double *z) {
+int ts_create(
+    TSWriter *w,
+    const char *path,
+    const SimConfig *cfg,
+    const double *rho,
+    const double *z,
+    const double *convKernel,
+    int convKernelN) {
     int N = cfg->run.N;
 
     // Initialize Write
@@ -175,6 +263,7 @@ int ts_create(TSWriter *w, const char *path, const SimConfig *cfg, const double 
 
     /* /config */
     writeConfig(w->file, cfg);
+    writeConvKernelData(w->file, cfg, convKernel, convKernelN);
 
     /* /time (extendable 1-D float64) */
     w->dsetTime = createExtendableF64Dataset(w->file, "time", 1, (hsize_t[]){ 0 }, (hsize_t[]){ H5S_UNLIMITED }, (hsize_t[]){ 1024 });

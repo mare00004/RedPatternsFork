@@ -8,6 +8,7 @@
 #include <cuda_runtime_api.h>
 #include <driver_types.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <vector>
 
 /* kernel function */
@@ -20,9 +21,8 @@ inline double g(double r, double d, double sigmaC) {
     return 4e7 * exp(-pow(r - d, 2) / (2 * pow(sigmaC, 2)));
 }
 
-void genConvKernel(double *intKernel, double DZ, double U) {
+void genConvKernel(double *intKernel, int kernelN, double DZ, double U) {
     // TODO figure out what does do and why i need the outside of the convolution version
-    int kernelN = 31;
     double subDiv = 256.0;
 
     // compute effective potential
@@ -112,10 +112,31 @@ void runSim(SimConfig &cfg) {
     int vecSize = N * sizeof(double);
     int matSize = N * N * sizeof(double);
 
-    int M, kernelN, kernelSize, interpolationSize;
+    // Load external kernel file, or call `genConvKernel` if kernel file argument is not used
+    int M = 0;
+    int kernelN = 0;
+    int kernelSize = 0;
+    int interpolationSize = 0;
+    std::vector<double> h_intKernel;
     if (cfg.model.modelType == CONV) {
         M = cfg.model.variant.Conv.M;
-        kernelN = cfg.model.variant.Conv.kernelN;
+        if (cfg.model.variant.Conv.kernelFile[0] != '\0') {
+            double *loadedKernel = NULL;
+
+            if (loadConvKernelFile(cfg.model.variant.Conv.kernelFile, &loadedKernel, &kernelN) != 0) {
+                fprintf(stderr, "Failed to load convolution kernel from %s\n", cfg.model.variant.Conv.kernelFile);
+                return;
+            }
+
+            h_intKernel.assign(loadedKernel, loadedKernel + kernelN);
+            free(loadedKernel);
+        } else {
+            kernelN = cfg.model.variant.Conv.kernelN;
+            h_intKernel.resize(kernelN);
+            genConvKernel(h_intKernel.data(), kernelN, cfg.run.DZ, cfg.model.U);
+        }
+
+        cfg.model.variant.Conv.kernelN = kernelN;
         kernelSize = kernelN * sizeof(double);
         interpolationSize = M * sizeof(double);
     }
@@ -130,7 +151,6 @@ void runSim(SimConfig &cfg) {
     std::vector<double> h_I(N);
     std::vector<double> h_percoll(N);
     std::vector<double> h_gradWing(N);
-    std::vector<double> h_intKernel(N); // Only needs kernelN < N many elements, but kernelN is not defined for TAYL version
 
     printf("Allocating device memory...\n");
     double *d_R, *d_phi, *d_J, *d_dJ, *d_intKernel, *d_I, *d_psi, *d_psiIntp, *d_IIntp, *d_percoll, *d_gradWing, *d_b, *d_c, *d_d, *d_psiPow0, *d_psiPow1;
@@ -175,8 +195,6 @@ void runSim(SimConfig &cfg) {
     cudaMemset(d_dJ, 0, matSize);
 
     if (cfg.model.modelType == CONV) {
-        // Initializing convolution kernel
-        genConvKernel(h_intKernel.data(), cfg.run.DZ, cfg.model.U);
         cudaMemcpy(d_intKernel, h_intKernel.data(), kernelSize, cudaMemcpyHostToDevice);
 
         // Initializing interpolated psi.
@@ -218,7 +236,14 @@ void runSim(SimConfig &cfg) {
     checkCuda(cudaEventRecord(startEvent, 0));
 
     printf("Creating save file...\n");
-    ts_create(&w, outFilePath, &cfg, h_R.data(), h_Z.data());
+    ts_create(
+        &w,
+        outFilePath,
+        &cfg,
+        h_R.data(),
+        h_Z.data(),
+        cfg.model.modelType == CONV ? h_intKernel.data() : NULL,
+        cfg.model.modelType == CONV ? kernelN : 0);
 
     // iteration loop
     int n_out = cfg.run.NO;
@@ -236,8 +261,6 @@ void runSim(SimConfig &cfg) {
             size_t shared_mem = 2ull * N * sizeof(double);
 
             int subDiv = cfg.model.variant.Conv.subDiv;
-            int kernelN = cfg.model.variant.Conv.kernelN;
-
             CuKernelSplineCoeffs<<<1, 1, shared_mem>>>(d_psi, d_b, d_c, d_d, N);
             CuKernelSplineEval<<<gridM, blockM>>>(d_psi, d_b, d_c, d_d, d_psiIntp, N, M, subDiv);
 
