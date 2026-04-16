@@ -11,6 +11,7 @@
 #include "build_info.h"
 #include "sim_types.h"
 #include <hdf5.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -121,6 +122,7 @@ void writeConfig(hid_t file, const SimConfig *cfg) {
     writeF64Attr(g_model, "gamma", cfg->model.gamma);
     writeF64Attr(g_model, "delta", cfg->model.delta);
     writeF64Attr(g_model, "kappa", cfg->model.kappa);
+    writeStrAttr(g_model, "phiSource", strlen(cfg->model.initialPhiFile) > 0 ? cfg->model.initialPhiFile : "internal");
 
     if (cfg->model.modelType == CONV) {
         g_active = H5Gcreate2(g_variant, "conv", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
@@ -217,6 +219,71 @@ cleanup:
     return status;
 }
 
+int loadInitialPhiFile(const char *path, double **phiValues, int expectedN) {
+    hid_t file = -1;
+    hid_t dset = -1;
+    hid_t space = -1;
+    hsize_t dims[2] = { 0, 0 };
+    double *values = NULL;
+    int status = -1;
+
+    *phiValues = NULL;
+
+    file = H5Fopen(path, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file < 0) {
+        goto cleanup;
+    }
+
+    dset = H5Dopen2(file, "/phi/values", H5P_DEFAULT);
+    if (dset < 0) {
+        goto cleanup;
+    }
+
+    space = H5Dget_space(dset);
+    if (space < 0 || H5Sget_simple_extent_ndims(space) != 2) {
+        goto cleanup;
+    }
+
+    if (H5Sget_simple_extent_dims(space, dims, NULL) < 0 || dims[0] == 0 || dims[1] == 0 || dims[0] != dims[1] || dims[0] != (hsize_t)expectedN) {
+        goto cleanup;
+    }
+
+    values = (double *)malloc((size_t)(dims[0] * dims[1]) * sizeof(double));
+    if (values == NULL) {
+        goto cleanup;
+    }
+
+    if (H5Dread(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, values) < 0) {
+        goto cleanup;
+    }
+
+    for (hsize_t i = 0; i < dims[0] * dims[1]; i++) {
+        if (!isfinite(values[i]) || values[i] < 0.0) {
+            goto cleanup;
+        }
+    }
+
+    *phiValues = values;
+    values = NULL;
+    status = 0;
+
+cleanup:
+    if (values != NULL) {
+        free(values);
+    }
+    if (space >= 0) {
+        H5Sclose(space);
+    }
+    if (dset >= 0) {
+        H5Dclose(dset);
+    }
+    if (file >= 0) {
+        H5Fclose(file);
+    }
+
+    return status;
+}
+
 void writeConvKernelData(hid_t file, const SimConfig *cfg, const double *convKernel, int convKernelN) {
     hid_t g_conv;
     hid_t dset;
@@ -235,6 +302,42 @@ void writeConvKernelData(hid_t file, const SimConfig *cfg, const double *convKer
     H5Gclose(g_conv);
 }
 
+void writeInitialPhiData(hid_t file, const SimConfig *cfg, const double *initialPhi) {
+    hid_t g_config = -1;
+    hid_t g_initial = -1;
+    hid_t space = -1;
+    hid_t dset = -1;
+    hsize_t dims[2] = { 0, 0 };
+
+    if (initialPhi == NULL) {
+        return;
+    }
+
+    g_config = H5Gopen2(file, "/config", H5P_DEFAULT);
+    if (g_config < 0) {
+        return;
+    }
+
+    g_initial = H5Gcreate2(g_config, "initial_conditions", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (g_initial < 0) {
+        H5Gclose(g_config);
+        return;
+    }
+
+    dims[0] = (hsize_t)cfg->run.N;
+    dims[1] = (hsize_t)cfg->run.N;
+    space = H5Screate_simple(2, dims, NULL);
+    dset = H5Dcreate2(g_initial, "phi_values", H5T_IEEE_F64LE, space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    H5Dwrite(dset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, initialPhi);
+    writeStrAttr(dset, "source", strlen(cfg->model.initialPhiFile) > 0 ? cfg->model.initialPhiFile : "internal");
+    writeStrAttr(dset, "storage_order", "phi[rho_idx, z_idx]");
+
+    H5Dclose(dset);
+    H5Sclose(space);
+    H5Gclose(g_initial);
+    H5Gclose(g_config);
+}
+
 /*
  * Create the hdf5 file with metadata, configuration data and fixed datasets, as well as the extendible datasets.
  */
@@ -244,6 +347,7 @@ int ts_create(
     const SimConfig *cfg,
     const double *rho,
     const double *z,
+    const double *initialPhi,
     const double *convKernel,
     int convKernelN) {
     int N = cfg->run.N;
@@ -263,6 +367,7 @@ int ts_create(
 
     /* /config */
     writeConfig(w->file, cfg);
+    writeInitialPhiData(w->file, cfg, initialPhi);
     writeConvKernelData(w->file, cfg, convKernel, convKernelN);
 
     /* /time (extendable 1-D float64) */

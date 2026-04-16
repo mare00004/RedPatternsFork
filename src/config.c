@@ -41,6 +41,7 @@ void setDefaults(SimConfig *c) {
             .gamma = 3e-10,
             .delta = 1e-15,
             .kappa = 1e-15,
+            .initialPhiFile = "",
             .variant = {
                 .Conv = (ConvParams){
                     .kernelN = 31, // TODO: why 31?
@@ -75,6 +76,9 @@ int printConfig(SimConfig *c) {
     printf("\t-> gamma: %.5e\n", c->model.gamma);
     printf("\t-> delta: %.5e\n", c->model.delta);
     printf("\t-> kappa: %.5e\n", c->model.kappa);
+    if (strlen(c->model.initialPhiFile) > 0) {
+        printf("\t-> initial phi file: %s\n", c->model.initialPhiFile);
+    }
     if (c->model.modelType == TAYL) {
         printf("\t-> nu: %.5e\n", c->model.variant.Tayl.NU);
         printf("\t-> mu: %.5e\n", c->model.variant.Tayl.MU);
@@ -123,6 +127,14 @@ int deriveAndValidateOrDie(SimConfig *c) {
     if (!(c->model.modelType == CONV || c->model.modelType == TAYL)) {
         fprintf(stderr, "modelType has to be convolution or taylor!\n");
         return -1;
+    }
+    if (strlen(c->model.initialPhiFile) > 0) {
+        FILE *initialPhiFile = fopen(c->model.initialPhiFile, "rb");
+        if (initialPhiFile == NULL) {
+            fprintf(stderr, "%s is not a readable initial phi file\n", c->model.initialPhiFile);
+            return -1;
+        }
+        fclose(initialPhiFile);
     }
     if (c->model.modelType == CONV && strlen(c->model.variant.Conv.kernelFile) > 0) {
         FILE *kernelFile = fopen(c->model.variant.Conv.kernelFile, "rb");

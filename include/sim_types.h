@@ -47,6 +47,7 @@ typedef struct {
     double gamma;
     double delta;
     double kappa;
+    char initialPhiFile[256];
     union {
         ConvParams Conv;
         TaylParams Tayl;

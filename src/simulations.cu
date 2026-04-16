@@ -107,7 +107,7 @@ void runSim(SimConfig &cfg) {
     char outFilePath[400];
     snprintf(outFilePath, sizeof(outFilePath), "%s/%s", cfg.run.outDir, "run.h5");
 
-    // TODO some values might not exist if i am not using the convolution version
+    // TODO: some values might not exist if i am not using the convolution version
     int N = cfg.run.N;
     int vecSize = N * sizeof(double);
     int matSize = N * N * sizeof(double);
@@ -186,8 +186,20 @@ void runSim(SimConfig &cfg) {
         h_Z[j] = (double)j * cfg.run.sysL / (cfg.run.N - 1);
     }
 
-    // Initializing phi.
-    initPhi(h_phi.data(), h_R.data(), N, cfg.model.PSI);
+    // Initializing phi from an external file when requested.
+    if (cfg.model.initialPhiFile[0] != '\0') {
+        double *loadedPhi = NULL;
+
+        if (loadInitialPhiFile(cfg.model.initialPhiFile, &loadedPhi, N) != 0) {
+            fprintf(stderr, "Failed to load initial phi from %s\n", cfg.model.initialPhiFile);
+            return;
+        }
+
+        h_phi.assign(loadedPhi, loadedPhi + N * N);
+        free(loadedPhi);
+    } else {
+        initPhi(h_phi.data(), h_R.data(), N, cfg.model.PSI);
+    }
     cudaMemcpy(d_phi, h_phi.data(), matSize, cudaMemcpyHostToDevice);
 
     // Initializing fluxes.
@@ -242,6 +254,7 @@ void runSim(SimConfig &cfg) {
         &cfg,
         h_R.data(),
         h_Z.data(),
+        h_phi.data(),
         cfg.model.modelType == CONV ? h_intKernel.data() : NULL,
         cfg.model.modelType == CONV ? kernelN : 0);
 

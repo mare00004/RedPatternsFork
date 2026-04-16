@@ -21,12 +21,14 @@ typedef struct {
 } TSWriter;
 
 int loadConvKernelFile(const char *path, double **kernelValues, int *kernelN);
+int loadInitialPhiFile(const char *path, double **phiValues, int expectedN);
 int ts_create(
     TSWriter *w,
     const char *path,
     const SimConfig *cfg,
     const double *rho,
     const double *z,
+    const double *initialPhi,
     const double *convKernel,
     int convKernelN);
 int ts_append(TSWriter *w, double t, const double *phi, const double *psi);
