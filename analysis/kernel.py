@@ -12,7 +12,7 @@
 
 import marimo
 
-__generated_with = "0.23.1"
+__generated_with = "0.23.6"
 app = marimo.App()
 
 
@@ -121,7 +121,7 @@ def _(np):
     def lennard_jones_potential(r: np.ndarray):
         return 4 * U * ((SIGMA / r) ** 12 - (SIGMA / r) ** 6)
 
-    return SIGMA, U, V, lennard_jones_potential
+    return SIGMA, U, lennard_jones_potential
 
 
 @app.cell
@@ -155,8 +155,8 @@ def _(SIGMA, lennard_jones_potential, mo, np, plt):
     plt.legend()
     plt.axhline(0, color="white", linewidth=1, linestyle="-")
 
-    ax = mo.ui.matplotlib(plt.gca())
-    ax
+    _lj_plot = mo.ui.matplotlib(plt.gca())
+    _lj_plot
     return
 
 
@@ -184,6 +184,25 @@ def _(Callable, ClassVar, Dict, U, dataclass, lennard_jones_potential, mo, np):
             self.registry[self.key] = self
 
     # Pair Distribution Objects
+
+    def _with_guard(
+        fn: Callable[[np.ndarray], np.ndarray],
+    ) -> Callable[[np.ndarray], np.ndarray]:
+        """Wrap a pair distribution with the legacy divergence guard.
+
+        The original kernel generator sets g(r)=0 for r<1e-8 to avoid
+        numerical issues near the LJ divergence.
+        """
+
+        def guarded(x: np.ndarray) -> np.ndarray:
+            x = np.asarray(x, dtype=np.float64)
+            out = np.asarray(fn(x), dtype=np.float64)
+            out = out.copy()
+            out[x < 1e-8] = 0.0
+            return out
+
+        return guarded
+
     _ = PairDistributionObject(
         key="Mean Field",
         markdown=mo.md(
@@ -195,7 +214,7 @@ def _(Callable, ClassVar, Dict, U, dataclass, lennard_jones_potential, mo, np):
     $$
     """
         ),
-        func=lambda x: np.ones_like(x),
+        func=_with_guard(lambda x: np.ones_like(x)),
     )
 
     G0 = 4.0e7
@@ -213,7 +232,9 @@ def _(Callable, ClassVar, Dict, U, dataclass, lennard_jones_potential, mo, np):
     $$
     """
         ),
-        func=lambda x: G0 * np.exp(-((x - EQ_DIST) ** 2) / (2 * (SIGMA_C**2))),
+        func=_with_guard(
+            lambda x: G0 * np.exp(-((x - EQ_DIST) ** 2) / (2 * (SIGMA_C**2)))
+        ),
     )
 
     LAMBDA = 1
@@ -229,11 +250,115 @@ def _(Callable, ClassVar, Dict, U, dataclass, lennard_jones_potential, mo, np):
     $$
     """
         ),
-        func=lambda x: np.exp(-LAMBDA * (lennard_jones_potential(x) / U)),
+        func=_with_guard(lambda x: np.exp(-LAMBDA * (lennard_jones_potential(x) / U))),
     )
 
     # TODO: Makr Custom PDF?
     return (PairDistributionObject,)
+
+
+@app.cell
+def _(PairDistributionObject, SIGMA, np):
+    """Build the discrete convolution stencil consumed by CUDA.
+
+    This is the single source of truth for both plotting and export.
+    For (Force closure, Nearest Neighbor) it matches the legacy CUDA
+    implementation in `src/simulations.cu::genConvKernel` and therefore
+    `createKernel.py`.
+    """
+
+    # Legacy sampling resolution baked into the original kernel generator.
+    _LEGACY_SUB_RES = 10000.0
+
+    def _f_lj(r: np.ndarray, sigma: float, u_scale: float) -> np.ndarray:
+        # Matches CUDA: 4U*(12*sigma^12/r^13 - 6*sigma^6/r^7)
+        return (
+            4.0 * u_scale * (12.0 * (sigma**12) / (r**13) - 6.0 * (sigma**6) / (r**7))
+        )
+
+    def _u_lj(r: np.ndarray, sigma: float, u_scale: float) -> np.ndarray:
+        # Matches notebook potential definition.
+        return 4.0 * u_scale * ((sigma / r) ** 12 - (sigma / r) ** 6)
+
+    def build_kernel_stencil(
+        *,
+        closure: str,
+        pair_distribution_key: str,
+        kernel_n: int,
+        dz: float,
+        sub_div: int,
+        u_scale: float,
+        sigma: float = SIGMA,
+        sub_res: float = _LEGACY_SUB_RES,
+    ):
+        if kernel_n < 3 or (kernel_n % 2) == 0:
+            raise ValueError("kernelN must be an odd integer >= 3")
+        if dz <= 0.0:
+            raise ValueError("DZ must be positive")
+        if sub_div <= 0:
+            raise ValueError("subDiv must be a positive integer")
+
+        dz_up = dz / float(sub_div)
+        center = (kernel_n - 1) // 2
+        x = (np.arange(kernel_n, dtype=np.float64) - center) * dz_up
+
+        kernel_l = (kernel_n - 1) * dz_up
+        kernel_dz = dz_up
+
+        # Fine radial grid matches legacy genConvKernel scheme.
+        fine_res = int(sub_res * ((kernel_n + 1) / 2))
+        fine_dr = kernel_dz / sub_res
+        r = np.arange(fine_res, dtype=np.float64) * fine_dr
+
+        # Pair distribution (plot and export must agree).
+        g_fn = PairDistributionObject.registry[pair_distribution_key].func
+        g_r = np.asarray(g_fn(r), dtype=np.float64)
+
+        kernel_values = np.zeros(kernel_n, dtype=np.float64)
+        kernel_values[center] = 0.0
+
+        if closure == "Force closure":
+            # Exact legacy force closure discretization.
+            # kernelFine[j] = sum_{k<j} fine_dr * fLJ(r_k)*g(r_k)
+            # then flipped to represent the tail integral in the same discrete sense.
+            kernel_fine = np.zeros(fine_res, dtype=np.float64)
+            force_sum = 0.0
+            # Start from 1 to match legacy kernelFine[0]=0 and loop i=1..fineRes-1
+            for i in range(1, fine_res):
+                fine_r = r[i]
+                kernel_fine[i] = force_sum
+                # Analytic LJ force, matches CUDA.
+                force_sum += (
+                    fine_dr * float(_f_lj(fine_r, sigma, u_scale)) * float(g_r[i])
+                )
+
+            kernel_fine = kernel_fine[-1] - kernel_fine
+
+            for i in range(center + 1, kernel_n):
+                kernel_z = float(i) * kernel_dz - kernel_l / 2.0
+                # Matches CUDA: (i + 1 - (center + 1)) * subRes == (i-center)*subRes
+                sample_idx = int((i - center) * sub_res)
+                kernel_values[i] = kernel_z * kernel_fine[sample_idx]
+                kernel_values[kernel_n - 1 - i] = -kernel_values[i]
+
+        elif closure == "Potential closure":
+            # Sample g(|x|) * u(|x|) on the same stencil grid.
+            r_abs = np.abs(x)
+            # Avoid r=0 singularity by clipping to the smallest representable r.
+            r_abs = np.maximum(r_abs, fine_dr)
+
+            g_x = np.asarray(g_fn(r_abs), dtype=np.float64)
+
+            u_x = np.asarray(_u_lj(r_abs, sigma, u_scale), dtype=np.float64)
+            # Notebook convention includes 2πx; keep that convention for potential closure.
+            kernel_values = 2.0 * np.pi * x * (g_x * u_x)
+            kernel_values[center] = 0.0
+        else:
+            raise ValueError(f"Unknown closure: {closure}")
+
+        return x, kernel_values, kernel_dz
+
+    return (build_kernel_stencil,)
 
 
 @app.cell
@@ -269,8 +394,9 @@ def _(PairDistributionObject, mo, np, pair_distribution_tabs, plt):
 
     plt.grid(True, linestyle=":", alpha=0.7)
 
-    mo.ui.matplotlib(plt.gca())
-    return (active_pair_distribution,)
+    _pdf_plot = mo.ui.matplotlib(plt.gca())
+    _pdf_plot
+    return
 
 
 @app.cell(hide_code=True)
@@ -316,60 +442,139 @@ def _(mo):
                 """
             ),
         },
-        value="Potential closure",
+        value="Force closure",
     )
     closure_tabs
     return (closure_tabs,)
 
 
 @app.cell
+def _(mo):
+    # Defaults match the legacy CUDA generator.
+    plot_u = mo.ui.number(
+        start=0.0,
+        step=1.0,
+        value=100.0,
+        label="U (1e-18 J)",
+    )
+    plot_kernel_n = mo.ui.number(start=3, stop=10001, step=2, value=31, label="kernelN")
+    plot_dz = mo.ui.number(
+        start=1e-12,
+        step=1e-7,
+        # Legacy default: matches `createKernel.py` (see IZ derivation there).
+        value=256.0 * 1.0455122765372783e-6,
+        label="DZ",
+    )
+    plot_sub_div = mo.ui.number(start=1, step=1, value=256, label="subDiv")
+
+    controls = mo.md("""
+    Kernel parameters (used for both plotting and export sampling):
+
+    {plot_u}
+
+    {plot_kernel_n}
+
+    {plot_dz}
+
+    {plot_sub_div}
+    """).batch(
+        plot_u=plot_u,
+        plot_kernel_n=plot_kernel_n,
+        plot_dz=plot_dz,
+        plot_sub_div=plot_sub_div,
+    )
+
+    controls
+    # Downstream cells (moments) should use the exported stencil.
+    return (controls,)
+
+
+@app.cell
 def _(
-    SIGMA,
-    active_pair_distribution,
+    PairDistributionObject,
+    build_kernel_stencil,
     closure_tabs,
+    controls,
     cumulative_trapezoid,
-    lennard_jones_potential,
     mo,
     np,
+    pair_distribution_tabs,
     plt,
 ):
-    x_max = 5e-5
-    r_min = 0.95 * SIGMA
-    r = np.linspace(r_min, x_max, 2000)
-    x = np.linspace(-x_max, x_max, 2001)
+    closure_name = str(closure_tabs.value)
+    pair_key = str(pair_distribution_tabs.value)
 
-    g_r = active_pair_distribution.func(r)
-    u_r = lennard_jones_potential(r)
-    force_r = -np.gradient(u_r, r)
+    kernel_n = int(controls.value["plot_kernel_n"])
+    dz = float(controls.value["plot_dz"])
+    sub_div = int(controls.value["plot_sub_div"])
+    # UI uses 1e-18 J units for convenience.
+    u_scale = float(controls.value["plot_u"]) * 1e-18
 
-    def sample_kernel(sample_x: np.ndarray) -> np.ndarray:
-        if closure_tabs.value == "Potential closure":
-            radial_factor = g_r * u_r
-            return 2 * np.pi * sample_x * np.interp(np.abs(sample_x), r, radial_factor)
+    x_stencil, k_stencil, spacing = build_kernel_stencil(
+        closure=closure_name,
+        pair_distribution_key=pair_key,
+        kernel_n=kernel_n,
+        dz=dz,
+        sub_div=sub_div,
+        u_scale=u_scale,
+    )
 
-        force_integrand = g_r * force_r
-        tail_integral = -cumulative_trapezoid(
-            force_integrand[::-1],
-            r[::-1],
-            initial=0,
-        )[::-1]
-        return 2 * np.pi * sample_x * np.interp(np.abs(sample_x), r, tail_integral)
+    # Smooth curve for visualization.
+    x_max = max(abs(float(x_stencil[0])), abs(float(x_stencil[-1])))
+    x_plot = np.linspace(-x_max, x_max, 2001)
+    r = np.linspace(spacing / 10000.0, x_max, 20000)
 
-    closure_name = closure_tabs.value
-    kernel_values = sample_kernel(x)
-    ylabel = r"Kernel $K(x)$ ($\mathrm{J}\,\mathrm{m}$)"
+    # This is used only for plotting; export is always from the stencil builder.
+    if pair_key == "Nearest Neighbor":
+        g0 = 4.0e7
+        sigma_c = 0.5e-6
+        eq_dist = 6.585467201064237091254725819933213415424688719213008880615234375e-6
+        g_r = g0 * np.exp(-((r - eq_dist) ** 2) / (2.0 * sigma_c**2))
+        g_r = g_r.copy()
+        g_r[r < 1e-8] = 0.0
+    else:
+        g_r = np.asarray(
+            PairDistributionObject.registry[pair_key].func(r), dtype=np.float64
+        )
 
-    plt.figure(figsize=(8, 6))
-    plt.plot(x * 1e6, kernel_values, color="blue", linewidth=2)
-    plt.axhline(0, color="black", linewidth=1)
-    plt.xlabel(r"Offset $x$ ($\mu$m)", fontsize=12)
-    plt.ylabel(ylabel, fontsize=12)
-    plt.title(closure_name, fontsize=14)
-    plt.grid(True, linestyle=":", alpha=0.7)
+    sigma = 5.6e-6
+    u_r = 4.0 * u_scale * ((sigma / r) ** 12 - (sigma / r) ** 6)
+    f_r = 4.0 * u_scale * (12.0 * sigma**12 / (r**13) - 6.0 * sigma**6 / (r**7))
 
-    kernel_plot = mo.ui.matplotlib(plt.gca())
-    kernel_plot
-    return closure_name, kernel_values, x
+    if closure_name == "Potential closure":
+        radial = g_r * u_r
+        k_plot = 2.0 * np.pi * x_plot * np.interp(np.abs(x_plot), r, radial)
+    else:
+        integrand = g_r * f_r
+        tail = -cumulative_trapezoid(integrand[::-1], r[::-1], initial=0.0)[::-1]
+        k_plot = 2.0 * np.pi * x_plot * np.interp(np.abs(x_plot), r, tail)
+
+    _fig, _ax = plt.subplots(figsize=(8, 6))
+    _ax.plot(x_plot * 1e6, k_plot, color="blue", linewidth=2, label="continuous")
+    _ax.scatter(
+        x_stencil * 1e6,
+        k_stencil,
+        s=18,
+        color="black",
+        label="exported stencil",
+        zorder=3,
+    )
+    _ax.axhline(0, color="black", linewidth=1)
+    _ax.set_xlabel(r"Offset $x$ ($\mu$m)", fontsize=12)
+    _ax.set_ylabel(r"Kernel $K(x)$", fontsize=12)
+    _ax.set_title(f"{closure_name} ({pair_key})", fontsize=14)
+    _ax.grid(True, linestyle=":", alpha=0.7)
+    _ax.legend()
+
+    mo.ui.matplotlib(_ax)
+    return k_stencil, x_stencil
+
+
+@app.cell
+def _(k_stencil, x_stencil):
+    x = x_stencil
+    kernel_values = k_stencil
+    return (kernel_values,)
 
 
 @app.cell(hide_code=True)
@@ -378,9 +583,8 @@ def _(mo):
     ## CUDA Export
 
     This export form writes the **discrete convolution stencil** expected by the
-    CUDA code. It matches the legacy `genConvKernel()` convention instead of the
-    plotted notebook kernel, so the active notebook closure and pair-distribution
-    tabs are ignored here.
+    CUDA code. The exported stencil is built from the currently selected closure
+    and pair distribution.
     """)
     return
 
@@ -441,44 +645,19 @@ def _(Path, mo):
         label="Export directory",
     )
     export_name = mo.ui.text(value="kernel.h5", label="File name")
-    export_kernel_n = mo.ui.number(
-        start=3, stop=10001, step=2, value=31, label="Export kernelN"
-    )
-    export_dz = mo.ui.number(
-        start=1e-12,
-        step=1e-7,
-        value=256 * 1.041412353515625e-6,
-        label="DZ",
-    )
-    export_sub_div = mo.ui.number(
-        start=1,
-        step=1,
-        value=256,
-        label="subDiv",
-    )
-
     export_form = (
         mo.md(
             """
-    Export a legacy CUDA-compatible convolution kernel.
+    Export a CUDA-compatible convolution kernel.
 
     {export_dir}
 
     {export_name}
-
-    {export_kernel_n}
-
-    {export_dz}
-
-    {export_sub_div}
     """
         )
         .batch(
             export_dir=export_dir,
             export_name=export_name,
-            export_kernel_n=export_kernel_n,
-            export_dz=export_dz,
-            export_sub_div=export_sub_div,
         )
         .form(
             submit_button_label="Export CUDA kernel",
@@ -491,73 +670,50 @@ def _(Path, mo):
 
 
 @app.cell
-def _(CopyToClipboard, Path, U, export_form, h5py, mo, np):
-    def _build_legacy_cuda_kernel(kernel_n: int, dz: float, sub_div: int):
-        sigma = 5.6e-6
-        sigma_c = 0.5e-6
-        eq_dist = 6.585467201064237091254725819933213415424688719213008880615234375e-06
-        sub_res = 10000.0
-
-        kernel_l = (kernel_n - 1) * dz / sub_div
-        kernel_dz = kernel_l / (kernel_n - 1)
-        fine_res = int(sub_res * ((kernel_n + 1) / 2))
-        fine_dr = kernel_dz / sub_res
-        kernel_fine = np.zeros(fine_res, dtype=np.float64)
-
-        force_sum = 0.0
-        for i in range(1, fine_res):
-            fine_r = i * fine_dr
-            force = 4 * U * (12 * sigma**12 / fine_r**13 - 6 * sigma**6 / fine_r**7)
-            gpdf = 4e7 * np.exp(-((fine_r - eq_dist) ** 2) / (2 * sigma_c**2))
-            if fine_r < 1e-8:
-                gpdf = 0.0
-            kernel_fine[i] = force_sum
-            force_sum += fine_dr * force * gpdf
-
-        kernel_fine = kernel_fine[-1] - kernel_fine
-        kernel_values = np.zeros(kernel_n, dtype=np.float64)
-        center = (kernel_n - 1) // 2
-        kernel_values[center] = 0.0
-
-        for i in range((kernel_n + 1) // 2, kernel_n):
-            kernel_z = i * kernel_dz - kernel_l / 2
-            fine_idx = int((i + 1 - (kernel_n + 1) / 2) * sub_res)
-            kernel_values[i] = kernel_z * kernel_fine[fine_idx]
-            kernel_values[kernel_n - 1 - i] = -kernel_values[i]
-
-        x = (np.arange(kernel_n, dtype=np.float64) - center) * kernel_dz
-        return x, kernel_values, kernel_dz
-
+def _(
+    CopyToClipboard,
+    Path,
+    build_kernel_stencil,
+    closure_tabs,
+    controls,
+    export_form,
+    h5py,
+    mo,
+    np,
+    pair_distribution_tabs,
+):
     if export_form.value is None:
         _result = mo.md(
-            "Submit the form to export the legacy CUDA-compatible convolution kernel."
+            "Submit the form to export a CUDA-compatible convolution kernel."
         )
     else:
         _export_dir_entries = export_form.value.get("export_dir") or []
         _file_name = str(export_form.value.get("export_name", "")).strip()
-        _kernel_n = int(export_form.value.get("export_kernel_n", 0))
-        _dz = float(export_form.value.get("export_dz", 0.0))
-        _sub_div = int(export_form.value.get("export_sub_div", 0))
+        # Always export with the same live parameters used for plotting.
+        _kernel_n = int(controls.value["plot_kernel_n"])
+        _dz = float(controls.value["plot_dz"])
+        _sub_div = int(controls.value["plot_sub_div"])
+        # UI uses 1e-18 J units for convenience.
+        _u_scale = float(controls.value["plot_u"]) * 1e-18
 
         if not _export_dir_entries:
             _result = mo.md("Please select a directory before exporting.")
         elif not _file_name:
             _result = mo.md("Please enter a file name before exporting.")
-        elif _kernel_n < 3 or _kernel_n % 2 == 0:
-            _result = mo.md(
-                "`kernelN` must be an odd integer greater than or equal to `3`."
-            )
-        elif _dz <= 0.0:
-            _result = mo.md("`DZ` must be positive.")
-        elif _sub_div < 1:
-            _result = mo.md("`subDiv` must be a positive integer.")
         else:
             _selected_dir = Path(_export_dir_entries[0].path)
             _path = _selected_dir / _file_name
-            _x, _kernel_values, _kernel_dz = _build_legacy_cuda_kernel(
-                _kernel_n,
-                _dz,
-                _sub_div,
+
+            _closure = str(closure_tabs.value)
+            _pair_key = str(pair_distribution_tabs.value)
+
+            _x, _kernel_values, _kernel_dz = build_kernel_stencil(
+                closure=_closure,
+                pair_distribution_key=_pair_key,
+                kernel_n=_kernel_n,
+                dz=_dz,
+                sub_div=_sub_div,
+                u_scale=_u_scale,
             )
 
             try:
@@ -574,8 +730,9 @@ def _(CopyToClipboard, Path, U, export_form, h5py, mo, np):
                     _kernel_group.attrs["spacing"] = float(_kernel_dz)
                     _kernel_group.attrs["DZ"] = float(_dz)
                     _kernel_group.attrs["subDiv"] = int(_sub_div)
-                    _kernel_group.attrs["closure"] = "legacy_force_closure"
-                    _kernel_group.attrs["pair_distribution"] = "legacy_nearest_neighbor"
+                    _kernel_group.attrs["closure"] = _closure
+                    _kernel_group.attrs["pair_distribution"] = _pair_key
+                    _kernel_group.attrs["U"] = float(_u_scale)
                     _kernel_group.attrs["cuda_compatible"] = 1
                     _kernel_group.attrs["generated_by"] = "analysis/kernel.py"
             except Exception as _exc:
@@ -588,7 +745,10 @@ def _(CopyToClipboard, Path, U, export_form, h5py, mo, np):
                             rf"Exported CUDA-compatible convolution kernel to `{_path}`."
                         ),
                         mo.md(
-                            rf"Stored `{_kernel_n}` samples with `kernelDZ = {_kernel_dz:.6e}` m on `/kernel/values`."
+                            rf"Stored `{_kernel_n}` samples with spacing `{_kernel_dz:.6e}` m on `/kernel/values`."
+                        ),
+                        mo.md(
+                            rf"Used live plotting parameters: `kernelN={_kernel_n}`, `DZ={_dz:.6e}`, `subDiv={_sub_div}`, `U={_u_scale:.6e}` (J)."
                         ),
                         mo.hstack(
                             [mo.md("Copy exported path:"), _clipboard], justify="start"
@@ -645,14 +805,19 @@ def _(mo):
 
 
 @app.cell
-def _(V, closure_name, kernel_values, mo, np, x):
-    moment_1 = np.trapezoid(kernel_values * x, x)
-    moment_3 = np.trapezoid(kernel_values * x**3, x) / 6
+def _(controls, kernel_values, mo, np):
+    #   NU = int r K(r) dr        MU = (1/6) int r^3 K(r) dr
+    # with a discrete Riemann sum on a grid of spacing kernelDZ = DZ/256.
+    _dz = float(controls.value["plot_dz"])
+    sub_div_tayl = 256
+    kernel_dz = _dz / float(sub_div_tayl)
 
-    nu = moment_1 / V
-    mu = moment_3 / V
-    nu_legacy = moment_1 / (2 * np.pi)
-    mu_legacy = moment_3 / (2 * np.pi)
+    _kernel_n = int(kernel_values.shape[0])
+    centre = (_kernel_n - 1) // 2
+    rk = (np.arange(_kernel_n, dtype=np.float64) - float(centre)) * kernel_dz
+
+    nu = kernel_dz * float(np.sum(rk * kernel_values))
+    mu = (kernel_dz * float(np.sum((rk**3) * kernel_values))) / 6.0
 
     def latex_scientific(value: float) -> str:
         if value == 0:
@@ -665,21 +830,10 @@ def _(V, closure_name, kernel_values, mo, np, x):
         rf"""
     ### Numerical Coefficients
 
-    For the current kernel choice (**{closure_name}**) and $V = 90\,\mathrm{{fL}}$,
-
     $$
     \begin{{aligned}}
-    \nu &= {latex_scientific(nu)}\,\mathrm{{J}}, \\
-    \mu &= {latex_scientific(mu)}\,\mathrm{{J\,m^2}}.
-    \end{{aligned}}
-    $$
-
-    Removing the explicit $2\pi$ and $V$ factors from the notebook convention gives
-
-    $$
-    \begin{{aligned}}
-    \mathrm{{NU}}_{{legacy}} &= {latex_scientific(nu_legacy)}\,\mathrm{{J\,m^3}}, \\
-    \mathrm{{MU}}_{{legacy}} &= {latex_scientific(mu_legacy)}\,\mathrm{{J\,m^5}}.
+    \mathrm{{NU}} &= {latex_scientific(nu)}, \\
+    \mathrm{{MU}} &= {latex_scientific(mu)}.
     \end{{aligned}}
     $$
     """
