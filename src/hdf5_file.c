@@ -14,6 +14,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,6 +27,17 @@ void writeU32Attr(hid_t loc_id, const char *name, unsigned int v) {
     hid_t space = H5Screate(H5S_SCALAR);
     hid_t attr = H5Acreate2(loc_id, name, H5T_STD_U32LE, space, H5P_DEFAULT, H5P_DEFAULT);
     H5Awrite(attr, H5T_NATIVE_UINT, &v);
+    H5Aclose(attr);
+    H5Sclose(space);
+}
+
+/*
+ * Write an INT attribute to an object.
+ */
+void writeI64Attr(hid_t loc_id, const char *name, int v) {
+    hid_t space = H5Screate(H5S_SCALAR);
+    hid_t attr = H5Acreate2(loc_id, name, H5T_STD_I64LE, space, H5P_DEFAULT, H5P_DEFAULT);
+    H5Awrite(attr, H5T_NATIVE_INT, &v);
     H5Aclose(attr);
     H5Sclose(space);
 }
@@ -364,6 +376,9 @@ int ts_create(
 
     writeStrAttr(w->file, "git_commit", RP_BUILD_GIT_COMMIT);
     writeStrAttr(w->file, "git_describe", RP_BUILD_GIT_DESCRIBE);
+
+    // Store the time that the run.h5 file was created
+    writeI64Attr(w->file, "created", (int64_t)time(NULL));
 
     /* /config */
     writeConfig(w->file, cfg);
