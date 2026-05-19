@@ -1,0 +1,19 @@
+[project]
+name = "redpatternsfork"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "h5py>=3.16.0",
+    "h5py-stubs>=0.1.2",
+    "marimo>=0.23.6",
+    "matplotlib>=3.10.9",
+    "numpy>=2.4.5",
+    "scipy>=1.17.1",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.1.0",
+]
