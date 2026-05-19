@@ -11,11 +11,8 @@
 
 import marimo
 
-__generated_with = "0.20.4"
-app = marimo.App(
-    width="medium",
-    layout_file="layouts/analyze_single_run.grid.json",
-)
+__generated_with = "0.23.6"
+app = marimo.App(width="medium")
 
 
 @app.cell
@@ -55,7 +52,7 @@ def _(Path, mo):
 def _(file_picker, mo, plot_psi_file):
     mo.stop(not file_picker.value, mo.md("Please pick a file to plot!"))
 
-    result = plot_psi_file(file_picker.path())
+    result = plot_psi_file(file_picker.path(), vmin=0.0, vmax=0.2)
     result
     return
 
