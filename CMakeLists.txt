@@ -104,6 +104,8 @@ add_executable(red-patterns
     src/cuda_kernel.cu
 )
 
+install(TARGETS red-patterns RUNTIME DESTINATION bin)
+
 if(CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
     foreach(std_dir ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES})
         target_compile_options(red-patterns PRIVATE
@@ -153,4 +155,3 @@ if(HDF5_LIBRARY_DIRS)
         BUILD_RPATH "${HDF5_LIBRARY_DIRS}"
         INSTALL_RPATH "${HDF5_LIBRARY_DIRS}")
 endif()
-
