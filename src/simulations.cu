@@ -101,89 +101,131 @@ void initPhi(double *f, double *R, int N, double PSI) {
             f[i + N * j] = f[i + N * j] / phiSum * PSI * (N - 2 * edgeZ);
 }
 
+#define TO_BYTES(num) num * sizeof(double)
+
 /* running simulation */
 void runSim(SimConfig &cfg) {
     TSWriter w;
     char outFilePath[400];
     snprintf(outFilePath, sizeof(outFilePath), "%s/%s", cfg.run.outDir, "run.h5");
 
-    // TODO: some values might not exist if i am not using the convolution version
-    int N = cfg.run.N;
-    int vecSize = N * sizeof(double);
-    int matSize = N * N * sizeof(double);
+    const int N = cfg.run.N;
+    const bool useConvolution = cfg.model.modelType == CONV;
+
+    // Dimensions of various arrays in units of grid points
+    const int numZCells = N;
+    const int numZFaces = N + 1;
+    const int numRhoPoints = N;
+    const int numPhiPoints = numZCells * numRhoPoints;
+    const int numPsiPoints = numZCells;
+    const int numFluxPoints = numZFaces * numRhoPoints;
 
     // Load external kernel file, or call `genConvKernel` if kernel file argument is not used
     int M = 0;
-    int kernelN = 0;
-    int kernelSize = 0;
-    int interpolationSize = 0;
+    int numFineZCells = 0;
+    int numKernelPoints = 0;
     std::vector<double> h_intKernel;
-    if (cfg.model.modelType == CONV) {
+    if (useConvolution) {
         M = cfg.model.variant.Conv.M;
         if (cfg.model.variant.Conv.kernelFile[0] != '\0') {
             double *loadedKernel = NULL;
 
-            if (loadConvKernelFile(cfg.model.variant.Conv.kernelFile, &loadedKernel, &kernelN) != 0) {
+            if (loadConvKernelFile(cfg.model.variant.Conv.kernelFile, &loadedKernel, &numKernelPoints) != 0) {
                 fprintf(stderr, "Failed to load convolution kernel from %s\n", cfg.model.variant.Conv.kernelFile);
                 return;
             }
 
-            h_intKernel.assign(loadedKernel, loadedKernel + kernelN);
+            h_intKernel.assign(loadedKernel, loadedKernel + numKernelPoints);
             free(loadedKernel);
         } else {
-            kernelN = cfg.model.variant.Conv.kernelN;
-            h_intKernel.resize(kernelN);
-            genConvKernel(h_intKernel.data(), kernelN, cfg.run.DZ, cfg.model.U);
+            numKernelPoints = cfg.model.variant.Conv.kernelN;
+            h_intKernel.resize(numKernelPoints);
+            genConvKernel(h_intKernel.data(), numKernelPoints, cfg.run.DZ, cfg.model.U);
         }
 
-        cfg.model.variant.Conv.kernelN = kernelN;
-        kernelSize = kernelN * sizeof(double);
-        interpolationSize = M * sizeof(double);
+        cfg.model.variant.Conv.kernelN = numKernelPoints;
+        numFineZCells = M;
     }
 
     printf("Allocating host memory...\n");
-    std::vector<double> h_R(N);
-    std::vector<double> h_Z(N);
-    std::vector<double> h_phi(N * N);
+    std::vector<double> h_R(numRhoPoints); // rho grid points
+    std::vector<double> h_Z(numZCells);    // z cell centers
+    std::vector<double> h_phi(numPhiPoints);
+    std::vector<double> h_psi(numPsiPoints);
+    std::vector<double> h_I(numPsiPoints);
+
     std::vector<double> h_J(N * N);
     std::vector<double> h_dJ(N * N);
-    std::vector<double> h_psi(N);
-    std::vector<double> h_I(N);
     std::vector<double> h_percoll(N);
     std::vector<double> h_gradWing(N);
 
     printf("Allocating device memory...\n");
-    double *d_R, *d_phi, *d_J, *d_dJ, *d_intKernel, *d_I, *d_psi, *d_psiIntp, *d_IIntp, *d_percoll, *d_gradWing, *d_b, *d_c, *d_d, *d_psiPow0, *d_psiPow1;
-    cudaMalloc(&d_R, vecSize);
-    cudaMalloc(&d_phi, matSize);
-    cudaMalloc(&d_J, matSize);
-    cudaMalloc(&d_dJ, matSize);
-    cudaMalloc(&d_I, vecSize);
-    cudaMalloc(&d_psi, vecSize);
-    cudaMalloc(&d_percoll, vecSize);
-    cudaMalloc(&d_gradWing, vecSize);
-    cudaMalloc(&d_b, vecSize);
-    cudaMalloc(&d_c, vecSize);
-    cudaMalloc(&d_d, vecSize);
+    double *d_R, *d_phi, *d_F, *d_intKernel, *d_I, *d_psi, *d_psiIntp, *d_IIntp, *d_percoll, *d_gradWing, *d_b, *d_c, *d_d, *d_Iface;
 
-    cudaMalloc(&d_psiPow0, vecSize); // pow(1.0 - psi, mDeg)
-    cudaMalloc(&d_psiPow1, vecSize); // pow(psi, mDeg)
+    cudaMalloc(&d_R, TO_BYTES(numRhoPoints));
+    cudaMalloc(&d_phi, TO_BYTES(numPhiPoints));
+    cudaMalloc(&d_psi, TO_BYTES(numPsiPoints));
+    cudaMalloc(&d_I, TO_BYTES(numPsiPoints));
+    cudaMalloc(&d_F, TO_BYTES(numFluxPoints));
+    cudaMalloc(&d_percoll, TO_BYTES(numZCells));
+    cudaMalloc(&d_gradWing, TO_BYTES(numZCells));
+    cudaMalloc(&d_Iface, TO_BYTES(numZFaces));
+
+    cudaEvent_t startEvent = nullptr;
+    cudaEvent_t stopEvent = nullptr;
+    bool writer_created = false;
+
+    auto cleanup = [&]() {
+        if (startEvent != nullptr) {
+            checkCuda(cudaEventDestroy(startEvent));
+        }
+        if (stopEvent != nullptr) {
+            checkCuda(cudaEventDestroy(stopEvent));
+        }
+
+        cudaFree(d_R);
+        cudaFree(d_phi);
+        cudaFree(d_F);
+        cudaFree(d_I);
+        cudaFree(d_psi);
+        cudaFree(d_Iface);
+        cudaFree(d_percoll);
+        cudaFree(d_gradWing);
+
+        if (cfg.model.modelType == CONV) {
+            cudaFree(d_intKernel);
+            cudaFree(d_psiIntp);
+            cudaFree(d_IIntp);
+            cudaFree(d_b);
+            cudaFree(d_c);
+            cudaFree(d_d);
+        }
+
+        if (writer_created) {
+            ts_close(&w);
+        }
+    };
 
     if (cfg.model.modelType == CONV) {
-        cudaMalloc(&d_intKernel, kernelSize);
-        cudaMalloc(&d_psiIntp, interpolationSize);
-        cudaMalloc(&d_IIntp, interpolationSize);
+        cudaMalloc(&d_intKernel, TO_BYTES(numKernelPoints));
+        cudaMalloc(&d_psiIntp, TO_BYTES(numFineZCells));
+        cudaMalloc(&d_IIntp, TO_BYTES(numFineZCells));
+        cudaMalloc(&d_b, TO_BYTES(numZCells));
+        cudaMalloc(&d_c, TO_BYTES(numZCells));
+        cudaMalloc(&d_d, TO_BYTES(numZCells));
     }
 
     printf("Initializing device memory...\n");
-    // Initializing density coordinate rho.
-    for (int j = 0; j < N; j++) {
-        h_R[j] = RC - RL / 2 + RL * (double(j) / double(N - 1));
-    }
-    cudaMemcpy(d_R, h_R.data(), vecSize, cudaMemcpyHostToDevice);
 
-    for (int j = 0; j < N; j++) {
-        h_Z[j] = (double)j * cfg.run.sysL / (cfg.run.N - 1);
+    // Initializing density coordinate rho.
+    for (int j = 0; j < numRhoPoints; j++) {
+        h_R[j] = RC - RL / 2 + RL * (double(j) / double(numRhoPoints - 1));
+    }
+    cudaMemcpy(d_R, h_R.data(), TO_BYTES(numRhoPoints), cudaMemcpyHostToDevice);
+
+    // Initializing Z coordinate at cell centers
+    for (int j = 0; j < numZCells; j++) {
+        h_Z[j] = (double(j) + 0.5) * cfg.run.DZ;
     }
 
     // Initializing phi from an external file when requested.
@@ -200,63 +242,53 @@ void runSim(SimConfig &cfg) {
     } else {
         initPhi(h_phi.data(), h_R.data(), N, cfg.model.PSI);
     }
-    cudaMemcpy(d_phi, h_phi.data(), matSize, cudaMemcpyHostToDevice);
 
-    // Initializing fluxes.
-    cudaMemset(d_J, 0, matSize);
-    cudaMemset(d_dJ, 0, matSize);
+    cudaMemcpy(d_phi, h_phi.data(), TO_BYTES(numPhiPoints), cudaMemcpyHostToDevice);
+    cudaMemset(d_I, 0, TO_BYTES(numZCells));
+    cudaMemset(d_psi, 0, TO_BYTES(numPhiPoints));
+    cudaMemset(d_percoll, 0, TO_BYTES(numZCells));
+    cudaMemset(d_gradWing, 0, TO_BYTES(numZCells));
 
     if (cfg.model.modelType == CONV) {
-        cudaMemcpy(d_intKernel, h_intKernel.data(), kernelSize, cudaMemcpyHostToDevice);
-
-        // Initializing interpolated psi.
-        cudaMemset(d_psiIntp, 0, interpolationSize);
-
-        // Initializing interpolated integral.
-        cudaMemset(d_IIntp, 0, interpolationSize);
+        cudaMemcpy(d_intKernel, h_intKernel.data(), TO_BYTES(numKernelPoints), cudaMemcpyHostToDevice);
+        cudaMemset(d_psiIntp, 0, TO_BYTES(numFineZCells));
+        cudaMemset(d_IIntp, 0, TO_BYTES(numFineZCells));
+        cudaMemset(d_b, 0, TO_BYTES(numZCells));
+        cudaMemset(d_c, 0, TO_BYTES(numZCells));
+        cudaMemset(d_d, 0, TO_BYTES(numZCells));
     }
 
-    // Interaction integral.
-    cudaMemset(d_I, 0, vecSize);
-
-    // Initializing psi.
-    cudaMemset(d_psi, 0, vecSize);
-
-    // Initializing percoll gradient and gradient wing.
-    cudaMemset(d_percoll, 0, vecSize);
-    cudaMemset(d_gradWing, 0, vecSize);
-
-    // Initialize arrays for spline interpolation.
-    cudaMemset(d_b, 0, vecSize);
-    cudaMemset(d_c, 0, vecSize);
-    cudaMemset(d_d, 0, vecSize);
+    printf("Creating save file...\n");
+    if (ts_create(
+            &w,
+            outFilePath,
+            &cfg,
+            h_R.data(),
+            h_Z.data(),
+            h_phi.data(),
+            useConvolution ? h_intKernel.data() : NULL,
+            useConvolution ? numKernelPoints : 0) != 0) {
+        fprintf(stderr, "Failed to create output file %s\n", outFilePath);
+        cleanup();
+        return;
+    }
+    writer_created = true;
 
     printf("starting timer.\n");
     // start time measurement
     float milliseconds;
-    cudaEvent_t startEvent, stopEvent;
     checkCuda(cudaEventCreate(&startEvent));
     checkCuda(cudaEventCreate(&stopEvent));
 
     printf("defining grid and starting loop.\n");
 
-    dim3 blockN(N, 1);
-    dim3 gridN((N + blockN.x - 1) / blockN.x, 1);
-    dim3 block2D(N, 1);
-    dim3 grid2D((N + block2D.x - 1) / block2D.x, N);
+    constexpr unsigned int one_dim_block_size = 256;
+    const dim3 cell_block_dim(one_dim_block_size, 1, 1);
+    const dim3 cell_grid_dim((numZCells + cell_block_dim.x - 1) / cell_block_dim.x, 1, 1);
+    const dim3 face_block_dim(one_dim_block_size, 1, 1);
+    const dim3 face_grid_dim((numZFaces + face_block_dim.x - 1) / face_block_dim.x, 1, 1);
 
     checkCuda(cudaEventRecord(startEvent, 0));
-
-    printf("Creating save file...\n");
-    ts_create(
-        &w,
-        outFilePath,
-        &cfg,
-        h_R.data(),
-        h_Z.data(),
-        h_phi.data(),
-        cfg.model.modelType == CONV ? h_intKernel.data() : NULL,
-        cfg.model.modelType == CONV ? kernelN : 0);
 
     // iteration loop
     int n_out = cfg.run.NO;
@@ -265,68 +297,92 @@ void runSim(SimConfig &cfg) {
     double t = 0.0;
     for (int i = 0; i < NT; i++) {
         /* integration */
-        CuKernelInte<<<gridN, blockN>>>(d_phi, d_psi);
+        CuKernelInte<<<cell_grid_dim, cell_block_dim>>>(d_phi, d_psi);
 
-        if (cfg.model.modelType == CONV) {
-            dim3 blockM(N, 1);
-            dim3 gridM((M + blockM.x - 1) / blockM.x, 1);
+        if (useConvolution) {
+            const int subDiv = cfg.model.variant.Conv.subDiv;
+            const dim3 fine_cell_block_dim(one_dim_block_size, 1, 1);
+            const dim3 fine_cell_grid_dim((numFineZCells + fine_cell_block_dim.x - 1) / fine_cell_block_dim.x, 1, 1);
+            const size_t spline_shared_bytes = 2ull * numZCells * sizeof(double);
 
-            size_t shared_mem = 2ull * N * sizeof(double);
+            CuKernelSplineCoeffs<<<1, 1, spline_shared_bytes>>>(d_psi, d_b, d_c, d_d, cfg.run.N);
+            CuKernelSplineEvalCellCentered<<<fine_cell_grid_dim, fine_cell_block_dim>>>(d_psi, d_b, d_c, d_d, d_psiIntp, cfg.run.N, cfg.model.variant.Conv.M, subDiv);
 
-            int subDiv = cfg.model.variant.Conv.subDiv;
-            CuKernelSplineCoeffs<<<1, 1, shared_mem>>>(d_psi, d_b, d_c, d_d, N);
-            CuKernelSplineEval<<<gridM, blockM>>>(d_psi, d_b, d_c, d_d, d_psiIntp, N, M, subDiv);
-
-            CuKernelConv<<<gridM, blockM, (N + kernelN - 1) * sizeof(double)>>>(
+            CuKernelConv<<<fine_cell_grid_dim, fine_cell_block_dim, (fine_cell_block_dim.x + numKernelPoints - 1) * sizeof(double)>>>(
                 d_psiIntp,
                 d_IIntp,
                 d_intKernel,
-                M,
-                kernelN,
+                numFineZCells,
+                numKernelPoints,
                 subDiv);
 
-            CuKernelSplineDownSample<<<1, blockN>>>(d_IIntp, d_I, subDiv);
+            CuKernelDownSample<<<cell_grid_dim, cell_block_dim>>>(
+                d_IIntp,
+                d_I,
+                subDiv);
+
+            CuKernelCellToFace<<<face_grid_dim, face_block_dim>>>(
+                d_I,
+                d_Iface);
         } else if (cfg.model.modelType == TAYL) {
-            CuKernelTayl<<<gridN, blockN>>>(d_psi, d_I, cfg.model.variant.Tayl.NU, cfg.model.variant.Tayl.MU);
+            double dz = cfg.run.DZ;
+            double c1 = cfg.model.variant.Tayl.NU / (12.0 * dz);
+            double c3 = cfg.model.variant.Tayl.MU / (2.0 * dz * dz * dz);
+
+            CuKernelTaylFace<<<face_grid_dim, face_block_dim>>>(
+                d_psi,
+                d_Iface,
+                c1,
+                c3);
         } else {
             printf("This branch should never be reached!");
         }
 
         if (cfg.model.gradientType == LINEAR) {
-            CuKernelGradLinear<<<gridN, blockN>>>(d_percoll, t);
-            CuKernelWingLinear<<<gridN, blockN>>>(d_percoll, d_gradWing, t);
+            CuKernelGradLinear<<<cell_grid_dim, cell_block_dim>>>(d_percoll, t);
+            CuKernelWingLinear<<<cell_grid_dim, cell_block_dim>>>(d_percoll, d_gradWing, t);
         } else if (cfg.model.gradientType == SIGMOID) {
-            CuKernelGradSigmoid<<<gridN, blockN>>>(d_percoll, t);
-            CuKernelWingSigmoid<<<gridN, blockN>>>(d_percoll, d_gradWing, t);
+            CuKernelGradSigmoid<<<cell_grid_dim, cell_block_dim>>>(d_percoll, t);
+            CuKernelWingSigmoid<<<cell_grid_dim, cell_block_dim>>>(d_percoll, d_gradWing, t);
         } else {
             printf("This branch should never be reached!");
         }
 
-        CuKernelDegDiffPow<<<gridN, blockN>>>(d_psi, d_psiPow0, d_psiPow1);
+        const dim3 flux_block_dim(16, 16, 1);
+        const dim3 flux_grid_dim(
+            (numZFaces + flux_block_dim.x - 1) / flux_block_dim.x,
+            (numZCells + flux_block_dim.y - 1) / flux_block_dim.y,
+            1);
 
-        /* iteration */
-        CuKernelIter<<<grid2D, block2D>>>(
+        CuKernelComputeFluxFVM<<<flux_grid_dim, flux_block_dim>>>(
             d_phi,
-            d_J,
-            d_dJ,
+            d_F,
             d_percoll,
             d_R,
-            d_I,
-            d_psi,
-            d_psiPow0,
-            d_psiPow1,
-            t,
+            d_Iface,
             d_gradWing);
+
+        const dim3 update_block_dim(16, 16, 1);
+        const dim3 update_grid_dim(
+            (numZCells + update_block_dim.x - 1) / update_block_dim.x,
+            (numZCells + update_block_dim.y - 1) / update_block_dim.y,
+            1);
+
+        CuKernelUpdatePhiFVM<<<update_grid_dim, update_block_dim>>>(
+            d_phi,
+            d_F);
 
         cudaDeviceSynchronize();
 
         if ((((i - 1) % n_out) == 0) | (i == 1) | (i == NT)) {
-            // retrieve data from GPU mem
-            checkCuda(cudaMemcpy(h_phi.data(), d_phi, matSize, cudaMemcpyDeviceToHost));
-            checkCuda(cudaMemcpy(h_I.data(), d_I, vecSize, cudaMemcpyDeviceToHost));
-            checkCuda(cudaMemcpy(h_psi.data(), d_psi, vecSize, cudaMemcpyDeviceToHost));
+            const double savedTime = t + DT;
+            CuKernelInte<<<cell_grid_dim, cell_block_dim>>>(d_phi, d_psi);
 
-            ts_append(&w, t, h_phi.data(), h_psi.data());
+            // retrieve data from GPU mem
+            checkCuda(cudaMemcpy(h_phi.data(), d_phi, TO_BYTES(numPhiPoints), cudaMemcpyDeviceToHost));
+            checkCuda(cudaMemcpy(h_psi.data(), d_psi, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
+
+            ts_append(&w, savedTime, h_phi.data(), h_psi.data());
 
             // measure time
             checkCuda(cudaEventRecord(stopEvent, 0));
@@ -355,32 +411,7 @@ void runSim(SimConfig &cfg) {
 
     ts_postRunInfo(&w, milliseconds / 1000);
 
-    // delete arrays and free memory
-    checkCuda(cudaEventDestroy(startEvent));
-    checkCuda(cudaEventDestroy(stopEvent));
-
-    cudaFree(d_R);
-    cudaFree(d_phi);
-    cudaFree(d_J);
-    cudaFree(d_dJ);
-    cudaFree(d_I);
-    cudaFree(d_psi);
-    cudaFree(d_percoll);
-    cudaFree(d_gradWing);
-    cudaFree(d_b);
-    cudaFree(d_c);
-    cudaFree(d_d);
-
-    if (cfg.model.modelType == CONV) {
-        cudaFree(d_intKernel);
-        cudaFree(d_psiIntp);
-        cudaFree(d_IIntp);
-    }
-
-    cudaFree(d_psiPow0);
-    cudaFree(d_psiPow1);
-
     /****************************/
-    ts_close(&w);
+    cleanup();
     /****************************/
 }

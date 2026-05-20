@@ -4,24 +4,6 @@
 #include "parameters.h"
 #include "sim_types.h"
 
-__global__ void CuKernelTayl(double *psi, double *I, double nu, double mu) {
-    // get indices
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-
-    // compute convolution integral
-    if ((i >= 8) && (i <= d_cfg.run.N - 1 - 8)) {
-        I[i] =
-            nu *
-                (-psi[i + 2] + 8 * psi[i + 1] + psi[i - 2] - 8 * psi[i - 1]) /
-                (12 * d_cfg.run.DZ) +
-            mu *
-                (psi[i + 2] - 2 * psi[i + 1] + 2 * psi[i - 1] - psi[i - 2]) /
-                (2 * pow(d_cfg.run.DZ, 3));
-    }
-
-    __syncthreads();
-}
-
 /* phi density integration kernel */
 __global__ void CuKernelInte(double *phi, double *psi) {
     // get indices
@@ -33,13 +15,126 @@ __global__ void CuKernelInte(double *phi, double *psi) {
 
     // discrete sum integration
     for (int k = 0; k < d_cfg.run.N; k++) {
-        sum += phi[k * d_cfg.run.N + i]; // TODO multiply by Delta rho?
+        sum += phi[k * d_cfg.run.N + i];
     }
 
     psi[i] = sum;
 }
 
-// TODO replace 256 with N
+__device__ __forceinline__ int clampCellIndex(int idx, int N) {
+    return max(0, min(idx, N - 1));
+}
+
+__global__ void CuKernelTaylFace(
+    const double *__restrict__ psi,
+    double *__restrict__ I_face,
+    double c1,
+    double c3) {
+    /*
+     * Computes Taylor/local approximation directly on FVM faces.
+     *
+     * psi[i]      lives at cell center z_i = (i + 1/2) dz
+     * I_face[f]  lives at face        z_f = f dz
+     *
+     * f = 0, ..., N
+     *
+     * For interior face f, the neighboring cell centers are:
+     *
+     *   f - 2 : z_f - 3/2 dz
+     *   f - 1 : z_f - 1/2 dz
+     *   f     : z_f + 1/2 dz
+     *   f + 1 : z_f + 3/2 dz
+     *
+     * This version assumes c1 and c3 are the SAME coefficients you used
+     * in the old cell-centered kernel.
+     */
+
+    const int f = blockIdx.x * blockDim.x + threadIdx.x;
+    const int N = d_cfg.run.N;
+
+    if (f > N) {
+        return;
+    }
+
+    const int im2 = clampCellIndex(f - 2, N);
+    const int im1 = clampCellIndex(f - 1, N);
+    const int ip0 = clampCellIndex(f, N);
+    const int ip1 = clampCellIndex(f + 1, N);
+
+    /*
+     * Face-centered 4-point first derivative numerator:
+     *
+     *   psi[im2] - 27 psi[im1] + 27 psi[ip0] - psi[ip1]
+     *
+     * This is 24 dz psi'(z_f) + higher-order terms.
+     *
+     * The old cell-centered first derivative numerator was
+     *
+     *   -psi[i+2] + 8 psi[i+1] - 8 psi[i-1] + psi[i-2]
+     *
+     * which is 12 dz psi'(z_i) + higher-order terms.
+     *
+     * Therefore, if c1 is the old coefficient, multiply by 1/2.
+     */
+    const double first_num =
+        psi[im2] - 27.0 * psi[im1] + 27.0 * psi[ip0] - psi[ip1];
+
+    /*
+     * Face-centered third derivative numerator:
+     *
+     *   psi[ip1] - 3 psi[ip0] + 3 psi[im1] - psi[im2]
+     *
+     * This is dz^3 psi'''(z_f) + higher-order terms.
+     *
+     * The old cell-centered third derivative numerator was
+     *
+     *   psi[i+2] - 2 psi[i+1] + 2 psi[i-1] - psi[i-2]
+     *
+     * which is 2 dz^3 psi'''(z_i) + higher-order terms.
+     *
+     * Therefore, if c3 is the old coefficient, multiply by 2.
+     */
+    const double third_num =
+        psi[ip1] - 3.0 * psi[ip0] + 3.0 * psi[im1] - psi[im2];
+
+    I_face[f] =
+        0.5 * c1 * first_num +
+        2.0 * c3 * third_num;
+}
+__global__ void CuKernelCellToFace(const double *__restrict__ I_cell, double *__restrict__ I_face) {
+    const int j = blockIdx.x * blockDim.x + threadIdx.x;
+    const int N = d_cfg.run.N;
+
+    if (j > N) {
+        return;
+    }
+
+    if (j == 0) {
+        I_face[j] = I_cell[0];
+    } else if (j == N) {
+        I_face[j] = I_cell[N - 1];
+    } else {
+        I_face[j] = 0.5 * (I_cell[j - 1] + I_cell[j]);
+    }
+}
+
+__global__ void CuKernelDownSample(double *IIntp, double *I, int subDiv) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const int N = d_cfg.run.N;
+
+    if (i >= N || subDiv <= 0) {
+        return;
+    }
+
+    if ((subDiv % 2) == 0) {
+        const int mid = i * subDiv + subDiv / 2;
+        I[i] = 0.5 * (IIntp[mid - 1] + IIntp[mid]);
+    } else {
+        const int mid = i * subDiv + subDiv / 2;
+        I[i] = IIntp[mid];
+    }
+}
+
 __global__ void CuKernelSplineCoeffs(
     const double *__restrict__ y,
     double *__restrict__ b,
@@ -85,7 +180,7 @@ __global__ void CuKernelSplineCoeffs(
     }
 }
 
-__global__ void CuKernelSplineEval(
+__global__ void CuKernelSplineEvalCellCentered(
     const double *__restrict__ y,
     const double *__restrict__ b,
     const double *__restrict__ c,
@@ -94,34 +189,37 @@ __global__ void CuKernelSplineEval(
     int N,
     int M,
     int subDiv) {
-
     int k = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (k >= M) {
         return;
     }
 
-    if (k == M - 1) {
+    // Fine cell center coordinate in coarse-cell units:
+    // x = z_tilde / DZ - 1/2
+    double x = (double(k) + 0.5) / double(subDiv) - 0.5;
+
+    // Clamp to the available spline interval [0, N-1]
+    if (x <= 0.0) {
+        y_intp[k] = y[0];
+        return;
+    }
+
+    if (x >= double(N - 1)) {
         y_intp[k] = y[N - 1];
         return;
     }
 
-    int j = k / subDiv;
-    int r = k - j * subDiv;
-    double dx = double(r) / double(subDiv);
+    int j = int(floor(x));
+    double dx = x - double(j);
+
+    // Safety: spline segment j uses y[j]..y[j+1], so j <= N-2
+    if (j >= N - 1) {
+        j = N - 2;
+        dx = 1.0;
+    }
 
     y_intp[k] = y[j] + (b[j] + (c[j] + d[j] * dx) * dx) * dx;
-}
-
-/* downsampling kernel */
-__global__ void CuKernelSplineDownSample(double *IIntp, double *I, int subDiv) {
-    // get indices
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= d_cfg.run.N) {
-        return;
-    }
-    int j = i * subDiv;
-    I[i] = IIntp[j];
 }
 
 /* convolution kernel */
@@ -164,74 +262,98 @@ __global__ void CuKernelConv(double *psi, double *I, double *convKernel, int M, 
     }
 }
 
-/*
- * Precompute degenerate diffusion power factors. For each i in [0, N-1],
- * psiPow0[i] = pow(1.0 - psi[i], mDeg) and psiPow1[i] = pow(psi[i], mDeg).
- * This kernel runs with a 1D grid over N elements.
- */
-__global__ void CuKernelDegDiffPow(double *psi, double *psiPow0, double *psiPow1) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < d_cfg.run.N) {
-        double val = psi[i];
-        psiPow0[i] = pow(1.0 - val, mDeg);
-        psiPow1[i] = pow(val, mDeg);
-    }
+__device__ inline double pressure_cell_value(
+    const double *__restrict__ percoll,
+    const double *__restrict__ gradWing,
+    int idx,
+    int N) {
+    return (idx > wingL && idx < N - 1 - wingL)
+               ? percoll[idx]
+               : gradWing[idx];
 }
 
-/* main time iteration */
-__global__ void CuKernelIter(
-    double *phi,
-    double *J,
-    double *dJ,
-    double *percoll,
-    double *R,
-    double *I,
-    double *psi,
-    double *psiPow0,
-    double *psiPow1,
-    double t,
-    double *gradWing) {
+__global__ void CuKernelComputeFluxFVM(
+    const double *__restrict__ phi,
+    double *__restrict__ J,
+    const double *__restrict__ percoll,
+    const double *__restrict__ R,
+    const double *__restrict__ I_face,
+    const double *__restrict__ gradWing) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x; // face index: 0 ... N
+    const int j = blockIdx.y * blockDim.y + threadIdx.y; // rho index
 
-    int N = d_cfg.run.N;
-    // get indices
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
-    int gi = i + j * N; // global index
+    const int N = d_cfg.run.N;
+    const int NR = d_cfg.run.N; // replace by d_cfg.run.NR if you have separate NR
 
-    double DZ = d_cfg.run.DZ;
-
-    // compute physical flux
-    double rpTerm;
-    if ((i > wingL) && (i < N - 1 - wingL)) {
-
-        rpTerm = R[j] + percoll[i] - P0;
-    }
-    if ((i <= wingL) || (i >= N - 1 - wingL)) {
-        rpTerm = R[j] + gradWing[i] - P0;
+    if (i > N || j >= NR) {
+        return;
     }
 
-    J[gi] = (d_cfg.model.alpha * rpTerm + d_cfg.model.beta * I[i]) * phi[gi];
+    const int fidx = j * (N + 1) + i;
 
-    // compute flux derivative
-    if ((i >= 4) & (i <= N - 1 - 4)) {
-        // physical flux first derivative
-        dJ[gi] = (+0.5 / DZ * (J[gi + 1] - J[gi - 1]));
-        // degenerate diffusion second derivative for phi (no precomputation needed)
-        double ddPhi0_i = jDegDiffPhi0(gi);
-        double ddPhi0_p1 = jDegDiffPhi0(gi + 1);
-        double ddPhi0_m1 = jDegDiffPhi0(gi - 1);
-        dJ[gi] -= (-2.0 * ddPhi0_i + (ddPhi0_p1 + ddPhi0_m1)) / (DZ * DZ) * d_cfg.model.gamma;
-        // degenerate diffusion second derivative for psi using precomputed power arrays
-        double deg0 = psiPow0[i] * fabs(phi[gi]);
-        double deg0_p1 = psiPow0[i + 1] * fabs(phi[gi + 1]);
-        double deg0_m1 = psiPow0[i - 1] * fabs(phi[gi - 1]);
-        dJ[gi] -= (-2.0 * deg0 + (deg0_p1 + deg0_m1)) / (DZ * DZ) * d_cfg.model.delta;
-        double deg1 = -psiPow1[i] * fabs(phi[gi]);
-        double deg1_p1 = -psiPow1[i + 1] * fabs(phi[gi + 1]);
-        double deg1_m1 = -psiPow1[i - 1] * fabs(phi[gi - 1]);
-        dJ[gi] += (-2.0 * deg1 + (deg1_p1 + deg1_m1)) / (DZ * DZ) * d_cfg.model.kappa;
+    // No-flux boundaries.
+    if (i == 0 || i == N) {
+        J[fidx] = 0.0;
+        return;
     }
 
-    // compute euler step
-    phi[gi] = phi[gi] + d_cfg.run.DT * dJ[gi];
+    const int left = i - 1;
+    const int right = i;
+
+    const double P_left =
+        pressure_cell_value(percoll, gradWing, left, N);
+
+    const double P_right =
+        pressure_cell_value(percoll, gradWing, right, N);
+
+    const double P_face = 0.5 * (P_left + P_right);
+
+    // No smoothing of I_face: the canonical taylor branch uses I directly,
+    // so any low-pass filter here biases the linear-stability spectrum of
+    // the pattern-formation instability and changes the selected wavelength.
+    const double I_face_value = I_face[i];
+
+    const double rp = R[j] + P_face - P0;
+
+    const double v_face =
+        -d_cfg.model.alpha * rp - d_cfg.model.beta * I_face_value;
+
+    const double phi_left = phi[j * N + left];
+    const double phi_right = phi[j * N + right];
+
+    const double phi_up = (v_face > 0.0) ? phi_left : phi_right;
+
+    J[fidx] = v_face * phi_up;
+}
+
+__global__ void CuKernelUpdatePhiFVM(
+    double *__restrict__ phi,
+    const double *__restrict__ J) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x; // cell index: 0 ... N-1
+    const int j = blockIdx.y * blockDim.y + threadIdx.y; // rho index
+
+    const int N = d_cfg.run.N;
+    const int NR = d_cfg.run.N; // replace by d_cfg.run.NR if available
+
+    if (i >= N || j >= NR) {
+        return;
+    }
+
+    const int pidx = j * N + i;
+
+    const double flux_in = J[j * (N + 1) + i];
+    const double flux_out = J[j * (N + 1) + i + 1];
+
+    phi[pidx] +=
+        -d_cfg.run.DT / d_cfg.run.DZ * (flux_out - flux_in);
+
+    /*
+     * Be careful:
+     * This positivity clamp breaks exact mass conservation.
+     * It is okay as a debugging guard, but if it triggers often,
+     * your time step is probably too large.
+     */
+    if (phi[pidx] < 0.0) {
+        phi[pidx] = 0.0;
+    }
 }
