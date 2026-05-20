@@ -131,9 +131,6 @@ void writeConfig(hid_t file, const SimConfig *cfg) {
     writeF64Attr(g_model, "PSI", cfg->model.PSI);
     writeF64Attr(g_model, "alpha", cfg->model.alpha);
     writeF64Attr(g_model, "beta", cfg->model.beta);
-    writeF64Attr(g_model, "gamma", cfg->model.gamma);
-    writeF64Attr(g_model, "delta", cfg->model.delta);
-    writeF64Attr(g_model, "kappa", cfg->model.kappa);
     writeStrAttr(g_model, "phiSource", strlen(cfg->model.initialPhiFile) > 0 ? cfg->model.initialPhiFile : "internal");
 
     if (cfg->model.modelType == CONV) {

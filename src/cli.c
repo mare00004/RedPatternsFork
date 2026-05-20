@@ -12,9 +12,6 @@ typedef struct {
     struct arg_int *NO;
     struct arg_dbl *U;
     struct arg_dbl *PSI;
-    struct arg_dbl *gamma;
-    struct arg_dbl *delta;
-    struct arg_dbl *kappa;
     struct arg_file *outDir;
     struct arg_file *phiFile;
     struct arg_str *gradient;
@@ -42,15 +39,6 @@ void setCommonArguments(CommonCLIArguments *args, SimConfig *cfg) {
     }
     if (args->PSI->count > 0) {
         cfg->model.PSI = args->PSI->dval[0];
-    }
-    if (args->gamma->count > 0) {
-        cfg->model.gamma = args->gamma->dval[0];
-    }
-    if (args->delta->count > 0) {
-        cfg->model.delta = args->delta->dval[0];
-    }
-    if (args->kappa->count > 0) {
-        cfg->model.kappa = args->kappa->dval[0];
     }
     if (args->gradient->count > 0) {
         char gradientTypeStr[textFieldSize];
@@ -94,9 +82,6 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         .NO = cli_NO,
         .U = cli_U,
         .PSI = cli_PSI,
-        .gamma = cli_gamma,
-        .delta = cli_delta,
-        .kappa = cli_kappa,
         .outDir = cli_outDir,
         .phiFile = cli_phiFile,
         .gradient = cli_gradient,

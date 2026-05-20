@@ -44,9 +44,6 @@ typedef struct {
     double PSI;
     double alpha;
     double beta;
-    double gamma;
-    double delta;
-    double kappa;
     char initialPhiFile[256];
     union {
         ConvParams Conv;

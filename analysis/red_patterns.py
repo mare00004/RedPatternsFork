@@ -109,9 +109,6 @@ class ModelParamsData:
     PSI: float
     alpha: float
     beta: float
-    gamma: float
-    delta: float
-    kappa: float
     variant: ConvVariant | TaylVariant  # Tagged-union payload selected by `modelType`.
 
 
@@ -228,9 +225,6 @@ class RunData:
                 PSI=float(model_attrs["PSI"]),
                 alpha=float(model_attrs["alpha"]),
                 beta=float(model_attrs["beta"]),
-                gamma=float(model_attrs["gamma"]),
-                delta=float(model_attrs["delta"]),
-                kappa=float(model_attrs["kappa"]),
                 variant=variant,
             )
 

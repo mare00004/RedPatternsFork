@@ -38,9 +38,6 @@ void setDefaults(SimConfig *c) {
             .PSI = 0.02,
             .alpha = 2.0e-05,
             .beta = 7.4e23,
-            .gamma = 3e-10,
-            .delta = 1e-15,
-            .kappa = 1e-15,
             .initialPhiFile = "",
             .variant = {
                 .Conv = (ConvParams){
@@ -54,7 +51,7 @@ void setDefaults(SimConfig *c) {
     };
 }
 
-// TODO update
+// TODO: update
 int printConfig(SimConfig *c) {
     printf("-----------------------\n");
     printf("-  Simulation Config  -\n");
@@ -73,9 +70,6 @@ int printConfig(SimConfig *c) {
     printf("-> Using %s gradient", (c->model.gradientType == LINEAR) ? "linear" : "sigmoid");
     printf("\t-> U: %.5e\n", c->model.U);
     printf("\t-> PSI: %.5e\n", c->model.PSI);
-    printf("\t-> gamma: %.5e\n", c->model.gamma);
-    printf("\t-> delta: %.5e\n", c->model.delta);
-    printf("\t-> kappa: %.5e\n", c->model.kappa);
     if (strlen(c->model.initialPhiFile) > 0) {
         printf("\t-> initial phi file: %s\n", c->model.initialPhiFile);
     }
