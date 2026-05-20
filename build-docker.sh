@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set -euo pipefail
+
 # Use git hash or first cli argument as tag
 TAG="${1:-$(git rev-parse --short HEAD)}"
 IMAGE="mare00004/cuda-hdf5-dev:${TAG}"

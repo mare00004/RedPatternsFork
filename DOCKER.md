@@ -1,18 +1,110 @@
 # Docker
 
-The Important files are
+This repo can be built into a CUDA-enabled Docker image that contains the `red-patterns` executable.
 
-- `Dockerfile`. Tells docker how the container should look
-- `.dockerignore`. Tells docker what files to ignore, which is imporant so you don't accidentally include the build directory, which confuses CMake.
+Important files:
 
-To build the container manually run:
+- `Dockerfile`: defines build + runtime image.
+- `.dockerignore`: keeps the build context small and avoids including `build/` (which can confuse CMake caching).
+- `build-docker.sh`: convenience script that builds (and in many setups, pushes) the image.
 
-`sudo docker build -t <name>:<tag> .`
+## Build A New Image
 
-Otherwise you can just run the script `build-docker.sh` which automatically pushes the container to docker hub.
+Pick a Docker Hub repository name and a unique tag, e.g. the current git hash, so HTCondor pulls the updated image instead of reusing a cached one:
 
-If you want to push the container to docker hub, then you have to log into your account with `sudo docker -u <user> -p <PAT>` (PAT = Personal Access Token), make sure the `<name>` matches your repository name on dockerhub and push the container with `sudo docker push <name>:<tag>`.
+```bash
+TAG=$(git rev-parse --short HEAD)
+IMAGE=<dockerhub-user-or-org>/<repo-name>
+```
 
-It is imporant that you add a unique `<tag>` to each container version, so that you force HTCondor to pull the new version of your container instead of a cached version.
+Build locally:
 
-As a tag you could use the current git-hash by replacing `<tag>` with `git rev-parse --short HEAD`
+```bash
+sudo docker build -t "$IMAGE:$TAG" .
+```
+
+Or use the helper script (see `build-docker.sh` for defaults/flags):
+
+```bash
+./build-docker.sh
+```
+
+## Push To Docker Hub
+
+1. Login to Docker Hub (use a Personal Access Token instead of your password):
+
+```bash
+sudo docker login -u <user>
+```
+
+2. Push the tag you built:
+
+```bash
+sudo docker push "$IMAGE:$TAG"
+```
+
+## Pull And Run The Simulation
+
+On the machine that should run the simulation:
+
+```bash
+sudo docker pull "$IMAGE:$TAG"
+```
+
+### GPU Prerequisites
+
+To use the GPU inside the container you need NVIDIA drivers on the host and the NVIDIA Container Toolkit (so `docker run --gpus all ...` works).
+
+### Run Interactively (Shell Inside The Container)
+
+Mount a host directory for outputs (and optionally inputs), then open a shell:
+
+```bash
+OUT_DIR=$PWD/out
+mkdir -p "$OUT_DIR"
+
+sudo docker run --rm -it \
+  --gpus all \
+  -v "$OUT_DIR:/out" \
+  "$IMAGE:$TAG" \
+  bash
+```
+
+Inside the container, run the binary and write outputs to `/out`:
+
+```bash
+red-patterns --help
+
+# Example (adjust flags/paths to your workflow)
+red-patterns --use-convolution --out-dir /out
+```
+
+### Run Non-Interactively (One-Shot Command)
+
+Run the simulation directly (no shell), still mounting an output directory:
+
+```bash
+OUT_DIR=$PWD/out
+mkdir -p "$OUT_DIR"
+
+sudo docker run --rm \
+  --gpus all \
+  -v "$OUT_DIR:/out" \
+  "$IMAGE:$TAG" \
+  red-patterns --use-convolution --out-dir=/out
+```
+
+If you have a parameter file on the host, mount it and pass the in-container path:
+
+```bash
+KERNEL=$PWD/kernel.h5
+OUT_DIR=$PWD/out
+mkdir -p "$OUT_DIR"
+
+sudo docker run --rm \
+  --gpus all \
+  -v "$OUT_DIR:/out" \
+  -v "$PARAMS:/kernel.h5:ro" \
+  "$IMAGE:$TAG" \
+  red-patterns --use-convolution --params /params.json --out-dir /out
+```
