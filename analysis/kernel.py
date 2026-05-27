@@ -12,7 +12,7 @@
 
 import marimo
 
-__generated_with = "0.23.6"
+__generated_with = "0.23.8"
 app = marimo.App()
 
 
@@ -78,12 +78,12 @@ def _(mo):
     1. Potential closure
 
     $$
-        K(x) = 2\pi\,x\,g(|x|)\,u(|x|)
+        K(x) = x\,g(|x|)\,u(|x|)
     $$
 
     2. Force closure
         $$
-            K(x) = 2\pi\,x\int_{|x|}^{\infty} g(R)\,f(R)\,d R,
+            K(x) = x\int_{|x|}^{\infty} g(R)\,f(R)\,d R,
         $$
         where for conservative forces $f(R) = -u'(R)$.
 
@@ -253,7 +253,7 @@ def _(Callable, ClassVar, Dict, U, dataclass, lennard_jones_potential, mo, np):
         func=_with_guard(lambda x: np.exp(-LAMBDA * (lennard_jones_potential(x) / U))),
     )
 
-    # TODO: Makr Custom PDF?
+    # TODO: Make Custom PDF?
     return (PairDistributionObject,)
 
 
@@ -350,8 +350,7 @@ def _(PairDistributionObject, SIGMA, np):
             g_x = np.asarray(g_fn(r_abs), dtype=np.float64)
 
             u_x = np.asarray(_u_lj(r_abs, sigma, u_scale), dtype=np.float64)
-            # Notebook convention includes 2πx; keep that convention for potential closure.
-            kernel_values = 2.0 * np.pi * x * (g_x * u_x)
+            kernel_values = x * (g_x * u_x)
             kernel_values[center] = 0.0
         else:
             raise ValueError(f"Unknown closure: {closure}")
@@ -429,14 +428,14 @@ def _(mo):
             "Potential closure": mo.md(
                 r"""
                 $$
-                K(x) = 2\pi\,x\,g(|x|)\,u(|x|)
+                K(x) = x\,g(|x|)\,u(|x|)
                 $$
                 """
             ),
             "Force closure": mo.md(
                 r"""
                 $$
-                K(x) = 2\pi\,x\int_{|x|}^{\infty} g(R)\,f(R)\, d R,
+                K(x) = x\int_{|x|}^{\infty} g(R)\,f(R)\, d R,
                 \qquad f(R) = -u'(R)
                 $$
                 """
@@ -543,11 +542,11 @@ def _(
 
     if closure_name == "Potential closure":
         radial = g_r * u_r
-        k_plot = 2.0 * np.pi * x_plot * np.interp(np.abs(x_plot), r, radial)
+        k_plot = x_plot * np.interp(np.abs(x_plot), r, radial)
     else:
         integrand = g_r * f_r
         tail = -cumulative_trapezoid(integrand[::-1], r[::-1], initial=0.0)[::-1]
-        k_plot = 2.0 * np.pi * x_plot * np.interp(np.abs(x_plot), r, tail)
+        k_plot = x_plot * np.interp(np.abs(x_plot), r, tail)
 
     _fig, _ax = plt.subplots(figsize=(8, 6))
     _ax.plot(x_plot * 1e6, k_plot, color="blue", linewidth=2, label="continuous")
@@ -790,15 +789,15 @@ def _(mo):
 
     $$
     \begin{aligned}
-        \nu &=- \frac{1}{V} \int_{-\infty}^{+\infty} d\eta \, K(\eta)\eta, \\
-        \mu &=- \frac{1}{V} \frac{1}{3!}\int_{-\infty}^{+\infty} d\eta \, K(\eta)\eta^3.
+        \nu &=- \int_{-\infty}^{+\infty} d\eta \, K(\eta)\eta, \\
+        \mu &=- \frac{1}{3!}\int_{-\infty}^{+\infty} d\eta \, K(\eta)\eta^3.
     \end{aligned}
     $$
 
     so that
 
     $$
-        I(z,t) \approx \nu \, \partial_z \psi(z,t) + \mu \, \partial_z^3 \psi(z,t).
+        V \cdot I(z,t) \approx \nu \, \partial_z \psi(z,t) + \mu \, \partial_z^3 \psi(z,t).
     $$
     """)
     return
@@ -832,8 +831,8 @@ def _(controls, kernel_values, mo, np):
 
     $$
     \begin{{aligned}}
-    \mathrm{{NU}} &= {latex_scientific(nu)}, \\
-    \mathrm{{MU}} &= {latex_scientific(mu)}.
+    \nu &= {latex_scientific(nu)}, \\
+    \mu &= {latex_scientific(mu)}.
     \end{{aligned}}
     $$
     """
