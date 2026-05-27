@@ -126,7 +126,11 @@ void writeConfig(hid_t file, const SimConfig *cfg) {
 
     /* /config/model */
     writeFixedStrAttr(g_model, "modelType", (cfg->model.modelType == CONV) ? "CONV" : "TAYL", 4);
-    writeFixedStrAttr(g_model, "gradientType", (cfg->model.gradientType == LINEAR) ? "LINEAR" : "SIGMOID", 7);
+    if (cfg->model.gradientType == LINEAR) {
+        writeFixedStrAttr(g_model, "gradientType", "LINEAR", 6);
+    } else {
+        writeFixedStrAttr(g_model, "gradientType", "SIGMOID", 7);
+    }
     writeF64Attr(g_model, "U", cfg->model.U);
     writeF64Attr(g_model, "PSI", cfg->model.PSI);
     writeF64Attr(g_model, "alpha", cfg->model.alpha);
