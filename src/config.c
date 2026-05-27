@@ -36,8 +36,8 @@ void setDefaults(SimConfig *c) {
             .gradientType = LINEAR,
             .U = 100e-18,
             .PSI = 0.02,
-            .alpha = 2.0e-05,
-            .beta = 7.4e23,
+            .alpha = 2.0e-05, // (a * V) / ZETA
+            .beta = 7.4e23,   // (2 PI) / (ZETA * V)
             .initialPhiFile = "",
             .variant = {
                 .Conv = (ConvParams){
