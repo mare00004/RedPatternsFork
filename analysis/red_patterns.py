@@ -7,6 +7,7 @@ import numpy as np
 from numpy.typing import NDArray
 import h5py
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import os
 
 Array1F = NDArray[np.float32]
@@ -14,6 +15,55 @@ Array2F = NDArray[np.float32]
 Array3F = NDArray[np.float32]
 
 AttrScalar: TypeAlias = str | int | float | bool
+
+
+# Parameters from the MATLAB colorModel.chBfit
+_CH_B_FIT = np.array(
+    [
+        [145.7586, 134.7227, 130.9048],
+        [-130.4334, -124.1164, -101.2598],
+        [0.4656, -0.4106, -0.4582],
+        [0.7014, 0.3524, 0.4840],
+        [2.4949, 2.2571, 5.9188],
+    ],
+    dtype=np.float64,
+)
+
+
+def _color_model(b: NDArray[np.float64], x: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Python equivalent of MATLAB color model fit.
+
+    Evaluates the rational/power function using complex arrays to avoid NaNs for
+    negative bases, returning the real component.
+    """
+
+    x_c = x.astype(complex)
+    term1 = (x_c - b[2]) / b[3]
+    denom = (1 + term1 ** b[4]) ** (1 / b[4])
+    result = b[0] + b[1] * term1 / denom
+    return np.real(result)
+
+
+def get_custom_colormap(psi_min: float, psi_max: float) -> mcolors.ListedColormap:
+    """Generate the MATLAB-fit colormap used for psi plots."""
+
+    psi_vals = np.linspace(float(psi_min), float(psi_max), 256, dtype=np.float64)
+
+    # Apply log10 transformation safely. Match the MATLAB logic: when psi==0,
+    # treat it as 0.001 (in psi/2.22 units).
+    with np.errstate(divide="ignore", invalid="ignore"):
+        log10_psi = np.log10(psi_vals / 2.22)
+    log10_psi[np.isinf(log10_psi)] = np.log10(0.001)
+    log10_psi[np.isnan(log10_psi)] = np.log10(0.001)
+
+    R = _color_model(_CH_B_FIT[:, 0], log10_psi)
+    G = _color_model(_CH_B_FIT[:, 1], log10_psi)
+    B = _color_model(_CH_B_FIT[:, 2], log10_psi)
+
+    rgb = np.column_stack((R, G, B))
+    rgb = np.clip(rgb, 0, 255) / 255.0
+
+    return mcolors.ListedColormap(rgb)
 
 
 def _decode(v: object) -> AttrScalar:
@@ -270,7 +320,7 @@ def plot_psi(
     max_t_pixels: int = 2400,
     max_z_pixels: int = 1200,
     interpolation: str = "nearest",
-    cmap: str | None = None,
+    cmap: str | mcolors.Colormap | None = None,
     title: str | None = None,
 ) -> plt.Figure:
     r"""Plot :math:`\psi(t, z)` for a simulation run.
@@ -335,30 +385,186 @@ def plot_psi(
             f"psi={psi.shape}, t={t_plot.shape}, z={z_plot.shape}"
         )
 
+    plot_title = run.path.parent.name if title is None else title
+    return plot_psi_arrays(
+        psi,
+        t_plot,
+        z_plot,
+        vmin=vmin,
+        vmax=vmax,
+        interpolation=interpolation,
+        cmap=cmap,
+        title=plot_title,
+    )
+
+
+def plot_psi_arrays(
+    psi: NDArray[np.floating],
+    t: NDArray[np.floating],
+    z: NDArray[np.floating],
+    *,
+    vmin: float = 0.0,
+    vmax: float = 1.0,
+    interpolation: str = "nearest",
+    cmap: str | mcolors.Colormap | None = None,
+    title: str | None = None,
+    ax: plt.Axes | None = None,
+    constrained_layout: bool = True,
+    origin: Literal["upper", "lower"] | None = "lower",
+    aspect: float | Literal["equal", "auto"] | None = "auto",
+    add_colorbar: bool = True,
+    cbar_label: str = r"$\psi(t,z)$",
+    **imshow_kwargs: object,
+):
+    r"""Plot :math:`\psi(t, z)` from arrays.
+
+    Args:
+        psi: 2D array with shape (time, z).
+        t: 1D time axis (same length as psi.shape[0]).
+        z: 1D z axis (same length as psi.shape[1]).
+        vmin: Lower color limit.
+        vmax: Upper color limit.
+        interpolation: Matplotlib interpolation mode passed to ``imshow``.
+        cmap: Optional Matplotlib colormap name/object.
+        title: Optional plot title.
+        ax: Optional Matplotlib axes to draw into. If not provided, a new figure
+            and axes are created.
+        constrained_layout: If creating a new figure, whether to enable
+            constrained layout.
+        origin: ``imshow`` origin.
+        aspect: ``imshow`` aspect.
+        add_colorbar: Whether to add a colorbar.
+        cbar_label: Colorbar label.
+        imshow_kwargs: Additional keyword args forwarded to ``imshow``.
+
+    Returns:
+        The created Matplotlib figure.
+    """
+
+    t = np.asarray(t, dtype=np.float32)
+    z = np.asarray(z, dtype=np.float32)
+    psi = np.asarray(psi, dtype=np.float32)
+
+    if t.ndim != 1 or z.ndim != 1 or t.shape[0] == 0 or z.shape[0] == 0:
+        raise ValueError("Invalid time or z axes.")
+    if psi.ndim != 2:
+        raise ValueError(f"Expected psi to be 2D (time x z), got shape {psi.shape}.")
+    if psi.shape[0] != t.shape[0] or psi.shape[1] != z.shape[0]:
+        raise ValueError(
+            f"psi shape does not match axes: psi={psi.shape}, t={t.shape}, z={z.shape}"
+        )
+
     # imshow expects array shape (ny, nx). Our psi is (time, z), so transpose it.
     C = psi.T
 
-    fig, ax = plt.subplots(constrained_layout=True)
+    if ax is None:
+        fig, ax = plt.subplots(constrained_layout=constrained_layout)
+    else:
+        fig = ax.figure
 
     # Map array indices to physical axes. This assumes t and z are monotonic.
-    extent = (float(t_plot[0]), float(t_plot[-1]), float(z_plot[0]), float(z_plot[-1]))
+    extent = (float(t[0]), float(t[-1]), float(z[0]), float(z[-1]))
+
+    if cmap is None:
+        cmap = get_custom_colormap(vmin, vmax)
 
     im = ax.imshow(
         C,
-        origin="lower",
-        aspect="auto",
+        origin=origin,
+        aspect=aspect,
         interpolation=interpolation,
         vmin=vmin,
         vmax=vmax,
         cmap=cmap,
         extent=extent,
+        **imshow_kwargs,
     )
 
     ax.set_xlabel("t")
     ax.set_ylabel("z")
-    ax.set_title(run.path.parent.name if title is None else title)
+    if title is not None:
+        ax.set_title(title)
 
-    cbar = fig.colorbar(im, ax=ax)
-    cbar.set_label(r"$\psi(t,z)$")
+    if add_colorbar:
+        cbar = fig.colorbar(im, ax=ax)
+        cbar.set_label(cbar_label)
 
     return fig
+
+
+def cli_args_from_run_h5(
+    run_h5: str | Path,
+    *,
+    include_prog: bool = False,
+    out_dir: str | Path | None = None,
+) -> list[str]:
+    """Recreate (best-effort) CLI arguments for ``red-patterns`` from ``run.h5``.
+
+    This reads ``/config`` attributes written by the simulator. Some CLI options
+    are not persisted in ``run.h5`` (notably ``--out-dir`` and any legacy args),
+    so this function can only reconstruct what is stored.
+
+    Args:
+        run_h5: Path to a ``run.h5`` file.
+        include_prog: If True, include the program name ``red-patterns`` as the
+            first element.
+        out_dir: Optional value for ``--out-dir`` to include in the output.
+
+    Returns:
+        List of CLI arguments, suitable for ``subprocess`` (no shell quoting).
+    """
+
+    def f64(x: AttrScalar) -> str:
+        return format(float(x), ".17g")
+
+    args: list[str] = ["red-patterns"] if include_prog else []
+
+    with h5py.File(os.fspath(run_h5), "r") as f:
+        run_attrs = _attrs_to_dict(f["config/run"])
+        model_attrs = _attrs_to_dict(f["config/model"])
+
+        model_type = str(model_attrs.get("modelType"))
+        if model_type == "CONV":
+            args.append("--use-convolution")
+        elif model_type == "TAYL":
+            args.append("--use-taylor")
+        else:
+            raise ValueError(f"Unknown modelType in {run_h5}: {model_type!r}")
+
+        args.extend(
+            [
+                f"--T={f64(run_attrs['T'])}",
+                f"--DT={f64(run_attrs['DT'])}",
+                f"--NO={int(run_attrs['NO'])}",
+                f"--U={f64(model_attrs['U'])}",
+                f"--PSI={f64(model_attrs['PSI'])}",
+            ]
+        )
+
+        grad = str(model_attrs.get("gradientType"))
+        if grad == "LINEAR":
+            args.append("--gradient=linear")
+        elif grad == "SIGMOID":
+            args.append("--gradient=sigmoid")
+        else:
+            raise ValueError(f"Unknown gradientType in {run_h5}: {grad!r}")
+
+        # Optional: source file references if present.
+        phi_source = str(model_attrs.get("phiSource", "internal"))
+        if phi_source and phi_source != "internal":
+            args.append(f"--phi-file={phi_source}")
+
+        if model_type == "CONV":
+            vattrs = _attrs_to_dict(f["config/model/variant/conv"])
+            kernel_source = str(vattrs.get("kernelSource", "internal"))
+            if kernel_source and kernel_source != "internal":
+                args.append(f"--kernel-file={kernel_source}")
+        else:
+            vattrs = _attrs_to_dict(f["config/model/variant/tayl"])
+            args.append(f"--NU={f64(vattrs['NU'])}")
+            args.append(f"--MU={f64(vattrs['MU'])}")
+
+    if out_dir is not None:
+        args.append(f"--out-dir={os.fspath(out_dir)}")
+
+    return args

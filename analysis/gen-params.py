@@ -10,7 +10,7 @@
 
 import marimo
 
-__generated_with = "0.19.6"
+__generated_with = "0.23.6"
 app = marimo.App(width="medium", sql_output="native")
 
 
@@ -45,9 +45,6 @@ def _(mo):
         gradient=[Gradient.SIGMOID],
         U=[111.15e-18],
         PSI=[0.02],
-        gamma=[1.8e-10],
-        delta=[1.0e-11],
-        kappa=[0.0],
         NU=nu_sweep,
         MU=mu_sweep,
     )
@@ -59,9 +56,6 @@ def _(mo):
         gradient=[Gradient.SIGMOID],
         U=[111.15e-18],
         PSI=[0.02],
-        gamma=[1.8e-10],
-        delta=[1.0e-11],
-        kappa=[0.0],
     )
 
     sweep = combine_sweeps(tayl_sweep, conv_sweep)
@@ -99,20 +93,16 @@ def _(mo):
     NO = 3000
     U = 111.15e-18
     PSI = 0.02
-    gamma = 1.8e-10
-    delta = 1.0e-11
-    kappa = 0.0
 
     gradient = Gradient.SIGMOID
 
-    nu = -9.6217e-30
-    mu = -1.5194205e-36
+    nu = -2.832638e-30
+    mu = -4.468445e-37
 
     nu_sweep = np.geomspace(nu * 0.01, nu * 100, num=10)
     mu_sweep = np.geomspace(mu * 0.01, mu * 100, num=10)
 
     # 1. Implement your sweeps
-
     tayl_sweep = TaylSweep(
         T=[1800.0],
         DT=[5.0e-04],
@@ -120,9 +110,6 @@ def _(mo):
         gradient=[Gradient.SIGMOID],
         U=[111.15e-18],
         PSI=[0.02],
-        gamma=[1.8e-10],
-        delta=[1.0e-11],
-        kappa=[0.0],
         NU=nu_sweep,
         MU=mu_sweep,
     )
@@ -134,33 +121,21 @@ def _(mo):
         gradient=[Gradient.SIGMOID],
         U=[111.15e-18],
         PSI=[0.02],
-        gamma=[1.8e-10],
-        delta=[1.0e-11],
-        kappa=[0.0],
     )
 
     # 2. Combine them into a single sweep
-
     sweep = combine_sweeps(tayl_sweep, conv_sweep)"""
 
     editor = mo.ui.code_editor(value=initial_code, language="python", label="Store your sweeps in the `sweep` variable!").form()
 
     editor
-    # code_form = mo.ui.form(
-        # element=editor,
-        # submit_button_label="Run Code ▶️",
-        # submit_button_tooltip="Click to execute the python code above",
-        # bordered=False
-    # )
-    # 
-    # code_form
     return (editor,)
 
 
 @app.cell
 def _(clipboard, mo):
     mo.md(f"""
-    Inspect your sweep below and if your done copy the CLI Arguments to your Clipboard:
+    Inspect your sweep below and if you're done copy the CLI Arguments to your Clipboard:
 
     {clipboard}
     """)
@@ -239,6 +214,7 @@ def _(
 
         except Exception as e:
             return None, f"Error: {e}"
+
     return (extract_user_code,)
 
 
@@ -257,9 +233,6 @@ def _(ConvSweep, Gradient, TaylSweep, combine_sweeps, np):
         gradient=[Gradient.SIGMOID],
         U=[111.15e-18],
         PSI=[0.02],
-        gamma=[1.8e-10],
-        delta=[1.0e-11],
-        kappa=[0.0],
     )
 
     meeting_tayl_sweep_normal = TaylSweep(
@@ -269,9 +242,6 @@ def _(ConvSweep, Gradient, TaylSweep, combine_sweeps, np):
         gradient=[Gradient.SIGMOID],
         U=[111.15e-18],
         PSI=[0.02],
-        gamma=[1.8e-10],
-        delta=[1.0e-11],
-        kappa=[0.0],
         NU=nu_sweep,
         MU=mu_sweep,
     )
@@ -283,9 +253,6 @@ def _(ConvSweep, Gradient, TaylSweep, combine_sweeps, np):
         gradient=[Gradient.SIGMOID],
         U=[111.15e-18],
         PSI=[0.02],
-        gamma=[1.8e-10],
-        delta=[1.0e-11],
-        kappa=[0.0],
         NU=nu_sweep,
         MU=mu_sweep,
     )
@@ -349,10 +316,6 @@ def _(Enum, dataclass, np):
         gradient: list[Gradient]
         U: list[float]
         PSI: list[float]
-        gamma: list[float]
-        delta: list[float]
-        kappa: list[float]
-        # NU, MU?
 
 
     sample_config = SweepConfig(
@@ -363,9 +326,6 @@ def _(Enum, dataclass, np):
         gradient=[Gradient.LINEAR, Gradient.SIGMOID],
         U=[111.15e-18],
         PSI=[0.01, 0.02, 0.03],
-        gamma=[1.0e-12, 1.0e-11, 1.0e-10, 1.0e-09],
-        delta=[1.0e-12, 1.0e-11, 1.0e-10, 1.0e-09],
-        kappa=[1.0e-12, 1.0e-11, 1.0e-10, 1.0e-09],
     )
     return Gradient, Model
 
@@ -384,9 +344,6 @@ def _(Gradient, Model, dataclass, gen_cli_args, pd, product):
         gradient: Sequence[Gradient]
         U: Sequence[float]
         PSI: Sequence[float]
-        gamma: Sequence[float]
-        delta: Sequence[float]
-        kappa: Sequence[float]
 
         @property
         @abstractmethod
@@ -406,9 +363,6 @@ def _(Gradient, Model, dataclass, gen_cli_args, pd, product):
                 self.gradient,
                 self.U,
                 self.PSI,
-                self.gamma,
-                self.delta,
-                self.kappa,
             )
 
             model_parameter_rows = self.model_rows()
@@ -421,9 +375,6 @@ def _(Gradient, Model, dataclass, gen_cli_args, pd, product):
                 gradient,
                 U,
                 PSI,
-                gamma,
-                delta,
-                kappa,
             ) in simulation_parameter_products:
                 for m in model_parameter_rows:
                     rows.append(
@@ -435,9 +386,6 @@ def _(Gradient, Model, dataclass, gen_cli_args, pd, product):
                             "gradient": gradient.value,
                             "U": U,
                             "PSI": PSI,
-                            "gamma": gamma,
-                            "delta": delta,
-                            "kappa": kappa,
                             **m,
                         }
                     )
@@ -468,6 +416,7 @@ def _(Gradient, Model, dataclass, gen_cli_args, pd, product):
 
         def model_rows(self) -> list[dict]:
             return [{}]
+
     return ConvSweep, TaylSweep
 
 
@@ -480,9 +429,6 @@ def _(ConvSweep, TaylSweep, pd):
         gradient,
         U,
         PSI,
-        gamma,
-        delta,
-        kappa,
     ):
         """Generates a Sweep for both model types, with NU and MU fixed to the default value."""
 
@@ -493,9 +439,6 @@ def _(ConvSweep, TaylSweep, pd):
             "gradient": gradient,
             "U": U,
             "PSI": PSI,
-            "gamma": gamma,
-            "delta": delta,
-            "kappa": kappa,
         }
 
         tayl_sweep = TaylSweep(
@@ -509,6 +452,7 @@ def _(ConvSweep, TaylSweep, pd):
             [tayl_sweep.to_dataframe(), conv_sweep.to_dataframe()],
             ignore_index=True,
         )
+
     return (gen_sweep,)
 
 
@@ -521,9 +465,6 @@ def _(Gradient, gen_sweep):
         gradient=[Gradient.LINEAR, Gradient.SIGMOID],
         U=[111.15e-18],
         PSI=[0.02],
-        gamma=[1.8e-10],
-        delta=[1.0e-11],
-        kappa=[0.0, 1.0e-25],
     )
 
     # multi_sweep
@@ -552,6 +493,7 @@ def _(np):
             return " ".join(args)
 
         return df.apply(row_to_cli_args, axis=1)
+
     return (gen_cli_args,)
 
 
@@ -562,6 +504,7 @@ def _(pd):
             [sweep.to_dataframe() for sweep in sweeps],
             ignore_index=True,
         )
+
     return (combine_sweeps,)
 
 
@@ -576,6 +519,7 @@ def _():
     from wigglystuff import CopyToClipboard
     from itertools import product
     from types import SimpleNamespace
+
     return (
         CopyToClipboard,
         Enum,

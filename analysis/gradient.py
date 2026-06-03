@@ -19,6 +19,7 @@ def _():
     import numpy as np
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation
+
     return FuncAnimation, mo, np, plt
 
 
@@ -52,7 +53,7 @@ def _(mo):
 
 @app.cell
 def _():
-    sys_length = 0.06798 # 0.06  # in m
+    sys_length = 0.06798  # 0.06  # in m
     z_0 = sys_length / 2.0
     p_0 = 1100.0  # in g/l
     lam = 0.0338  # lambda in m
@@ -87,13 +88,8 @@ def _(delta_1, delta_2, lam, mu_1, mu_2, np, p_0, sys_length, z_0):
         mu = mu_1 * t + mu_2
         denom = (1 - np.abs(chi) ** mu) ** (1 / mu)
         return p_0 + delta * (chi / denom)
+
     return p, z
-
-
-@app.cell
-def _():
-    # plt.plot(p(z, 1))
-    return
 
 
 @app.cell
@@ -101,7 +97,7 @@ def _(FuncAnimation, mo, np, p, plt, sys_length, z):
     T = 1200
 
     fig, ax = plt.subplots()
-    line, = ax.plot([], [], lw=2)
+    (line,) = ax.plot([], [], lw=2)
     ax.set_xlabel("z")
     ax.set_ylabel("p(z,t)")
 
@@ -111,7 +107,7 @@ def _(FuncAnimation, mo, np, p, plt, sys_length, z):
     def update(t):
         line.set_data(z, p(z, t))
         ax.set_title(f"Wave at t = {t:.2f} s")
-        return line,
+        return (line,)
 
     ani = FuncAnimation(fig, update, frames=np.linspace(0, T, 100), interval=50)
     mo.Html(ani.to_html5_video())
@@ -130,7 +126,7 @@ def _(mo):
 
 @app.cell
 def _(np, p, plt, sys_length):
-    _wing_size = 0.005 # in m
+    _wing_size = 0.005  # in m
     _sys_length = sys_length + 2 * _wing_size
     _DZ = 1.0e-4
     _z = np.arange(0, _sys_length + _DZ, _DZ)
@@ -138,10 +134,10 @@ def _(np, p, plt, sys_length):
     def _grad_wing(p, z, t):
         wingL = _wing_size / _DZ
         r3 = (p(_wing_size, t) - p(_wing_size - _DZ, t)) / _DZ
-        r2 = p(_wing_size, t);
-        r1 = r2 - 50;
-        x1 = 12;
-        x2 = wingL;
+        r2 = p(_wing_size, t)
+        r1 = r2 - 50
+        x1 = 12
+        x2 = wingL
         a = (r1 - r2 + r3 * (x2 - x1)) / ((x1 - x2) * (x1 - x2))
         b = r3 - 2 * a * x2
         c = r2 - r3 * x2 + x2 * x2 * a
