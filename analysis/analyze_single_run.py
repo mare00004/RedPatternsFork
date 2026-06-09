@@ -12,7 +12,7 @@
 
 import marimo
 
-__generated_with = "0.23.8"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 
@@ -21,18 +21,20 @@ def _():
     from pathlib import Path
     import marimo as mo
     import matplotlib.pyplot as plt
-    from red_patterns import RunData, plot_psi, plot_psi_arrays, cli_args_from_run_h5
+    from red_patterns import RunData, plot_psi, plot_psi_arrays, cli_args_from_run_h5, get_rbc_cmap, Array1F
     import numpy as np
+    from scipy.signal import find_peaks as scipy_find_peaks
 
     return (
+        Array1F,
         Path,
         RunData,
-        cli_args_from_run_h5,
+        get_rbc_cmap,
         mo,
         np,
         plot_psi,
-        plot_psi_arrays,
         plt,
+        scipy_find_peaks,
     )
 
 
@@ -60,86 +62,106 @@ def _(Path, mo):
 
 
 @app.cell
-def _(file_picker, mo, plot_psi_file):
+def _(file_picker, get_rbc_cmap, mo, plot_psi_file):
     mo.stop(not file_picker.value, mo.md("Please pick a file to plot!"))
 
-    result = plot_psi_file(file_picker.path(), vmin=0.0, vmax=0.3, cmap="viridis")
-    result
-    return
+    result = plot_psi_file(file_picker.path(), vmin=0.0, vmax=100.0, cmap=get_rbc_cmap())
+    return (result,)
 
 
 @app.cell
-def _(file_picker, mo, np, psi, t, z):
-    output_path = file_picker.path().with_suffix(".npz")
-    np.savez_compressed(output_path, t=t, z=z, psi=psi)
-    mo.md(f"Saved to `{output_path}`")
-    return
-
-
-@app.cell
-def _(np):
-    data = np.load("/home/max/projects/RedPatternsFork/data/conv_const_linear/run.npz")
-    z_loaded = data["z"]
-    psi_loaded = data["psi"]
-    t_loaded = data["t"]
-    return
-
-
-@app.cell
-def _(cli_args_from_run_h5, file_picker):
-    cli = cli_args_from_run_h5(file_picker.path())
-    cli
-    return
-
-
-@app.cell
-def _(RunData, file_picker, plot_psi_arrays):
+def _(RunData, file_picker):
     run = RunData.from_h5(file_picker.path(), load_fields=False)
-    z = run.z
-    psi = run.load_psi()[-1] # psi at last time step
+    z = run.z * 100
+    psi = run.load_psi()[-1] * 100 # psi at last time step
     t = run.time
-    git_commit = run.config.git_commit
-    plot_psi_arrays(run.psi, t, z, cmap="viridis", vmin=0.0, vmax=0.3)
-    return psi, t, z
+    return psi, z
 
 
 @app.cell
-def _(np, plt, psi, z):
-    from scipy.signal import find_peaks
-    x = z
-    y = psi
-    peak_indices, properties = find_peaks(y, prominence=0.01)
+def _(Array1F, np, scipy_find_peaks):
+    def find_peaks(
+        z: Array1F,
+        psi: Array1F,
+    ) -> tuple[Array1F, Array1F, float, float]:
+        """Find the peaks of $\psi(z)$
 
-    # Extract the actual x and y values of the peaks
-    peak_x = x[peak_indices]
-    peak_y = y[peak_indices]
+        Args:
+            psi: 1D array with shape (z)
+            z: 1D array with shape (z)
 
-    # ---------------------------------------------------------
-    # 3. Calculate Spacing and Frequency
-    # ---------------------------------------------------------
-    # Calculate the distance between each consecutive peak
-    distances = np.diff(peak_x)
-    print(f"Standard Deviation: {np.std(distances)}")
-    # Calculate the average spacing
-    average_spacing = np.mean(distances)
+        Returns:
+            Tuple[z-coordinates of peaks, psi(z) for each peak, average spacing, uncertenty of average spacing]
+        """
+        peak_indices, _ = scipy_find_peaks(psi, prominence=0.1)
 
-    # Calculate the spatial frequency (1 / spacing)
-    frequency = 1.0 / average_spacing
+        # Ignore peaks that lay at the edges
+        # - You can only remove the first peak, the last peak, or no peaks at all
+        # - The first peak only gets removed when its z-coordinate is < 1
+        # - The last peak only gets removed when its z-coordinate is > 6
+        # - If the z-coordinates of the first two peaks are < 1, then only the first peak gets removed
+        peak_indices = peak_indices[
+            1 if z[peak_indices[0]] < 1 else 0 : -1
+            if z[peak_indices[-1]] > 6
+            else None
+        ]
 
-    # ---------------------------------------------------------
-    # 4. Output Results
-    # ---------------------------------------------------------
-    print(f"Total peaks found: {len(peak_indices)}")
-    print(f"Average Peak Spacing (Δx): {average_spacing:.6f}")
-    print(f"Spatial Frequency (1/Δx): {frequency:.2f}")
+        peak_z = z[peak_indices]
+        peak_psi = psi[peak_indices]
 
-    # Optional: Visualize to ensure the algorithm caught the right peaks
-    plt.plot(x, y, label="Signal")
-    plt.plot(peak_x, peak_y, "x", color="red", label="Detected Peaks")
-    plt.xlabel("X-axis")
-    plt.ylabel("Y-axis")
-    plt.legend()
-    plt.title(f"Peak Detection (Avg Spacing: {average_spacing:.5f})")
+        distances = np.diff(peak_z)
+        average_spacing = np.mean(distances)
+        standard_deviation = np.std(distances)
+
+        return tuple([peak_z, peak_psi, average_spacing, standard_deviation])
+
+    return (find_peaks,)
+
+
+@app.cell
+def _(find_peaks, psi, z):
+    peak_z, peak_psi, peak_spacing, peak_deviation = find_peaks(z, psi)
+    return peak_deviation, peak_psi, peak_spacing, peak_z
+
+
+@app.cell
+def _(mo, peak_deviation, peak_psi, peak_spacing, peak_z, plt, psi, z):
+    # Plot
+    fig, ax = plt.subplots(constrained_layout=True)
+    ax.plot(z, psi, label=r"$\psi (z)$")
+    ax.plot(peak_z, peak_psi, "x", color="red", label="Detected Peaks")
+    ax.set_xlabel(r"$z \; [cm]$")
+    ax.set_ylabel(r"$\psi \; [\%]$")
+    ax.legend()
+    ax.set_title(f"Peak Detection")
+
+    plot =  mo.ui.matplotlib(ax)
+
+    # Table
+    _std_spacing = peak_deviation
+    _frequency = 1.0 / peak_spacing
+    _std_frequency = _std_spacing / peak_spacing**2  # error propagation: δν = δλ / λ²
+
+    _n_peaks = len(peak_z)
+
+    table = mo.md(
+        f"""
+    | Quantity | Value |
+    |----------|-------|
+    | **Number of peaks** | {_n_peaks} |
+    | **λ** (avg. peak spacing) | {peak_spacing:.4f} ± {_std_spacing:.4f} cm |
+    | **ν** (spatial frequency) | {_frequency:.4f} ± {_std_frequency:.4f} cm⁻¹ |
+    """
+    )
+    return plot, table
+
+
+@app.cell
+def _(mo, plot, result, table):
+    mo.vstack(
+        [mo.hstack([result, plot], align="center", justify="end"), table],
+        align="stretch"
+    )
     return
 
 
