@@ -44,10 +44,10 @@ def _color_model(b: NDArray[np.float64], x: NDArray[np.float64]) -> NDArray[np.f
     return np.real(result)
 
 
-def get_custom_colormap(psi_min: float, psi_max: float) -> mcolors.ListedColormap:
+def _get_custom_colormap(psi_min: float, psi_max: float) -> mcolors.ListedColormap:
     """Generate the MATLAB-fit colormap used for psi plots."""
 
-    psi_vals = np.linspace(float(psi_min), float(psi_max), 256, dtype=np.float64)
+    psi_vals = np.linspace(float(psi_min), float(psi_max), 2**16, dtype=np.float64)
 
     # Apply log10 transformation safely. Match the MATLAB logic: when psi==0,
     # treat it as 0.001 (in psi/2.22 units).
@@ -64,6 +64,15 @@ def get_custom_colormap(psi_min: float, psi_max: float) -> mcolors.ListedColorma
     rgb = np.clip(rgb, 0, 255) / 255.0
 
     return mcolors.ListedColormap(rgb)
+
+
+_RBC_CMAP = _get_custom_colormap(0.01, 100.0)
+
+
+def get_rbc_cmap() -> mcolors.ListedColormap:
+    """Return the fixed RBC colormap calibrated on the physical 0.01%-100% range."""
+
+    return _RBC_CMAP
 
 
 def _decode(v: object) -> AttrScalar:
@@ -316,7 +325,7 @@ def plot_psi(
     run: RunData,
     *,
     vmin: float = 0.0,
-    vmax: float = 1.0,
+    vmax: float = 100.0,
     max_t_pixels: int = 2400,
     max_z_pixels: int = 1200,
     interpolation: str = "nearest",
@@ -404,7 +413,7 @@ def plot_psi_arrays(
     z: NDArray[np.floating],
     *,
     vmin: float = 0.0,
-    vmax: float = 1.0,
+    vmax: float = 100.0,
     interpolation: str = "nearest",
     cmap: str | mcolors.Colormap | None = None,
     title: str | None = None,
@@ -413,10 +422,10 @@ def plot_psi_arrays(
     origin: Literal["upper", "lower"] | None = "lower",
     aspect: float | Literal["equal", "auto"] | None = "auto",
     add_colorbar: bool = True,
-    cbar_label: str = r"$\psi(t,z)$",
+    cbar_label: str = r"$\psi(t,z) \; [\%]$",
     **imshow_kwargs: object,
 ):
-    r"""Plot :math:`\psi(t, z)` from arrays.
+    r"""Plot $\psi(t, z)$ from arrays.
 
     Args:
         psi: 2D array with shape (time, z).
@@ -442,8 +451,8 @@ def plot_psi_arrays(
     """
 
     t = np.asarray(t, dtype=np.float32)
-    z = np.asarray(z, dtype=np.float32)
-    psi = np.asarray(psi, dtype=np.float32)
+    z = 100 * np.asarray(z, dtype=np.float32)  # Convert z from m to cm
+    psi = 100 * np.asarray(psi, dtype=np.float32)  # Convert psi to %
 
     if t.ndim != 1 or z.ndim != 1 or t.shape[0] == 0 or z.shape[0] == 0:
         raise ValueError("Invalid time or z axes.")
@@ -465,9 +474,6 @@ def plot_psi_arrays(
     # Map array indices to physical axes. This assumes t and z are monotonic.
     extent = (float(t[0]), float(t[-1]), float(z[0]), float(z[-1]))
 
-    if cmap is None:
-        cmap = get_custom_colormap(vmin, vmax)
-
     im = ax.imshow(
         C,
         origin=origin,
@@ -480,8 +486,8 @@ def plot_psi_arrays(
         **imshow_kwargs,
     )
 
-    ax.set_xlabel("t")
-    ax.set_ylabel("z")
+    ax.set_xlabel(r"$t \; [s]$")
+    ax.set_ylabel(r"$z \; [cm]$")
     if title is not None:
         ax.set_title(title)
 
