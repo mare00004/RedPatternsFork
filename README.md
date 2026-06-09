@@ -90,9 +90,6 @@ COMMON:
         --gradient=linear|sigmoid Pressure gradient
         --U=<double>              RBC effective interaction energy in Joule
         --PSI=<double>            RBC average volume fraction
-        -g, --gamma=<double>      gamma
-        -d, --delta=<double>      delta
-        -k, --kappa=<double>      kappa
         -o, --out-dir=<file>      directory where simulation data is stored
 CONVOLUTION:
         -c, --use-convolution     use convolution integral

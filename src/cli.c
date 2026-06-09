@@ -64,9 +64,6 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     struct arg_dbl *cli_U = arg_dbl0(NULL, "U", "<double>", "RBC effective interaction energy in Joule");
     struct arg_dbl *cli_PSI =
         arg_dbl0(NULL, "PSI", "<double>", "RBC average volume fraction");
-    struct arg_dbl *cli_gamma = arg_dbl0("g", "gamma", "<double>", "gamma");
-    struct arg_dbl *cli_delta = arg_dbl0("d", "delta", "<double>", "delta");
-    struct arg_dbl *cli_kappa = arg_dbl0("k", "kappa", "<double>", "kappa");
     struct arg_file *cli_outDir = arg_file0(
         "o",
         "out-dir",
@@ -89,7 +86,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
 
     // DEFAULT
     struct arg_end *endDefault = arg_end(20);
-    void *argtableDefault[] = { cli_help, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, cli_phiFile, endDefault };
+    void *argtableDefault[] = { cli_help, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_outDir, cli_phiFile, endDefault };
     int nErrorsDefault;
 
     // CONVOLUTION
@@ -98,7 +95,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     struct arg_file *cli_kernelFile =
         arg_file0(NULL, "kernel-file", "<file>", "external HDF5 convolution kernel file");
     struct arg_end *endConv = arg_end(20);
-    void *argtableConv[] = { cli_help, cli_conv, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, cli_phiFile, cli_kernelFile, endConv };
+    void *argtableConv[] = { cli_help, cli_conv, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_outDir, cli_phiFile, cli_kernelFile, endConv };
     int nErrorsConv;
 
     // TAYLOR
@@ -107,7 +104,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     struct arg_dbl *cli_NU = arg_dbl0(NULL, "NU", "<double>", "interaction nu");
     struct arg_dbl *cli_MU = arg_dbl0(NULL, "MU", "<double>", "interaction mu");
     struct arg_end *endTayl = arg_end(20);
-    void *argtableTayl[] = { cli_help, cli_tayl, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, cli_phiFile, cli_NU, cli_MU, endTayl };
+    void *argtableTayl[] = { cli_help, cli_tayl, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_outDir, cli_phiFile, cli_NU, cli_MU, endTayl };
     int nErrorsTayl;
 
     // UNIQUE ARGUMENTS (for freeing argtables)
@@ -121,9 +118,6 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         cli_gradient,
         cli_U,
         cli_PSI,
-        cli_gamma,
-        cli_delta,
-        cli_kappa,
         cli_outDir,
         cli_phiFile,
         cli_kernelFile,
@@ -150,7 +144,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     nErrorsTayl = arg_parse(argc, argv, argtableTayl);
 
     if (cli_help->count > 0) {
-        void *argtableCommon[] = { cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_gamma, cli_delta, cli_kappa, cli_outDir, cli_phiFile, endDefault };
+        void *argtableCommon[] = { cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_outDir, cli_phiFile, endDefault };
         void *argsHelpConv[] = { cli_conv, cli_kernelFile, endConv };
         void *argsHelpTayl[] = { cli_tayl, cli_NU, cli_MU, endTayl };
 
