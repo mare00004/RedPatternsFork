@@ -11,34 +11,194 @@
 
 import marimo
 
-__generated_with = "0.23.8"
+__generated_with = "0.23.9"
 app = marimo.App(width="medium")
 
 with app.setup:
-    from red_patterns import Array1F, Array2F
+    import argparse
+    from dataclasses import dataclass, replace
+    from pathlib import Path
+
+    import h5py
     import numpy as np
+    from red_patterns import Array1F, Array2F
+
+    DEFAULT_N = 256
+    DEFAULT_WING = 30
+    DEFAULT_RHO_CENTER = 1100.0
+    DEFAULT_RHO_SPAN = 30.0
+    DEFAULT_DZ = 0.000267651
+    DEFAULT_PSI_AVG = 0.02
+    DEFAULT_GAUSSIAN_MU = 1100.0
+    DEFAULT_GAUSSIAN_SIGMA = 4.0
+
+    GAUSSIAN_PHI = "Gaussian"
+    HOMOGENEOUS_PHI = "Homogeneous"
+
+    CLI_TO_PHI_TYPE_LABEL = {
+        "gaussian": GAUSSIAN_PHI,
+        "homogeneous": HOMOGENEOUS_PHI,
+    }
+    PHI_TYPE_LABEL_TO_CLI = {
+        value: key for key, value in CLI_TO_PHI_TYPE_LABEL.items()
+    }
 
 
 @app.cell
 def _():
-    import h5py
-    import marimo as mo
-    import matplotlib.pyplot as plt
-    from pathlib import Path
-    from wigglystuff import CopyToClipboard
+    @dataclass(frozen=True)
+    class PhiExportConfig:
+        output_path: "Path"
+        phi_type: str
+        psi_avg: float
+        N: int
+        wing: int
+        rho_center: float
+        rho_span: float
+        dz: float
+        gaussian_mu: float | None = None
+        gaussian_sigma: float | None = None
 
-    return CopyToClipboard, Path, h5py, mo, plt
+    def normalize_phi_type_name(value: str) -> str:
+        if value in CLI_TO_PHI_TYPE_LABEL:
+            return value
+        if value in PHI_TYPE_LABEL_TO_CLI:
+            return PHI_TYPE_LABEL_TO_CLI[value]
+        raise ValueError(f"Unknown phi type: {value!r}")
 
+    def phi_type_label(value: str) -> str:
+        return CLI_TO_PHI_TYPE_LABEL[normalize_phi_type_name(value)]
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    # Initial Phi
+    def build_export_parser() -> argparse.ArgumentParser:
+        parser = argparse.ArgumentParser(
+            prog=f"{Path(__file__).name} export",
+            description="Export a CUDA-compatible initial phi field to HDF5.",
+        )
+        parser.add_argument(
+            "--output",
+            required=True,
+            help="Path to the output HDF5 file.",
+        )
+        parser.add_argument(
+            "--phi-type",
+            required=True,
+            choices=sorted(CLI_TO_PHI_TYPE_LABEL.keys()),
+            help="Initial phi distribution to use.",
+        )
+        parser.add_argument(
+            "--psi-avg",
+            required=True,
+            type=float,
+            help="Average volume fraction.",
+        )
+        parser.add_argument(
+            "--N",
+            type=int,
+            default=DEFAULT_N,
+            help="Grid size in rho and z.",
+        )
+        parser.add_argument(
+            "--wing",
+            type=int,
+            default=DEFAULT_WING,
+            help="Wing size used by the CUDA initialization.",
+        )
+        parser.add_argument(
+            "--rho-center",
+            type=float,
+            default=DEFAULT_RHO_CENTER,
+            help="Center of the rho axis in g/L.",
+        )
+        parser.add_argument(
+            "--rho-span",
+            type=float,
+            default=DEFAULT_RHO_SPAN,
+            help="Total rho-axis span in g/L.",
+        )
+        parser.add_argument(
+            "--dz",
+            type=float,
+            default=DEFAULT_DZ,
+            help="Z-axis spacing in meters.",
+        )
+        parser.add_argument(
+            "--gaussian-mu",
+            type=float,
+            help="Gaussian rho center in g/L.",
+        )
+        parser.add_argument(
+            "--gaussian-sigma",
+            type=float,
+            help="Gaussian rho width in g/L.",
+        )
+        return parser
 
-    The exported file stores the field on `/phi/values` with shape `(N, N)` and
-    storage order `phi[rho_idx, z_idx]`.
-    """)
-    return
+    def validate_export_namespace(
+        parser: argparse.ArgumentParser, args: argparse.Namespace
+    ) -> PhiExportConfig:
+        errors: list[str] = []
+
+        if args.N < 3:
+            errors.append("--N must be an integer >= 3.")
+        if args.wing < 0:
+            errors.append("--wing must be non-negative.")
+        if args.psi_avg < 0.0:
+            errors.append("--psi-avg must be non-negative.")
+        if args.rho_span <= 0.0:
+            errors.append("--rho-span must be positive.")
+        if args.dz <= 0.0:
+            errors.append("--dz must be positive.")
+
+        active_rho = args.N - 2 * args.wing
+        active_z = args.N - 2 * (args.wing + 2)
+        if active_rho <= 0:
+            errors.append(
+                "--wing is too large for --N: the active rho region would be empty."
+            )
+        if active_z <= 0:
+            errors.append(
+                "--wing is too large for --N: the active z region would be empty."
+            )
+
+        if args.phi_type == "gaussian":
+            if args.gaussian_mu is None:
+                errors.append("--gaussian-mu is required with --phi-type=gaussian.")
+            if args.gaussian_sigma is None:
+                errors.append(
+                    "--gaussian-sigma is required with --phi-type=gaussian."
+                )
+            elif args.gaussian_sigma <= 0.0:
+                errors.append("--gaussian-sigma must be positive.")
+        else:
+            if args.gaussian_mu is not None or args.gaussian_sigma is not None:
+                errors.append(
+                    "--gaussian-mu and --gaussian-sigma are only valid with "
+                    "--phi-type=gaussian."
+                )
+
+        if errors:
+            parser.error("\n".join(errors))
+
+        return PhiExportConfig(
+            output_path=Path(args.output),
+            phi_type=args.phi_type,
+            psi_avg=args.psi_avg,
+            N=args.N,
+            wing=args.wing,
+            rho_center=args.rho_center,
+            rho_span=args.rho_span,
+            dz=args.dz,
+            gaussian_mu=args.gaussian_mu,
+            gaussian_sigma=args.gaussian_sigma,
+        )
+
+    return (
+        PhiExportConfig,
+        build_export_parser,
+        normalize_phi_type_name,
+        phi_type_label,
+        validate_export_namespace,
+    )
 
 
 @app.function
@@ -61,7 +221,13 @@ def phi_homogeneous(rho: Array1F, z: Array1F, psi_avg: np.floating) -> Array2F:
 
 
 @app.function
-def phi_gaussian(rho: Array1F, z: Array1F, psi_avg: np.floating, mu: np.floating, sigma: np.floating) -> Array2F:
+def phi_gaussian(
+    rho: Array1F,
+    z: Array1F,
+    psi_avg: np.floating,
+    mu: np.floating,
+    sigma: np.floating,
+) -> Array2F:
     """
     Calculates
     $$
@@ -74,7 +240,9 @@ def phi_gaussian(rho: Array1F, z: Array1F, psi_avg: np.floating, mu: np.floating
     is satisfied. Where $J = \\texttt{rho}$, $I = \\texttt{z}$ are the domains and $L_\\rho$ and $L_z$ are the respective lengths.
     """
     N_z = z.shape[0]
-    radial_profile = psi_avg * (1 / np.sqrt(2 * np.pi * sigma**2)) * np.exp(-((rho - mu) ** 2) / (2.0 * sigma**2))
+    radial_profile = psi_avg * (1 / np.sqrt(2 * np.pi * sigma**2)) * np.exp(
+        -((rho - mu) ** 2) / (2.0 * sigma**2)
+    )
     return radial_profile[:, np.newaxis] * np.ones(N_z)
 
 
@@ -109,6 +277,163 @@ def renormalize_phi(phi, rho, z, psi_avg, wing):
         return phi * (psi_avg / current_avg)
     else:
         return phi.copy()
+
+
+@app.cell
+def _(
+    PhiExportConfig,
+    build_export_parser,
+    phi_type_label,
+    validate_export_namespace,
+):
+    def build_phi_axes(
+        *, N: int, rho_center: float, rho_span: float, dz: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        rho = np.linspace(
+            rho_center - rho_span / 2.0,
+            rho_center + rho_span / 2.0,
+            N,
+            dtype=np.float64,
+        )
+        z = np.linspace(0.0, (N - 1) * dz, N, dtype=np.float64)
+        return rho, z
+
+    def compute_phi_field_data(
+        cfg: PhiExportConfig,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        rho, z = build_phi_axes(
+            N=cfg.N,
+            rho_center=cfg.rho_center,
+            rho_span=cfg.rho_span,
+            dz=cfg.dz,
+        )
+
+        if cfg.phi_type == "gaussian":
+            assert cfg.gaussian_mu is not None
+            assert cfg.gaussian_sigma is not None
+            phi = phi_gaussian(
+                rho,
+                z,
+                cfg.psi_avg,
+                cfg.gaussian_mu,
+                cfg.gaussian_sigma,
+            )
+        else:
+            phi = phi_homogeneous(rho, z, cfg.psi_avg)
+
+        phi_wing = renormalize_phi(phi_add_wing(phi, cfg.wing), rho, z, cfg.psi_avg, cfg.wing)
+        return rho, z, np.asarray(phi_wing, dtype=np.float64)
+
+    def write_phi_h5(
+        output_path: str | Path,
+        *,
+        phi_values: np.ndarray,
+        rho: np.ndarray,
+        z: np.ndarray,
+        N: int,
+        psi_avg: float,
+        wing: int,
+        phi_type: str,
+    ) -> Path:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with h5py.File(output_path, "w") as f:
+            group = f.create_group("phi")
+            group.create_dataset("values", data=np.asarray(phi_values, dtype=np.float64))
+            group.create_dataset("rho", data=np.asarray(rho, dtype=np.float64))
+            group.create_dataset("z", data=np.asarray(z, dtype=np.float64))
+            group.attrs["N"] = int(N)
+            group.attrs["PSI"] = float(psi_avg)
+            group.attrs["wingL"] = int(wing)
+            group.attrs["phi_type"] = phi_type_label(phi_type)
+            group.attrs["storage_order"] = "phi[rho_idx, z_idx]"
+            group.attrs["generated_by"] = "analysis/phi_init.py"
+            group.attrs["normalization"] = "no runtime renormalization required"
+
+        return output_path
+
+    def export_phi_file(cfg: PhiExportConfig):
+        rho, z, phi_wing = compute_phi_field_data(cfg)
+        output_path = write_phi_h5(
+            cfg.output_path,
+            phi_values=phi_wing,
+            rho=rho,
+            z=z,
+            N=cfg.N,
+            psi_avg=cfg.psi_avg,
+            wing=cfg.wing,
+            phi_type=cfg.phi_type,
+        )
+        return output_path, rho, z, phi_wing
+
+    def run_export_cli(argv: list[str]) -> int:
+        parser = build_export_parser()
+        args = parser.parse_args(argv)
+        cfg = validate_export_namespace(parser, args)
+        output_path, _, _, phi_wing = export_phi_file(cfg)
+
+        print(f"Exported initial phi to {output_path}")
+        print(
+            f"Stored shape {phi_wing.shape} on /phi/values with storage order "
+            "phi[rho_idx, z_idx]"
+        )
+        summary = [
+            f"phi_type={cfg.phi_type}",
+            f"PSI={cfg.psi_avg:.6e}",
+            f"N={cfg.N}",
+            f"wing={cfg.wing}",
+            f"rho_center={cfg.rho_center:.6e}",
+            f"rho_span={cfg.rho_span:.6e}",
+            f"DZ={cfg.dz:.6e}",
+        ]
+        if cfg.phi_type == "gaussian":
+            assert cfg.gaussian_mu is not None
+            assert cfg.gaussian_sigma is not None
+            summary.extend(
+                [
+                    f"gaussian_mu={cfg.gaussian_mu:.6e}",
+                    f"gaussian_sigma={cfg.gaussian_sigma:.6e}",
+                ]
+            )
+        print("Used parameters: " + ", ".join(summary))
+        return 0
+
+    return (
+        build_phi_axes,
+        compute_phi_field_data,
+        export_phi_file,
+        run_export_cli,
+    )
+
+
+@app.cell
+def _(run_export_cli):
+    import marimo as _mo
+    import sys
+
+    if _mo.app_meta().mode == "script" and sys.argv[1:2] == ["export"]:
+        raise SystemExit(run_export_cli(sys.argv[2:]))
+    return
+
+
+@app.cell
+def _():
+    import marimo as mo
+    import matplotlib.pyplot as plt
+
+    return mo, plt
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # Initial Phi
+
+    The exported file stores the field on `/phi/values` with shape `(N, N)` and
+    storage order `phi[rho_idx, z_idx]`.
+    """)
+    return
 
 
 @app.cell(hide_code=True)
@@ -206,28 +531,43 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    ui_gaussian_text =  mo.md(
-    r"""
+    ui_gaussian_text = mo.md(
+        r"""
     Gaussian $\varphi$ distribution
     $$
         \varphi(\rho, z) = \langle \psi \rangle \frac{1}{\sqrt{2 \pi \sigma_\rho^2}} \exp\left(-\frac{(\rho - \mu_\rho)^2}{2 \sigma_\rho^2}\right)
     $$
-    """)
-    ui_gaussian_mu = mo.ui.number(start=0.0, stop=2000, step=0.1, value=1100, label="$\\mu_\\rho \\; [\\frac{g}{L}]$")
-    ui_gaussian_sigma = mo.ui.number(start=0.0, stop=15, step=0.1, value=4, label="$\\sigma_\\rho \\; [\\frac{g}{L}]$")
+    """
+    )
+    ui_gaussian_mu = mo.ui.number(
+        start=0.0,
+        stop=2000,
+        step=0.1,
+        value=DEFAULT_GAUSSIAN_MU,
+        label="$\\mu_\\rho \\; [\\frac{g}{L}]$",
+    )
+    ui_gaussian_sigma = mo.ui.number(
+        start=0.0,
+        stop=15,
+        step=0.1,
+        value=DEFAULT_GAUSSIAN_SIGMA,
+        label="$\\sigma_\\rho \\; [\\frac{g}{L}]$",
+    )
 
-    ui_gaussian = mo.vstack([
-        ui_gaussian_text,
-        ui_gaussian_mu,
-        ui_gaussian_sigma
-    ])
+    ui_gaussian = mo.vstack(
+        [
+            ui_gaussian_text,
+            ui_gaussian_mu,
+            ui_gaussian_sigma,
+        ]
+    )
     return ui_gaussian, ui_gaussian_mu, ui_gaussian_sigma
 
 
 @app.cell
 def _(mo):
     ui_homogeneous_text = mo.md(
-    r"""
+        r"""
     Homogeneous $\varphi$ distribution
     $$
     \varphi(\rho, z) = \frac{\langle \psi \rangle}{L_\rho}
@@ -241,7 +581,13 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    ui_psi_avg = mo.ui.number(start=0.0, stop=1.0, step=0.001, value=0.02, label="$\\langle \\psi \\rangle$")
+    ui_psi_avg = mo.ui.number(
+        start=0.0,
+        stop=1.0,
+        step=0.001,
+        value=DEFAULT_PSI_AVG,
+        label="$\\langle \\psi \\rangle$",
+    )
     ui_psi_avg
     return (ui_psi_avg,)
 
@@ -258,29 +604,53 @@ def _(mo):
 def _(mo, ui_gaussian, ui_homogeneous):
     ui_phi_type = mo.ui.tabs(
         {
-            "Gaussian": ui_gaussian,
-            "Homogeneous": ui_homogeneous
+            GAUSSIAN_PHI: ui_gaussian,
+            HOMOGENEOUS_PHI: ui_homogeneous,
         },
-        value="Force closure",
+        value=GAUSSIAN_PHI,
     )
     ui_phi_type
     return (ui_phi_type,)
 
 
 @app.cell
-def _():
-    # Common parameters
-    N = 256
-    wing = 30
+def _(build_phi_axes):
+    N = DEFAULT_N
+    wing = DEFAULT_WING
+    rho, z = build_phi_axes(
+        N=N,
+        rho_center=DEFAULT_RHO_CENTER,
+        rho_span=DEFAULT_RHO_SPAN,
+        dz=DEFAULT_DZ,
+    )
+    return rho, wing, z
 
-    _RC = 1100
-    _RL = 30
 
-    rho = np.linspace(_RC - _RL / 2.0, _RC + _RL / 2.0, N, dtype=np.float64)
-
-    _dz = 0.00027
-    z = np.linspace(0.0, (N-1) * _dz, N)
-    return N, rho, wing, z
+@app.cell
+def _(
+    PhiExportConfig,
+    normalize_phi_type_name,
+    ui_gaussian_mu,
+    ui_gaussian_sigma,
+    ui_phi_type,
+    ui_psi_avg,
+):
+    phi_type = normalize_phi_type_name(ui_phi_type.value)
+    live_export_cfg = PhiExportConfig(
+        output_path=Path("initial_phi.h5"),
+        phi_type=phi_type,
+        psi_avg=float(ui_psi_avg.value),
+        N=DEFAULT_N,
+        wing=DEFAULT_WING,
+        rho_center=DEFAULT_RHO_CENTER,
+        rho_span=DEFAULT_RHO_SPAN,
+        dz=DEFAULT_DZ,
+        gaussian_mu=float(ui_gaussian_mu.value) if phi_type == "gaussian" else None,
+        gaussian_sigma=(
+            float(ui_gaussian_sigma.value) if phi_type == "gaussian" else None
+        ),
+    )
+    return (live_export_cfg,)
 
 
 @app.cell(hide_code=True)
@@ -300,23 +670,8 @@ def _(mo, wing):
 
 
 @app.cell
-def _(
-    mo,
-    plt,
-    rho,
-    ui_gaussian_mu,
-    ui_gaussian_sigma,
-    ui_phi_type,
-    ui_psi_avg,
-    wing,
-    z,
-):
-    if ui_phi_type.value == "Gaussian":
-        phi = phi_gaussian(rho, z, ui_psi_avg.value, ui_gaussian_mu.value, ui_gaussian_sigma.value)
-    else:
-        phi = phi_homogeneous(rho, z, ui_psi_avg.value)
-
-    phi_wing = renormalize_phi(phi_add_wing(phi, wing), rho, z, ui_psi_avg.value, wing)
+def _(compute_phi_field_data, live_export_cfg, mo, plt, rho, z):
+    _, _, phi_wing = compute_phi_field_data(live_export_cfg)
 
     _fig, _ax = plt.subplots(figsize=(8, 5))
     _im = _ax.imshow(
@@ -331,7 +686,7 @@ def _(
     _fig.colorbar(_im, ax=_ax, label=r"$\phi$")
     _ax.set_title(r"$\varphi(\rho, z)$")
     mo.ui.matplotlib(_ax)
-    return (phi_wing,)
+    return
 
 
 @app.cell(hide_code=True)
@@ -343,7 +698,7 @@ def _(mo):
 
 
 @app.cell
-def _(Path, mo):
+def _(mo):
     last_export_path, set_last_export_path = mo.state(None)
     last_export_submission, set_last_export_submission = mo.state(None)
     export_dir = mo.ui.file_browser(
@@ -381,23 +736,25 @@ def _(Path, mo):
 
 
 @app.cell
+def _():
+    try:
+        from wigglystuff import CopyToClipboard
+    except ImportError:
+        CopyToClipboard = None
+    return (CopyToClipboard,)
+
+
+@app.cell
 def _(
     CopyToClipboard,
-    N,
-    Path,
     export_form,
-    h5py,
+    export_phi_file,
     last_export_path,
     last_export_submission,
+    live_export_cfg,
     mo,
-    phi_wing,
-    rho,
     set_last_export_path,
     set_last_export_submission,
-    ui_phi_type,
-    ui_psi_avg,
-    wing,
-    z,
 ):
     if export_form.value is None:
         if last_export_path() is None:
@@ -409,10 +766,6 @@ def _(
                 rf"Last export: `{last_export_path()}`. Submit again to export a new file."
             )
     else:
-        # Marimo cells are reactive: this cell reruns when e.g. `phi` changes.
-        # Guard against re-exporting on recomputation by only exporting once per
-        # distinct form submission. Use object identity so two submissions with
-        # the same values (same path/filename) are still treated as distinct.
         submission = export_form.value
         submission_token = id(submission)
         if last_export_submission() == submission_token:
@@ -435,176 +788,31 @@ def _(
             else:
                 selected_dir = Path(export_dir_entries[0].path)
                 path = selected_dir / file_name
+                export_cfg = replace(live_export_cfg, output_path=path)
 
                 try:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    with h5py.File(path, "w") as f:
-                        group = f.create_group("phi")
-                        group.create_dataset(
-                            "values", data=np.asarray(phi_wing, dtype=np.float64)
-                        )
-                        group.create_dataset(
-                            "rho", data=np.asarray(rho, dtype=np.float64)
-                        )
-                        group.create_dataset("z", data=np.asarray(z, dtype=np.float64))
-                        group.attrs["N"] = int(N)
-                        group.attrs["PSI"] = float(ui_psi_avg.value)
-                        group.attrs["wingL"] = int(wing)
-                        group.attrs["phi_type"] = str(ui_phi_type.value)
-                        group.attrs["storage_order"] = "phi[rho_idx, z_idx]"
-                        group.attrs["generated_by"] = "analysis/phi_init.py"
-                        group.attrs["normalization"] = (
-                            "no runtime renormalization required"
-                        )
+                    output_path, _, _, _ = export_phi_file(export_cfg)
                 except Exception as exc:
                     result = mo.md(rf"Export failed: `{exc}`")
                 else:
-                    set_last_export_path(str(path))
+                    set_last_export_path(str(output_path))
                     set_last_export_submission(submission_token)
-                    clipboard = mo.ui.anywidget(CopyToClipboard(text_to_copy=str(path)))
-                    result = mo.vstack(
-                        [
-                            mo.md(rf"Exported initial phi to `{path}`."),
-                            mo.md(
-                                r"Use it in the simulation with `--phi-file <path>`."
-                            ),
+                    items = [
+                        mo.md(rf"Exported initial phi to `{output_path}`."),
+                        mo.md(r"Use it in the simulation with `--phi-file <path>`."),
+                    ]
+                    if CopyToClipboard is not None:
+                        clipboard = mo.ui.anywidget(
+                            CopyToClipboard(text_to_copy=str(output_path))
+                        )
+                        items.append(
                             mo.hstack(
                                 [mo.md("Copy exported path:"), clipboard],
                                 justify="start",
-                            ),
-                        ]
-                    )
+                            )
+                        )
+                    result = mo.vstack(items)
     result
-    return
-
-
-@app.cell
-def _():
-    # n = mo.ui.number(start=8, stop=4096, step=1, value=256, label="N")
-    # psi = mo.ui.number(start=1e-6, stop=0.999999, step=1e-3, value=0.02, label="PSI")
-    # init_mode = mo.ui.radio(
-        # options=["Gaussian (legacy)", "Constant"],
-        # value="Gaussian (legacy)",
-        # label="Initializer",
-    # )
-    # rho_center = mo.ui.number(
-        # start=1000.0, stop=1200.0, step=0.1, value=1100.0, label="Rmu"
-    # )
-    # rho_sigma = mo.ui.number(
-        # start=1e-3, stop=100.0, step=0.1, value=4.0, label="Rsigma"
-    # )
-    # wing = mo.ui.number(start=0, stop=1024, step=1, value=30, label="wingL")
-    # rho_center_axis = mo.ui.number(
-        # start=1000.0, stop=1200.0, step=0.1, value=1100.0, label="RC"
-    # )
-    # rho_span = mo.ui.number(start=1.0, stop=200.0, step=0.5, value=30.0, label="RL")
-    # 
-    # ui = mo.md(
-        # """
-        # ## Parameters
-    # 
-        # {n}
-    # 
-        # {psi}
-    # 
-        # {init_mode}
-    # 
-        # {rho_center}
-    # 
-        # {rho_sigma}
-    # 
-        # {wing}
-    # 
-        # {rho_center_axis}
-    # 
-        # {rho_span}
-        # """
-    # ).batch(
-        # n=n,
-        # psi=psi,
-        # init_mode=init_mode,
-        # rho_center=rho_center,
-        # rho_sigma=rho_sigma,
-        # wing=wing,
-        # rho_center_axis=rho_center_axis,
-        # rho_span=rho_span,
-    # )
-    # 
-    # ui
-    return
-
-
-@app.cell
-def _():
-    # values = ui.value or {}
-    # 
-    # N = int(values["n"])
-    # PSI = float(values["psi"])
-    # init_mode_value = str(values["init_mode"])
-    # Rmu = float(values["rho_center"])
-    # Rsigma = float(values["rho_sigma"])
-    # wingL = int(values["wing"])
-    # RC = float(values["rho_center_axis"])
-    # RL = float(values["rho_span"])
-    # 
-    # rho = np.linspace(RC - RL / 2.0, RC + RL / 2.0, N, dtype=np.float64)
-    # rho_idx = np.arange(N, dtype=np.int32)
-    # z_idx = np.arange(N, dtype=np.int32)
-    # 
-    # if init_mode_value == "Constant":
-        # # Constant in (rho, z) before masking and normalization.
-        # phi = np.ones((N, N), dtype=np.float64)
-    # else:
-        # radial_profile = np.exp(-((rho - Rmu) ** 2) / (2.0 * Rsigma**2))
-        # phi = np.repeat(radial_profile[:, None], N, axis=1)
-    # 
-    # if wingL > 0:
-        # z_mask = (z_idx < wingL + 2) | (z_idx > (N - 1 - (wingL + 2)))
-        # rho_mask = (rho_idx < wingL) | (rho_idx > (N - 1 - wingL))
-        # phi[:, z_mask] = 0.0
-        # phi[rho_mask, :] = 0.0
-    # 
-    # phi_sum = float(phi.sum())
-    # if phi_sum > 0.0:
-        # phi = phi / phi_sum * PSI * (N - 2 * (wingL + 2))
-    # 
-    # psi_profile = phi.sum(axis=0)
-    return
-
-
-@app.cell
-def _():
-    # def _():
-        # z_extent = [0, N - 1]
-        # rho_extent = [float(rho[0]), float(rho[-1])]
-    # 
-        # fig, ax = plt.subplots(figsize=(8, 5))
-        # im = ax.imshow(
-            # phi,
-            # origin="lower",
-            # aspect="auto",
-            # extent=[z_extent[0], z_extent[1], rho_extent[0], rho_extent[1]],
-            # cmap="magma",
-        # )
-        # ax.set_xlabel("z index")
-        # ax.set_ylabel(r"$\rho$ [g/L]")
-        # ax.set_title(f"Initial phi field ({init_mode_value})")
-        # fig.colorbar(im, ax=ax, label=r"$\phi$")
-        # return mo.ui.matplotlib(ax)
-    # 
-    # _()
-    return
-
-
-@app.cell
-def _():
-    # fig, ax = plt.subplots(figsize=(8, 3.5))
-    # ax.plot(psi_profile, color="tab:blue", linewidth=2)
-    # ax.set_xlabel("z index")
-    # ax.set_ylabel(r"$\sum_\rho \phi$")
-    # ax.set_title("Derived psi profile")
-    # ax.grid(True, linestyle=":", alpha=0.6)
-    # mo.ui.matplotlib(ax)
     return
 
 
