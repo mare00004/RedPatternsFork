@@ -39,6 +39,5 @@ int main(int argc, char *argv[]) {
     }
 
     printf("Starting Simulation...\n");
-    runSim(cfg);
-    return EXIT_SUCCESS;
+    return runSim(cfg) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

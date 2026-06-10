@@ -9,6 +9,7 @@
 #include <driver_types.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <vector>
 
 /* kernel function */
@@ -103,14 +104,129 @@ void initPhi(double *f, double *R, int N, double PSI) {
 
 #define TO_BYTES(num) num * sizeof(double)
 
+namespace {
+struct ProgressState {
+    const char *status;
+    int step;
+    int total_steps;
+    double elapsed_sec;
+    double remaining_sec;
+    double sim_time_sec;
+    const char *run_h5_path;
+    const char *error;
+};
+
+void writeJsonEscaped(FILE *stream, const char *value) {
+    if (value == NULL) {
+        fputs("", stream);
+        return;
+    }
+
+    for (const unsigned char *p = (const unsigned char *)value; *p != '\0'; ++p) {
+        switch (*p) {
+        case '\\':
+            fputs("\\\\", stream);
+            break;
+        case '"':
+            fputs("\\\"", stream);
+            break;
+        case '\n':
+            fputs("\\n", stream);
+            break;
+        case '\r':
+            fputs("\\r", stream);
+            break;
+        case '\t':
+            fputs("\\t", stream);
+            break;
+        default:
+            fputc(*p, stream);
+            break;
+        }
+    }
+}
+
+bool writeProgressFile(const char *progressPath, const ProgressState &state) {
+    char tempPath[512];
+    if (snprintf(tempPath, sizeof(tempPath), "%s.tmp", progressPath) >= (int)sizeof(tempPath)) {
+        return false;
+    }
+
+    FILE *stream = fopen(tempPath, "w");
+    if (stream == NULL) {
+        return false;
+    }
+
+    fprintf(stream, "{\n");
+    fprintf(stream, "  \"status\": \"");
+    writeJsonEscaped(stream, state.status);
+    fprintf(stream, "\",\n");
+    fprintf(stream, "  \"step\": %d,\n", state.step);
+    fprintf(stream, "  \"total_steps\": %d,\n", state.total_steps);
+    fprintf(stream, "  \"elapsed_sec\": %.9f,\n", state.elapsed_sec);
+    fprintf(stream, "  \"remaining_sec\": %.9f,\n", state.remaining_sec);
+    fprintf(stream, "  \"sim_time_sec\": %.9f,\n", state.sim_time_sec);
+    fprintf(stream, "  \"updated_at_unix\": %lld,\n", (long long)time(NULL));
+    fprintf(stream, "  \"run_h5_path\": \"");
+    writeJsonEscaped(stream, state.run_h5_path);
+    fprintf(stream, "\"");
+
+    if (state.error != NULL && state.error[0] != '\0') {
+        fprintf(stream, ",\n  \"error\": \"");
+        writeJsonEscaped(stream, state.error);
+        fprintf(stream, "\"");
+    }
+
+    fprintf(stream, "\n}\n");
+
+    if (fclose(stream) != 0) {
+        remove(tempPath);
+        return false;
+    }
+
+    if (rename(tempPath, progressPath) != 0) {
+        remove(tempPath);
+        return false;
+    }
+
+    return true;
+}
+
+void updateProgress(const char *progressPath, const ProgressState &state) {
+    if (!writeProgressFile(progressPath, state)) {
+        fprintf(stderr, "Warning: failed to update progress file %s\n", progressPath);
+    }
+}
+} // namespace
+
 /* running simulation */
-void runSim(SimConfig &cfg) {
+int runSim(SimConfig &cfg) {
     TSWriter w;
     char outFilePath[400];
+    char progressPath[400];
     snprintf(outFilePath, sizeof(outFilePath), "%s/%s", cfg.run.outDir, "run.h5");
+    snprintf(progressPath, sizeof(progressPath), "%s/%s", cfg.run.outDir, "progress.json");
 
     const int N = cfg.run.N;
     const bool useConvolution = cfg.model.modelType == CONV;
+    const int NT = cfg.run.NT;
+    const double DT = cfg.run.DT;
+
+    auto failRun = [&](const char *message, int step, double elapsedSec, double remainingSec, double simTimeSec) {
+        updateProgress(
+            progressPath,
+            ProgressState{
+                "failed",
+                step,
+                NT,
+                elapsedSec,
+                remainingSec,
+                simTimeSec,
+                outFilePath,
+                message,
+            });
+        return 1;
+    };
 
     // Dimensions of various arrays in units of grid points
     const int numZCells = N;
@@ -132,7 +248,7 @@ void runSim(SimConfig &cfg) {
 
             if (loadConvKernelFile(cfg.model.variant.Conv.kernelFile, &loadedKernel, &numKernelPoints) != 0) {
                 fprintf(stderr, "Failed to load convolution kernel from %s\n", cfg.model.variant.Conv.kernelFile);
-                return;
+                return failRun("Failed to load convolution kernel", 0, 0.0, 0.0, 0.0);
             }
 
             h_intKernel.assign(loadedKernel, loadedKernel + numKernelPoints);
@@ -160,7 +276,8 @@ void runSim(SimConfig &cfg) {
     std::vector<double> h_gradWing(N);
 
     printf("Allocating device memory...\n");
-    double *d_R, *d_phi, *d_F, *d_intKernel, *d_I, *d_psi, *d_psiIntp, *d_IIntp, *d_percoll, *d_gradWing, *d_b, *d_c, *d_d, *d_Iface;
+    double *d_R = nullptr, *d_phi = nullptr, *d_F = nullptr, *d_intKernel = nullptr, *d_I = nullptr, *d_psi = nullptr, *d_psiIntp = nullptr,
+           *d_IIntp = nullptr, *d_percoll = nullptr, *d_gradWing = nullptr, *d_b = nullptr, *d_c = nullptr, *d_d = nullptr, *d_Iface = nullptr;
 
     cudaMalloc(&d_R, TO_BYTES(numRhoPoints));
     cudaMalloc(&d_phi, TO_BYTES(numPhiPoints));
@@ -234,7 +351,8 @@ void runSim(SimConfig &cfg) {
 
         if (loadInitialPhiFile(cfg.model.initialPhiFile, &loadedPhi, N) != 0) {
             fprintf(stderr, "Failed to load initial phi from %s\n", cfg.model.initialPhiFile);
-            return;
+            cleanup();
+            return failRun("Failed to load initial phi", 0, 0.0, 0.0, 0.0);
         }
 
         h_phi.assign(loadedPhi, loadedPhi + N * N);
@@ -270,9 +388,22 @@ void runSim(SimConfig &cfg) {
             useConvolution ? numKernelPoints : 0) != 0) {
         fprintf(stderr, "Failed to create output file %s\n", outFilePath);
         cleanup();
-        return;
+        return failRun("Failed to create output file", 0, 0.0, 0.0, 0.0);
     }
     writer_created = true;
+
+    updateProgress(
+        progressPath,
+        ProgressState{
+            "running",
+            0,
+            NT,
+            0.0,
+            0.0,
+            0.0,
+            outFilePath,
+            NULL,
+        });
 
     printf("starting timer.\n");
     // start time measurement
@@ -292,8 +423,6 @@ void runSim(SimConfig &cfg) {
 
     // iteration loop
     int n_out = cfg.run.NO;
-    int NT = cfg.run.NT;
-    double DT = cfg.run.DT;
     double t = 0.0;
     for (int i = 0; i < NT; i++) {
         /* integration */
@@ -374,24 +503,44 @@ void runSim(SimConfig &cfg) {
 
         cudaDeviceSynchronize();
 
-        if ((((i - 1) % n_out) == 0) | (i == 1) | (i == NT)) {
+        if ((((i - 1) % n_out) == 0) || (i == 1) || (i == NT - 1)) {
             const double savedTime = t + DT;
+            const int currentStep = i + 1;
             CuKernelInte<<<cell_grid_dim, cell_block_dim>>>(d_phi, d_psi);
 
             // retrieve data from GPU mem
             checkCuda(cudaMemcpy(h_phi.data(), d_phi, TO_BYTES(numPhiPoints), cudaMemcpyDeviceToHost));
             checkCuda(cudaMemcpy(h_psi.data(), d_psi, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
 
-            ts_append(&w, savedTime, h_phi.data(), h_psi.data());
+            if (ts_append(&w, savedTime, h_phi.data(), h_psi.data()) != 0) {
+                fprintf(stderr, "Failed to append timestep data to %s\n", outFilePath);
+                cleanup();
+                return failRun("Failed to append timestep data", currentStep, 0.0, 0.0, savedTime);
+            }
 
             // measure time
             checkCuda(cudaEventRecord(stopEvent, 0));
             checkCuda(cudaEventSynchronize(stopEvent));
             checkCuda(cudaEventElapsedTime(&milliseconds, startEvent, stopEvent));
+            const double elapsedSec = milliseconds / 1000.0;
+            const double remainingSec = elapsedSec * double(NT - currentStep) / double(currentStep);
 
-            printf("step: %d/%d\n", i, NT);
-            printf("runtime (sec): %.5f\n", milliseconds / 1000.0);
-            printf("remaining (sec): %.5f\n", milliseconds / 1000.0 * (NT - i) / i);
+            printf("step: %d/%d\n", currentStep, NT);
+            printf("runtime (sec): %.5f\n", elapsedSec);
+            printf("remaining (sec): %.5f\n", remainingSec);
+
+            updateProgress(
+                progressPath,
+                ProgressState{
+                    "running",
+                    currentStep,
+                    NT,
+                    elapsedSec,
+                    remainingSec,
+                    savedTime,
+                    outFilePath,
+                    NULL,
+                });
         }
 
         t += DT;
@@ -410,8 +559,21 @@ void runSim(SimConfig &cfg) {
     printf("   average time (ms): %f\n", milliseconds / NT);
 
     ts_postRunInfo(&w, milliseconds / 1000);
+    updateProgress(
+        progressPath,
+        ProgressState{
+            "finished",
+            NT,
+            NT,
+            milliseconds / 1000.0,
+            0.0,
+            cfg.run.T,
+            outFilePath,
+            NULL,
+        });
 
     /****************************/
     cleanup();
     /****************************/
+    return 0;
 }
