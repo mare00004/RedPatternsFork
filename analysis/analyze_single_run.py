@@ -21,7 +21,14 @@ def _():
     from pathlib import Path
     import marimo as mo
     import matplotlib.pyplot as plt
-    from red_patterns import RunData, plot_psi, plot_psi_arrays, cli_args_from_run_h5, get_rbc_cmap, Array1F
+    from red_patterns import (
+        RunData,
+        plot_psi,
+        plot_psi_arrays,
+        cli_args_from_run_h5,
+        get_rbc_cmap,
+        Array1F,
+    )
     import numpy as np
     from scipy.signal import find_peaks as scipy_find_peaks
 
@@ -65,7 +72,9 @@ def _(Path, mo):
 def _(file_picker, get_rbc_cmap, mo, plot_psi_file):
     mo.stop(not file_picker.value, mo.md("Please pick a file to plot!"))
 
-    result = plot_psi_file(file_picker.path(), vmin=0.0, vmax=100.0, cmap=get_rbc_cmap())
+    result = plot_psi_file(
+        file_picker.path(), vmin=0.0, vmax=100.0, cmap=get_rbc_cmap()
+    )
     return (result,)
 
 
@@ -73,7 +82,7 @@ def _(file_picker, get_rbc_cmap, mo, plot_psi_file):
 def _(RunData, file_picker):
     run = RunData.from_h5(file_picker.path(), load_fields=False)
     z = run.z * 100
-    psi = run.load_psi()[-1] * 100 # psi at last time step
+    psi = run.load_psi()[-1] * 100  # psi at last time step
     t = run.time
     return psi, z
 
@@ -84,7 +93,7 @@ def _(Array1F, np, scipy_find_peaks):
         z: Array1F,
         psi: Array1F,
     ) -> tuple[Array1F, Array1F, float, float]:
-        """Find the peaks of $\psi(z)$
+        r"""Find the peaks of $\psi(z)$
 
         Args:
             psi: 1D array with shape (z)
@@ -101,9 +110,7 @@ def _(Array1F, np, scipy_find_peaks):
         # - The last peak only gets removed when its z-coordinate is > 6
         # - If the z-coordinates of the first two peaks are < 1, then only the first peak gets removed
         peak_indices = peak_indices[
-            1 if z[peak_indices[0]] < 1 else 0 : -1
-            if z[peak_indices[-1]] > 6
-            else None
+            1 if z[peak_indices[0]] < 1 else 0 : -1 if z[peak_indices[-1]] > 6 else None
         ]
 
         peak_z = z[peak_indices]
@@ -135,7 +142,7 @@ def _(mo, peak_deviation, peak_psi, peak_spacing, peak_z, plt, psi, z):
     ax.legend()
     ax.set_title(f"Peak Detection")
 
-    plot =  mo.ui.matplotlib(ax)
+    plot = mo.ui.matplotlib(ax)
 
     # Table
     _std_spacing = peak_deviation
@@ -160,7 +167,7 @@ def _(mo, peak_deviation, peak_psi, peak_spacing, peak_z, plt, psi, z):
 def _(mo, plot, result, table):
     mo.vstack(
         [mo.hstack([result, plot], align="center", justify="end"), table],
-        align="stretch"
+        align="stretch",
     )
     return
 
