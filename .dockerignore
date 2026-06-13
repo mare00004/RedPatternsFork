@@ -4,6 +4,8 @@ build
 build/**
 analysis
 analysis/**
+!analysis/red_patterns
+!analysis/red_patterns/**
 data
 data/**
 cluster
