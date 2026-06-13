@@ -74,34 +74,6 @@ void genConvKernel(double *intKernel, int kernelN, double DZ, double U) {
     printf("kernel length = %.32e m\n", kernelL);
 }
 
-/* initial values for phi */
-// TODO wrong || used in statements
-// TODO whats with the coeffiecients before the exponential funciton?
-void initPhi(double *f, double *R, int N, double PSI) {
-    double edgeZ = wingL + 2;
-    double edgeR = wingL;
-    for (int i = 0; i < N; i++)
-        for (int j = 0; j < N; j++) {
-            f[i + N * j] = exp(-pow(R[j] - (Rmu), 2) / (2.0 * pow(Rsigma, 2)));
-            if ((i < edgeZ) | (i > (N - 1 - edgeZ)))
-                f[i + N * j] = 0.0;
-            if ((j < edgeR) | (j > (N - 1 - edgeR)))
-                f[i + N * j] = 0.0;
-        }
-    // normalization
-    /*
-    integral phi dz drho = intgral psi dz = L N <psi> = L N PSI
-    sum phi IZ = N <psi> = N PSI
-    */
-    double phiSum = 0.0;
-    for (int i = 0; i < N; i++)
-        for (int j = 0; j < N; j++)
-            phiSum += f[i + N * j];
-    for (int i = 0; i < N; i++)
-        for (int j = 0; j < N; j++)
-            f[i + N * j] = f[i + N * j] / phiSum * PSI * (N - 2 * edgeZ);
-}
-
 #define TO_BYTES(num) num * sizeof(double)
 
 namespace {
@@ -346,20 +318,16 @@ int runSim(SimConfig &cfg) {
     }
 
     // Initializing phi from an external file when requested.
-    if (cfg.model.initialPhiFile[0] != '\0') {
-        double *loadedPhi = NULL;
+    double *loadedPhi = NULL;
 
-        if (loadInitialPhiFile(cfg.model.initialPhiFile, &loadedPhi, N) != 0) {
-            fprintf(stderr, "Failed to load initial phi from %s\n", cfg.model.initialPhiFile);
-            cleanup();
-            return failRun("Failed to load initial phi", 0, 0.0, 0.0, 0.0);
-        }
-
-        h_phi.assign(loadedPhi, loadedPhi + N * N);
-        free(loadedPhi);
-    } else {
-        initPhi(h_phi.data(), h_R.data(), N, cfg.model.PSI);
+    if (loadInitialPhiFile(cfg.model.initialPhiFile, &loadedPhi, N) != 0) {
+        fprintf(stderr, "Failed to load initial phi from %s\n", cfg.model.initialPhiFile);
+        cleanup();
+        return failRun("Failed to load initial phi", 0, 0.0, 0.0, 0.0);
     }
+
+    h_phi.assign(loadedPhi, loadedPhi + N * N);
+    free(loadedPhi);
 
     cudaMemcpy(d_phi, h_phi.data(), TO_BYTES(numPhiPoints), cudaMemcpyHostToDevice);
     cudaMemset(d_I, 0, TO_BYTES(numZCells));

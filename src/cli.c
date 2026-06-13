@@ -70,7 +70,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         "<file>",
         "directory where simulation data is stored");
     struct arg_file *cli_phiFile =
-        arg_file0(NULL, "phi-file", "<file>", "external HDF5 initial phi file");
+        arg_file1(NULL, "phi-file", "<file>", "initial phi file");
     struct arg_str *cli_gradient = arg_str0(NULL, "gradient", "linear|sigmoid", "Pressure gradient");
 
     CommonCLIArguments commonArgs = {
