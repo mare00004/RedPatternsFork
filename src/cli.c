@@ -93,7 +93,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     struct arg_lit *cli_conv =
         arg_lit1("c", "use-convolution", "use convolution integral");
     struct arg_file *cli_kernelFile =
-        arg_file0(NULL, "kernel-file", "<file>", "external HDF5 convolution kernel file");
+        arg_file1(NULL, "kernel-file", "<file>", "external HDF5 convolution kernel file");
     struct arg_end *endConv = arg_end(20);
     void *argtableConv[] = { cli_help, cli_conv, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_outDir, cli_phiFile, cli_kernelFile, endConv };
     int nErrorsConv;

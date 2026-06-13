@@ -12,68 +12,6 @@
 #include <time.h>
 #include <vector>
 
-/* kernel function */
-
-inline double fLJ(double r, double sigma, double U) {
-    return (4 * U * (12 * pow(sigma, 12) / pow(r, 13) - 6 * pow(sigma, 6) / pow(r, 7)));
-}
-
-inline double g(double r, double d, double sigmaC) {
-    return 4e7 * exp(-pow(r - d, 2) / (2 * pow(sigmaC, 2)));
-}
-
-void genConvKernel(double *intKernel, int kernelN, double DZ, double U) {
-    // TODO figure out what does do and why i need the outside of the convolution version
-    double subDiv = 256.0;
-
-    // compute effective potential
-    double kernelL = (double(kernelN) - 1) * DZ / subDiv;
-    double kernelDZ = kernelL / double(kernelN - 1);
-    double subRes = 10000;
-    double fineRes = subRes * (double(kernelN + 1) / 2);
-    double force;
-    double fineR;
-    double gpdf;
-    std::vector<double> kernelFine(int(fineRes), 0.0);
-    double fineDR = kernelDZ / subRes; // only take positive values
-    double sigma = 5.6e-6;
-    double sigmaC = 0.5e-6;
-    double eqDist =
-        6.58546720106423709125472581993321341542468871921300888061523437500000000000000000e-06;
-
-    // use central interval positions
-    double sum = 0;
-    kernelFine[0] = 0; // avoid divergence of force term at zero
-
-    for (int i = 1; i < fineRes; i++) {
-
-        fineR = double(i * fineDR);
-        force = fLJ(fineR, sigma, U);
-        gpdf = g(fineR, eqDist, sigmaC);
-
-        if (fineR < 1e-8) { // make up for numerical error near divergence
-            gpdf = 0.0;
-        }
-        kernelFine[i] = sum; // compute integral
-        sum = sum + fineDR * force * gpdf;
-    }
-
-    // integration constant
-    for (int i = 0; i < fineRes; i++)
-        kernelFine[i] = kernelFine[int(fineRes) - 1] - kernelFine[i];
-    // sampling of kernel
-    intKernel[(kernelN - 1) / 2] = 0;
-    double kernelZ;
-    for (int i = (kernelN + 1) / 2; i < kernelN; i++) {
-        kernelZ = double(i * kernelDZ) - kernelL / 2;
-        intKernel[i] =
-            kernelZ *
-            kernelFine[int((i + 1 - double(kernelN + 1) / 2) * subRes)];
-        intKernel[kernelN - 1 - i] = -intKernel[i];
-    }
-    printf("kernel length = %.32e m\n", kernelL);
-}
-
 #define TO_BYTES(num) num * sizeof(double)
 
 namespace {
@@ -208,28 +146,22 @@ int runSim(SimConfig &cfg) {
     const int numPsiPoints = numZCells;
     const int numFluxPoints = numZFaces * numRhoPoints;
 
-    // Load external kernel file, or call `genConvKernel` if kernel file argument is not used
+    // Load external kernel file
     int M = 0;
     int numFineZCells = 0;
     int numKernelPoints = 0;
     std::vector<double> h_intKernel;
     if (useConvolution) {
         M = cfg.model.variant.Conv.M;
-        if (cfg.model.variant.Conv.kernelFile[0] != '\0') {
-            double *loadedKernel = NULL;
+        double *loadedKernel = NULL;
 
-            if (loadConvKernelFile(cfg.model.variant.Conv.kernelFile, &loadedKernel, &numKernelPoints) != 0) {
-                fprintf(stderr, "Failed to load convolution kernel from %s\n", cfg.model.variant.Conv.kernelFile);
-                return failRun("Failed to load convolution kernel", 0, 0.0, 0.0, 0.0);
-            }
-
-            h_intKernel.assign(loadedKernel, loadedKernel + numKernelPoints);
-            free(loadedKernel);
-        } else {
-            numKernelPoints = cfg.model.variant.Conv.kernelN;
-            h_intKernel.resize(numKernelPoints);
-            genConvKernel(h_intKernel.data(), numKernelPoints, cfg.run.DZ, cfg.model.U);
+        if (loadConvKernelFile(cfg.model.variant.Conv.kernelFile, &loadedKernel, &numKernelPoints) != 0) {
+            fprintf(stderr, "Failed to load convolution kernel from %s\n", cfg.model.variant.Conv.kernelFile);
+            return failRun("Failed to load convolution kernel", 0, 0.0, 0.0, 0.0);
         }
+
+        h_intKernel.assign(loadedKernel, loadedKernel + numKernelPoints);
+        free(loadedKernel);
 
         cfg.model.variant.Conv.kernelN = numKernelPoints;
         numFineZCells = M;
