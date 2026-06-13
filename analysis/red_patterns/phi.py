@@ -38,8 +38,10 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+from numpy.typing import NDArray
 
-from .runs import Array1F, Array2F
+Array1F = NDArray[np.float64]
+Array2F = NDArray[np.float64]
 
 # --------------------------------------------------------------------------- #
 # Defaults / labels

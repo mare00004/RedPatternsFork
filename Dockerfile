@@ -75,12 +75,29 @@ RUN --mount=type=cache,target=/workspace/build \
 # =========================
 FROM nvidia/cuda:${CUDA_VER}-runtime-ubuntu24.04
 
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Minimal Python runtime for sweep orchestration inside the container.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get -o Acquire::Check-Date=false -o Acquire::Check-Valid-Until=false update \
+ && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-h5py \
+    python3-numpy \
+ && rm -rf /var/lib/apt/lists/*
+
 # Copy the executable
 COPY --from=build /opt/red-patterns/bin/red-patterns /bin/red-patterns
 
 # Copy HDF5 install tree from the build stage into the runtime image
 COPY --from=build /opt/hdf5 /opt/hdf5
 
+# Copy the Python sweep runtime used by HTCondor jobs.
+COPY analysis/red_patterns /opt/red-patterns/analysis/red_patterns
+COPY sweep /opt/red-patterns/sweep
+
 ENV LD_LIBRARY_PATH=/opt/hdf5/lib:$LD_LIBRARY_PATH
+ENV PYTHONPATH=/opt/red-patterns/analysis:$PYTHONPATH
 
 CMD ["/bin/bash"]

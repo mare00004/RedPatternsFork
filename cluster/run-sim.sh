@@ -7,6 +7,11 @@ if [[ -z "${JOB_ID}" ]]; then
 	exit 2
 fi
 
+# If provided by the submit file, force a shared phi-file for every run.
+# Kernel files are intentionally not handled here; they must be specified
+# per-run (only for --use-convolution) via the params file.
+PHI_FILE="${PHI_FILE:-}"
+
 SWEEP_DIR="$PWD"
 
 RESULTS_DIR="${SWEEP_DIR}/results/${JOB_ID}"
@@ -69,9 +74,18 @@ trap finish EXIT
 echo "--> JOB_ID=${JOB_ID}"
 echo "--> SCRATCH=${SCRATCH_DIR}"
 echo "--> RESULTS=${RESULTS_DIR}"
-echo "--> Running ${SIM_BIN} ${FWD_ARGS[*]} --out-dir=${SCRATCH_DIR}"
+ARGS=("$@")
 
-"${SIM_BIN}" "$@" --out-dir="${OUT_DIR}"
+if [[ -n "${PHI_FILE}" ]]; then
+	# Avoid duplicating if the params line already has --phi-file.
+	if [[ " ${ARGS[*]} " != *" --phi-file "* && " ${ARGS[*]} " != *" --phi-file="* ]]; then
+		ARGS+=("--phi-file=${PHI_FILE}")
+	fi
+fi
+
+echo "--> Running ${SIM_BIN} ${ARGS[*]} --out-dir=${SCRATCH_DIR}"
+
+"${SIM_BIN}" "${ARGS[@]}" --out-dir="${OUT_DIR}"
 
 if [[ ! -f "${SCRATCH_DIR}/run.h5" ]]; then
   echo "ERROR: expected output not found: ${SCRATCH_DIR}/run.h5" >&2

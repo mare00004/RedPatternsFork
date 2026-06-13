@@ -1,28 +1,42 @@
 #!/usr/bin/env bash
+set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-USAGE="usage: submit-sweep.sh PARAMS_FILE [COMMIT_HASH] [RUN_DIR] \n\n\tExpects PARAMS_FILE to have a unique name like meeting_<date>.txt"
+USAGE="usage: submit-sweep.sh SWEEP_DIR [COMMIT_HASH]"
 
-PARAMS_FILE="${1:?$USAGE}"
+RUN_DIR="${1:?$USAGE}"
 COMMIT_HASH="${2:-1935885}"
-RUN_DIR=$3
-
-if [[ ! -f "$PARAMS_FILE" ]]; then
-	echo "$PARAMS_FILE does not exist!"
+if [[ ! -d "${RUN_DIR}" ]]; then
+	echo "${RUN_DIR} does not exist!" >&2
 	exit 1
 fi
 
-PARAMS_FILE_NAME=$(basename "$PARAMS_FILE" .txt)
+RUNS_JSONL="${RUN_DIR}/runs.jsonl"
+RUN_IDS_FILE="${RUN_DIR}/run_ids.txt"
 
-if [[ -z "$RUN_DIR" ]]; then
-	RUN_DIR="${SCRIPT_DIR}/${PARAMS_FILE_NAME}"
+if [[ ! -f "${RUNS_JSONL}" ]]; then
+	echo "Missing ${RUNS_JSONL}" >&2
+	exit 1
 fi
 
-mkdir -p "$RUN_DIR/logs"
+if [[ ! -f "${RUN_IDS_FILE}" ]]; then
+	echo "Missing ${RUN_IDS_FILE}" >&2
+	exit 1
+fi
+
+RUN_TAG="$(basename "${RUN_DIR}")"
+
+mkdir -p "${RUN_DIR}/logs" "${RUN_DIR}/results"
+while IFS= read -r run_id; do
+	[[ -n "${run_id}" ]] || continue
+	mkdir -p "${RUN_DIR}/results/${run_id}"
+done < "${RUN_IDS_FILE}"
 
 condor_submit "${SCRIPT_DIR}/sweep.submit" \
-	RUN_TAG="${PARAMS_FILE_NAME}" \
+	RUN_TAG="${RUN_TAG}" \
 	RUN_DIR="${RUN_DIR}" \
-	PARAMS_FILE="${PARAMS_FILE}" \
+	RUNS_JSONL="${RUNS_JSONL}" \
+	RUN_IDS_FILE="${RUN_IDS_FILE}" \
+	LAUNCH_SH="${SCRIPT_DIR}/launch.sh" \
 	COMMIT_HASH="${COMMIT_HASH}"

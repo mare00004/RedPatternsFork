@@ -38,8 +38,9 @@ from enum import StrEnum
 
 import h5py
 import numpy as np
+from numpy.typing import NDArray
 
-from .runs import Array1F
+Array1F = NDArray[np.float64]
 
 # --------------------------------------------------------------------------- #
 # Physical constants / labels
