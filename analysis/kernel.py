@@ -16,275 +16,51 @@ __generated_with = "0.23.9"
 app = marimo.App()
 
 with app.setup:
-    import argparse
-    from dataclasses import dataclass
+    import sys
+    from dataclasses import replace
     from pathlib import Path
-    from typing import Callable, ClassVar, Dict
 
-    import h5py
+    import marimo as mo
+    import matplotlib.pyplot as plt
     import numpy as np
-    from red_patterns import Array1F
 
-    # Potential
-    SIGMA = 5.6e-6  # 5.6 micrometers converted to meters
-    # U = 111.15e-18  # 111.15 * 10^-18 Joules
-    V = 90e-18
+    NOTEBOOK_FILE = (
+        Path(__file__).resolve()
+        if "__file__" in globals()
+        else (Path.cwd() / "analysis" / "kernel.py").resolve()
+    )
+    ANALYSIS_DIR = NOTEBOOK_FILE.parent
+    if str(ANALYSIS_DIR) not in sys.path:
+        sys.path.insert(0, str(ANALYSIS_DIR))
 
-    # Pair Distribution Function
-    G0 = 4.0e7
-    SIGMA_C = 0.5e-6
-    EQ_DIST = 6.585467201064237091254725819933213415424688719213008880615234375e-06
-
-    POTENTIAL_CLOSURE = "Potential closure"
-    FORCE_CLOSURE = "Force closure"
-    PDF_MEAN_FIELD = "Mean Field"
-    PDF_NEAREST_NEIGHBOR = "Nearest Neighbor"
-    PDF_EXPONENTIAL = "Exponential"
-
-    CLI_TO_CLOSURE_LABEL = {
-        "force": FORCE_CLOSURE,
-        "potential": POTENTIAL_CLOSURE,
-    }
-    CLOSURE_LABEL_TO_CLI = {value: key for key, value in CLI_TO_CLOSURE_LABEL.items()}
-    CLI_TO_PAIR_DISTRIBUTION_LABEL = {
-        "mean-field": PDF_MEAN_FIELD,
-        "nearest-neighbor": PDF_NEAREST_NEIGHBOR,
-        "exponential": PDF_EXPONENTIAL,
-    }
-    PAIR_DISTRIBUTION_LABEL_TO_CLI = {
-        value: key for key, value in CLI_TO_PAIR_DISTRIBUTION_LABEL.items()
-    }
-
-
-@app.cell
-def _():
-    @dataclass(frozen=True)
-    class KernelExportConfig:
-        output_path: "Path"
-        closure: str
-        pair_distribution: str
-        U: float
-        sigma: float
-        kernel_n: int
-        dz: float
-        subdiv: int
-        g0: float | None = None
-        nn_d: float | None = None
-        nn_sigma: float | None = None
-        lambda_: float | None = None
-
-    def normalize_closure_name(value: str) -> str:
-        if value in CLI_TO_CLOSURE_LABEL:
-            return value
-        if value in CLOSURE_LABEL_TO_CLI:
-            return CLOSURE_LABEL_TO_CLI[value]
-        raise ValueError(f"Unknown closure: {value!r}")
-
-    def closure_label(value: str) -> str:
-        return CLI_TO_CLOSURE_LABEL[normalize_closure_name(value)]
-
-    def normalize_pair_distribution_name(value: str) -> str:
-        if value in CLI_TO_PAIR_DISTRIBUTION_LABEL:
-            return value
-        if value in PAIR_DISTRIBUTION_LABEL_TO_CLI:
-            return PAIR_DISTRIBUTION_LABEL_TO_CLI[value]
-        raise ValueError(f"Unknown pair distribution: {value!r}")
-
-    def pair_distribution_label(value: str) -> str:
-        return CLI_TO_PAIR_DISTRIBUTION_LABEL[normalize_pair_distribution_name(value)]
-
-    def guard_pair_distribution(
-        fn: Callable[[np.ndarray], np.ndarray],
-    ) -> Callable[[np.ndarray], np.ndarray]:
-        def guarded(x: np.ndarray) -> np.ndarray:
-            x = np.asarray(x, dtype=np.float64)
-            out = np.asarray(fn(x), dtype=np.float64)
-            out = out.copy()
-            out[x < 1e-8] = 0.0
-            return out
-
-        return guarded
-
-    def build_export_parser() -> argparse.ArgumentParser:
-        parser = argparse.ArgumentParser(
-            prog=f"{Path(__file__).name} export",
-            description="Export a CUDA-compatible convolution kernel to HDF5.",
-        )
-        parser.add_argument(
-            "--output", required=True, help="Path to the output HDF5 file."
-        )
-        parser.add_argument(
-            "--closure",
-            required=True,
-            choices=sorted(CLI_TO_CLOSURE_LABEL.keys()),
-            help="Kernel closure to use.",
-        )
-        parser.add_argument(
-            "--pair-distribution",
-            required=True,
-            choices=sorted(CLI_TO_PAIR_DISTRIBUTION_LABEL.keys()),
-            help="Pair distribution model.",
-        )
-        parser.add_argument(
-            "--U", required=True, type=float, help="Interaction energy in Joules."
-        )
-        parser.add_argument(
-            "--sigma", required=True, type=float, help="LJ sigma in meters."
-        )
-        parser.add_argument(
-            "--kernel-n", required=True, type=int, help="Odd stencil size."
-        )
-        parser.add_argument(
-            "--dz", required=True, type=float, help="Coarse grid spacing in meters."
-        )
-        parser.add_argument(
-            "--subdiv", required=True, type=int, help="Subdivisions per coarse cell."
-        )
-        parser.add_argument("--g0", type=float, help="Nearest-neighbor g0.")
-        parser.add_argument(
-            "--nn-d", type=float, help="Nearest-neighbor preferred spacing in meters."
-        )
-        parser.add_argument(
-            "--nn-sigma",
-            type=float,
-            help="Nearest-neighbor Gaussian width in meters.",
-        )
-        parser.add_argument(
-            "--lambda",
-            dest="lambda_",
-            type=float,
-            help="Exponential pair-distribution lambda.",
-        )
-        return parser
-
-    def validate_export_namespace(
-        parser: argparse.ArgumentParser, args: argparse.Namespace
-    ) -> KernelExportConfig:
-        errors: list[str] = []
-
-        if args.kernel_n < 3 or args.kernel_n % 2 == 0:
-            errors.append("--kernel-n must be an odd integer >= 3.")
-        if args.dz <= 0.0:
-            errors.append("--dz must be positive.")
-        if args.subdiv <= 0:
-            errors.append("--subdiv must be positive.")
-        if args.sigma <= 0.0:
-            errors.append("--sigma must be positive.")
-
-        if args.pair_distribution == "nearest-neighbor":
-            if args.g0 is None:
-                errors.append(
-                    "--g0 is required with --pair-distribution=nearest-neighbor."
-                )
-            if args.nn_d is None:
-                errors.append(
-                    "--nn-d is required with --pair-distribution=nearest-neighbor."
-                )
-            if args.nn_sigma is None:
-                errors.append(
-                    "--nn-sigma is required with --pair-distribution=nearest-neighbor."
-                )
-            if args.lambda_ is not None:
-                errors.append(
-                    "--lambda is only valid with --pair-distribution=exponential."
-                )
-        elif args.pair_distribution == "exponential":
-            if args.lambda_ is None:
-                errors.append(
-                    "--lambda is required with --pair-distribution=exponential."
-                )
-            if args.U == 0.0:
-                errors.append(
-                    "--U must be nonzero with --pair-distribution=exponential."
-                )
-            if (
-                args.g0 is not None
-                or args.nn_d is not None
-                or args.nn_sigma is not None
-            ):
-                errors.append(
-                    "--g0, --nn-d, and --nn-sigma are only valid with "
-                    "--pair-distribution=nearest-neighbor."
-                )
-        else:
-            if (
-                args.g0 is not None
-                or args.nn_d is not None
-                or args.nn_sigma is not None
-            ):
-                errors.append(
-                    "--g0, --nn-d, and --nn-sigma are only valid with "
-                    "--pair-distribution=nearest-neighbor."
-                )
-            if args.lambda_ is not None:
-                errors.append(
-                    "--lambda is only valid with --pair-distribution=exponential."
-                )
-
-        if errors:
-            parser.error("\n".join(errors))
-
-        return KernelExportConfig(
-            output_path=Path(args.output),
-            closure=args.closure,
-            pair_distribution=args.pair_distribution,
-            U=args.U,
-            sigma=args.sigma,
-            kernel_n=args.kernel_n,
-            dz=args.dz,
-            subdiv=args.subdiv,
-            g0=args.g0,
-            nn_d=args.nn_d,
-            nn_sigma=args.nn_sigma,
-            lambda_=args.lambda_,
-        )
-
-    return (
-        KernelExportConfig,
-        build_export_parser,
-        closure_label,
-        guard_pair_distribution,
-        normalize_closure_name,
-        normalize_pair_distribution_name,
-        pair_distribution_label,
-        validate_export_namespace,
+    from red_patterns.kernel import (
+        compute_kernel,
+        kernel_config_from_ui,
+        kernel_ui_layout,
+        latex_scientific,
+        lj_potential,
+        make_kernel_ui,
+        plot_kernel,
+        plot_pair_distribution,
+        run_export_cli,
+        write_kernel_h5,
     )
 
 
-@app.function
-def latex_scientific(value: float) -> str:
-    if value == 0:
-        return "0"
-    exponent = int(np.floor(np.log10(abs(value))))
-    mantissa = value / (10**exponent)
-    return rf"{mantissa:.6f} \cdot 10^{{{exponent}}}"
-
-
 @app.cell
-def _(run_export_cli):
-    import marimo as _mo
-    import sys
-
-    if _mo.app_meta().mode == "script" and sys.argv[1:2] == ["export"]:
-        raise SystemExit(run_export_cli(sys.argv[2:]))
+def _():
+    # Script-mode CLI: `uv run analysis/kernel.py export --output ... --closure ...`
+    if mo.app_meta().mode == "script" and sys.argv[1:2] == ["export"]:
+        raise SystemExit(run_export_cli(sys.argv[2:], prog="kernel.py export"))
     return
 
 
-@app.cell
-def _():
-    import marimo as mo
-    import matplotlib.pyplot as plt
-
-    return mo, plt
-
-
 @app.cell(hide_code=True)
-def _(mo):
+def _():
     mo.md(r"""
     # Kernel Generation
 
     ## 0. Theory
-
 
     This notebook constructs the effective one-dimensional interaction kernel
     $K$ that appears in the reduced DDFT model.
@@ -309,7 +85,7 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(mo):
+def _():
     mo.md(r"""
     The reduced model admits two common closures:
 
@@ -335,7 +111,7 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(mo):
+def _():
     mo.md(r"""
     This notebook also calculates the coefficients used in the taylor approximation
 
@@ -347,19 +123,11 @@ def _(mo):
         I(z,t) = \frac{2 \pi}{V} \int_{0}^{L} d z' \, \psi(z', t) K(z - z')
     $$
 
-    by expanding $\psi(z',t)$ around $z$ and introducing $\eta = z-z'$. This gives
+    by expanding $\psi(z',t)$ around $z$ and introducing $\eta = z-z'$. The
+    odd-kernel symmetry removes all even orders on a symmetric domain, giving
 
     $$
-        I(z,t)
-        = -\frac{2 \pi}{V}\sum_{n=0}^{\infty}
-        \frac{\partial_z^{2n+1}\psi(z,t)}{(2n+1)!}
-        \int_{-\infty}^{+\infty} d\eta \, K(\eta)\eta^{2n+1},
-    $$
-
-    where the odd-kernel symmetry removes all even orders on a symmetric domain, giving us
-
-    $$
-        I(z,t) \approx -\frac{2 \pi}{V}\partial_z \psi(z, t) \int_{-\infty}^{+\infty} d{\eta}\, K(\eta)\eta - \frac{2 \pi}{V}\frac{1}{3!}\partial_z^3 \psi(z, t) \int_{-\infty}^{+\infty} d{\eta}\, K(\eta)\eta^3 + \ldots
+        \frac{V}{2 \pi} \cdot I(z,t) \approx -\nu \, \partial_z \psi(z,t) - \mu \, \partial_z^3 \psi(z,t).
     $$
 
     with moments
@@ -370,947 +138,113 @@ def _(mo):
         \mu &= \frac{1}{3!}\int_{-\infty}^{+\infty} d\eta \, K(\eta)\eta^3.
     \end{aligned}
     $$
-
-    so that
-
-    $$
-        \frac{V}{2 \pi} \cdot I(z,t) \approx -\nu \, \partial_z \psi(z,t) - \mu \, \partial_z^3 \psi(z,t).
-    $$
     """)
     return
 
 
 @app.cell(hide_code=True)
-def _(U, mo):
-    mo.md(rf"""
-    ## 1. Pick your Pair Potential
+def _():
+    mo.md(r"""
+    ## 1. Configure the kernel
 
-    For now we use a Lennard-Jones pair potential
-
-    $$
-        u(r) = 4U \left(\frac{{\sigma^{{12}} }}{{r^{{12}}}} - \frac{{\sigma^6}}{{r^6}}\right),
-    $$
-
-    with $\sigma = {latex_scientific(SIGMA)}\mathrm{{m}}$ and $U = {latex_scientific(U)}\mathrm{{J}}$.
+    All kernel controls live in a single `mo.ui.dictionary` built by
+    `make_kernel_ui()`. Adjust the pair potential, closure, pair distribution,
+    and stencil grid below.
     """)
     return
 
 
 @app.cell
-def _(mo):
-    ui_pair_potential_U = mo.ui.number(
-        start=0.0, stop=1000, step=0.05, value=100.0, label="$U \\; [10^{-18} J]$"
-    )
-    ui_pair_potential_sigma = mo.ui.number(
-        start=0.0, stop=10, step=0.05, value=5.6, label="$\\sigma \\; [10^{-6} m]$"
-    )
-    mo.vstack([ui_pair_potential_U, ui_pair_potential_sigma])
-    return ui_pair_potential_U, ui_pair_potential_sigma
-
-
-@app.function
-def lj_potential(r: Array1F, U: np.floating, sigma: np.floating):
-    """
-    Lennard Jones Potential
-    $$
-        u(r) = 4U \\left(\\frac{\\sigma^{12} }{r^{12}} - \\frac{\\sigma^6}{r^6}\\right),
-    $$
-    """
-    return 4 * U * ((sigma / r) ** 12 - (sigma / r) ** 6)
-
-
-@app.function
-def lj_derivative(r: Array1F, U: np.floating, sigma: np.floating) -> Array1F:
-    """
-    Analytical Derivative of Lennard Jones Potential. With
-    $$
-        u(r) = 4U \\left(\\frac{\\sigma^{12} }{r^{12}} - \\frac{\\sigma^6}{r^6}\\right),
-    $$
-    this function calculates
-    $$
-        \\frac{d u}{d r}(r) = \\frac{4U}{r} \\left(-12 \\frac{\\sigma^{12} }{r^{12}} +6 \\frac{\\sigma^6}{r^6}\\right),
-    $$
-    """
-    sr6 = (sigma / r) ** 6
-    sr12 = sr6**2
-    return (4 * U / r) * (-12 * sr12 + 6 * sr6)
+def cell_kernel_ui():
+    kernel_ui = make_kernel_ui()
+    return (kernel_ui,)
 
 
 @app.cell
-def _(mo, plt, ui_pair_potential_U, ui_pair_potential_sigma):
-    _U = ui_pair_potential_U.value * 1e-18
-    _sigma = ui_pair_potential_sigma.value * 1e-6
-    _r = np.linspace(0.95 * _sigma, 3 * _sigma, 500)
-    u = lj_potential(_r, _U, _sigma)
+def cell_kernel_ui_display(kernel_ui):
+    kernel_ui_layout(kernel_ui)
+    return
 
-    # 4. Convert units for cleaner axis labels
-    # Convert r to micrometers (um) and u to 10^-18 Joules (aJ)
-    r_um = _r * 1e6
-    u_aJ = u * 1e18
 
-    # 5. Create the plot
-    plt.figure(figsize=(8, 6))
-    plt.plot(r_um, u_aJ, color="blue", linewidth=2, label="Lennard-Jones potential")
+@app.cell
+def cell_kernel_cfg(kernel_ui):
+    kernel_cfg = kernel_config_from_ui(kernel_ui.value)
+    kernel_result = compute_kernel(kernel_cfg)
+    return kernel_cfg, kernel_result
 
-    # Add a horizontal line at y=0 and vertical line at r=sigma
-    plt.axhline(0, color="black", linewidth=1)
-    plt.axvline(
-        _sigma * 1e6,
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## 2. Inspect the pair potential, pair distribution and kernel
+    """)
+    return
+
+
+@app.cell
+def _(kernel_cfg):
+    _r = np.linspace(0.95 * kernel_cfg.sigma, 3 * kernel_cfg.sigma, 500)
+    _u = lj_potential(_r, kernel_cfg.U, kernel_cfg.sigma)
+
+    _fig, _ax = plt.subplots(figsize=(8, 6))
+    _ax.plot(_r * 1e6, _u * 1e18, color="blue", linewidth=2, label="Lennard-Jones")
+    _ax.axhline(0, color="black", linewidth=1)
+    _ax.axvline(
+        kernel_cfg.sigma * 1e6,
         color="red",
         linestyle="--",
-        label=rf"$\sigma = {_sigma * 1e6} \mu m$",
+        label=rf"$\sigma = {kernel_cfg.sigma * 1e6:.3g}\,\mu m$",
     )
-
-    # 6. Add labels, title, and limits
-    plt.xlabel(r"Distance $r$ ($\mu$m)", fontsize=12)
-    plt.ylabel(r"Potential $u(r)$ ($10^{-18}$ J)", fontsize=12)
-    plt.title("Lennard-Jones potential", fontsize=14)
-
-    # Restrict the y-axis so the steep curve doesn't squash the potential well
-    plt.ylim(-150, 100)
-
-    # 7. Add grid and legend
-    plt.grid(True, linestyle=":", alpha=0.7)
-    plt.legend()
-    plt.axhline(0, color="white", linewidth=1, linestyle="-")
-
-    _lj_plot = mo.ui.matplotlib(plt.gca())
-    _lj_plot
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## 2. Closure Options
-
-    Depending on where you introduce the Pair-Distribution-Function $g$, you get different closures and therefor different Kernels.
-
-    1. If you choose $g$ to be the closure of the two-body-density, and assume that it is independent of the one-body-density you get
-        $$
-        u_{eff} = g \cdot u
-        $$
-        which is the *Potential Closure of the Kernel*.
-    2. If you choose $g$ to describe, the effective interaction force $f_{eff}$ in terms of the "normal" interaction force $f$
-
-        $$
-        f_{eff} = g \cdot f
-        $$
-
-        you get the *Force Closure of the Kernel*.
-    """)
-    return
-
-
-@app.cell
-def _(mo):
-    ui_closure_type = mo.ui.tabs(
-        {
-            POTENTIAL_CLOSURE: mo.md(
-                r"""
-                $$
-                K(x) = -x\,g(|x|)\,u(|x|)
-                $$
-                """
-            ),
-            FORCE_CLOSURE: mo.md(
-                r"""
-                $$
-                K(x) = x\int_{|x|}^{\infty} g(R)\,f(R)\, d R,
-                \qquad f(R) = -u'(R)
-                $$
-                """
-            ),
-        },
-        value="Force closure",
-    )
-    ui_closure_type
-    return (ui_closure_type,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## 3. Pick Pair Distribution Function
-
-    The pair distribution function $g(r)$ captures how strongly nearby RBCs are
-    correlated. Use the tabs to choose one of the available approximations.
-    """)
-    return
-
-
-@app.cell
-def _(PairDistributionObject, mo):
-    ui_pair_distribution_type = mo.ui.tabs(
-        {key: node.markdown for key, node in PairDistributionObject.registry.items()},
-        value="Nearest Neighbor",
-    )
-
-    ui_pair_distribution_type
-    return (ui_pair_distribution_type,)
-
-
-@app.function
-def pdf_mean_field(x: Array1F):
-    """
-    $$
-        g(x) = 1
-    $$
-    """
-    return np.ones_like(x)
-
-
-@app.cell
-def _(mo):
-    ui_pdf_mf_md = mo.md(
-        r"""
-    The mean-field approximation assumes no positional correlations.
-
-    $$
-        g(x) = 1
-    $$
-    """
-    )
-    return (ui_pdf_mf_md,)
-
-
-@app.function
-def pdf_nearest_neighbor(
-    x: Array1F, g0: np.floating, d: np.floating, sigma: np.floating
-):
-    """
-    $$
-        g(x) = g_0 \\exp\\left(-\\frac{(r-d)^2}{2\\sigma_C^2}\\right)
-    $$
-    """
-    return g0 * np.exp(-((x - d) ** 2) / (2 * (sigma**2)))
-
-
-@app.cell
-def _(mo):
-    ui_pdf_nn_g0 = mo.ui.number(
-        start=0.0, stop=10.0, step=0.1, value=4.0, label="$g_0 [m]$"
-    )
-    ui_pdf_nn_d = mo.ui.number(
-        start=0.0, stop=10.0, step=0.00000001, value=6.585467, label="$d [10^{-6} m]$"
-    )
-    ui_pdf_nn_sigma = mo.ui.number(
-        start=0.0, stop=1.0, step=0.01, value=0.5, label="$\\sigma_C [10^{-6} m]$"
-    )
-    ui_pdf_nn_md = mo.md(
-        r"""
-    This approximation concentrates the weight around one preferred RBC spacing.
-
-    $$
-        g(x) = g_0 \exp\left(-\frac{(r-d)^2}{2\sigma_C^2}\right)
-    $$
-    """
-    )
-    return ui_pdf_nn_d, ui_pdf_nn_g0, ui_pdf_nn_md, ui_pdf_nn_sigma
-
-
-@app.function
-def pdf_exponential(x: Array1F, U: np.floating, sigma: np.floating) -> Array1F:
-    """
-    $$
-        g(x) = \\exp \\left( -\\sigma \\frac{u(x)}{U} \\right)
-    $$
-    """
-    return np.exp(-sigma * (lj_potential(x, U, sigma) / U))
-
-
-@app.cell
-def _(mo):
-    ui_pdf_ee_lambda = mo.ui.number(
-        start=0.0, stop=10.0, step=0.5, value=1.0, label="$\\lambda$"
-    )
-    ui_pdf_ee_md = mo.md(
-        r"""
-    This ansatz reuses the pair potential itself to suppress strongly repulsive configurations.
-
-    $$
-        g(x) = \exp \left( -\lambda \frac{u(x)}{U} \right)
-    $$
-    """
-    )
-    return ui_pdf_ee_lambda, ui_pdf_ee_md
-
-
-@app.cell
-def _(
-    build_pair_distribution_function,
-    mo,
-    ui_pair_potential_U,
-    ui_pair_potential_sigma,
-    ui_pdf_ee_lambda,
-    ui_pdf_ee_md,
-    ui_pdf_mf_md,
-    ui_pdf_nn_d,
-    ui_pdf_nn_g0,
-    ui_pdf_nn_md,
-    ui_pdf_nn_sigma,
-):
-    @dataclass
-    class PairDistributionObject:
-        key: str
-        markdown: mo.Html
-        func: Callable[[np.ndarray], np.ndarray]
-        registry: ClassVar[Dict[str, "PairDistributionObject"]] = {}
-
-        def __post_init__(self):
-            self.registry[self.key] = self
-
-    # Pair Distribution Objects
-    _ = PairDistributionObject(
-        key=PDF_MEAN_FIELD,
-        markdown=ui_pdf_mf_md,
-        func=lambda x: build_pair_distribution_function(
-            "mean-field",
-            U=ui_pair_potential_U.value * 1e-18,
-            sigma=ui_pair_potential_sigma.value * 1e-6,
-        )(x),
-    )
-
-    _ = PairDistributionObject(
-        key=PDF_NEAREST_NEIGHBOR,
-        markdown=mo.vstack([ui_pdf_nn_md, ui_pdf_nn_g0, ui_pdf_nn_d, ui_pdf_nn_sigma]),
-        func=lambda x: build_pair_distribution_function(
-            "nearest-neighbor",
-            U=ui_pair_potential_U.value * 1e-18,
-            sigma=ui_pair_potential_sigma.value * 1e-6,
-            g0=ui_pdf_nn_g0.value * 1e7,
-            nn_d=ui_pdf_nn_d.value * 1e-6,
-            nn_sigma=ui_pdf_nn_sigma.value * 1e-6,
-        )(x),
-    )
-
-    _ = PairDistributionObject(
-        key=PDF_EXPONENTIAL,
-        markdown=mo.vstack([ui_pdf_ee_md, ui_pdf_ee_lambda]),
-        func=lambda x: build_pair_distribution_function(
-            "exponential",
-            U=ui_pair_potential_U.value * 1e-18,
-            sigma=ui_pair_potential_sigma.value * 1e-6,
-            lambda_=ui_pdf_ee_lambda.value,
-        )(x),
-    )
-    return (PairDistributionObject,)
-
-
-@app.function
-def compute_force_closure_kernel(
-    x,
-    u_prime_func,
-    g_func,
-    sub_res: float = 10000.0,
-):
-    """
-    Computes
-
-    $$
-        K(x) = - x\\int_{|x|}^\\infty g(R) u'(R) dR
-    $$
-
-    ## Example
-
-    ```python
-    x_out = np.linspace(-15e-6, 15e-6, 100_001)
-    K_out = compute_force_kernel(
-        x_out,
-        u_prime_func=lambda r: lj_derivative(r, U, SIGMA),
-        g_func=lambda r: pdf_nearest_neighbor(r, G0, EQ_DIST, SIGMA_C),
-        sub_res=10_000,
-    )
-    ```
-    """
-    x = np.asarray(x, dtype=np.float64)
-    if x.ndim != 1:
-        raise ValueError("`x` must be a 1-D array")
-    if sub_res <= 0:
-        raise ValueError("`sub_res` must be positive")
-    if x.size == 0:
-        return np.asarray([], dtype=np.float64)
-    if x.size == 1:
-        return np.zeros_like(x, dtype=np.float64)
-
-    def _infer_uniform_spacing(sample_x: np.ndarray) -> float:
-        spacing = np.diff(sample_x)
-        if not np.allclose(spacing, spacing[0]):
-            raise ValueError("`x` must be sampled on a uniform grid")
-        if spacing[0] <= 0.0:
-            raise ValueError("`x` must be strictly increasing")
-        return float(spacing[0])
-
-    def _build_force_closure_radial_grid(
-        sample_x: np.ndarray, kernel_dz: float, radial_sub_res: float
-    ) -> tuple[np.ndarray, float]:
-        max_multiple = float(np.max(np.abs(sample_x)) / kernel_dz)
-        fine_res = int(radial_sub_res * (max_multiple + 1.0))
-        fine_dr = kernel_dz / radial_sub_res
-        r = np.arange(fine_res, dtype=np.float64) * fine_dr
-        return r, fine_dr
-
-    def _evaluate_force_closure_inputs(
-        r: np.ndarray, fine_dr: float
-    ) -> tuple[np.ndarray, np.ndarray]:
-        r_eval = np.where(r > 0.0, r, fine_dr)
-        g_vals = np.asarray(g_func(r_eval), dtype=np.float64)
-        u_prime_vals = np.asarray(u_prime_func(r_eval), dtype=np.float64)
-        g_vals[0] = 0.0
-        u_prime_vals[0] = 0.0
-        return g_vals, u_prime_vals
-
-    def _accumulate_force_closure_tail(
-        g_vals: np.ndarray, u_prime_vals: np.ndarray, fine_dr: float
-    ) -> np.ndarray:
-        contributions = fine_dr * u_prime_vals * g_vals
-        kernel_fine = np.empty_like(g_vals, dtype=np.float64)
-        kernel_fine[0] = 0.0
-        # Exclusive left-to-right prefix sum: kernel_fine[k] holds the integral
-        # contributions from indices 1..k-1 (contributions[0] is 0 anyway).
-        np.cumsum(contributions[:-1], out=kernel_fine[1:])
-        return kernel_fine[-1] - kernel_fine
-
-    def _evaluate_force_closure_on_samples(
-        sample_x: np.ndarray, tail: np.ndarray, fine_dr: float
-    ) -> np.ndarray:
-        sample_idx = np.rint(np.abs(sample_x) / fine_dr).astype(np.int64)
-        sample_idx = np.clip(sample_idx, 0, tail.size - 1)
-        return -(sample_x * tail[sample_idx])
-
-    kernel_dz = _infer_uniform_spacing(x)
-    r, fine_dr = _build_force_closure_radial_grid(x, kernel_dz, sub_res)
-    g_vals, u_prime_vals = _evaluate_force_closure_inputs(r, fine_dr)
-    tail = _accumulate_force_closure_tail(g_vals, u_prime_vals, fine_dr)
-    return _evaluate_force_closure_on_samples(x, tail, fine_dr)
-
-
-@app.function
-def compute_potential_closure_kernel(
-    x,
-    u_func,
-    g_func,
-):
-    """
-    Computes the potential-closure kernel
-
-    $$
-        K(x) = -x\\,g(|x|)\\,u(|x|)
-    $$
-
-    Unlike the force closure, this is a pointwise evaluation — no
-    integration is required.
-
-    ## Example
-
-    ```python
-    x_out = np.linspace(-15e-6, 15e-6, 100_001)
-    K_out = compute_potential_closure_kernel(
-        x_out,
-        u_func=lambda r: lj_potential(r, U, SIGMA),
-        g_func=lambda r: pdf_nearest_neighbor(r, G0, EQ_DIST, SIGMA_C),
-    )
-    ```
-    """
-    x = np.asarray(x, dtype=np.float64)
-    abs_x = np.abs(x)
-    K = np.zeros_like(x, dtype=np.float64)
-    nonzero_mask = abs_x > 0.0
-    if np.any(nonzero_mask):
-        g_vals = np.asarray(g_func(abs_x[nonzero_mask]), dtype=np.float64)
-        u_vals = np.asarray(u_func(abs_x[nonzero_mask]), dtype=np.float64)
-        K[nonzero_mask] = -(x[nonzero_mask] * g_vals * u_vals)
-    return K
-
-
-@app.cell
-def _(PairDistributionObject, ui_pair_distribution_type):
-    active_pair_distribution = PairDistributionObject.registry[
-        ui_pair_distribution_type.value
-    ]
-    return (active_pair_distribution,)
-
-
-@app.cell
-def _(active_pair_distribution, mo, plt):
-    r_plot = np.linspace(1e-9, 5e-5, 400)
-
-    plt.figure(figsize=(8, 6))
-    plt.plot(
-        r_plot * 1e6,
-        active_pair_distribution.func(r_plot),
-        color="blue",
-        linewidth=2,
-    )
-
-    plt.xlabel(r"Distance $r$ ($\mu$m)", fontsize=12)
-    plt.ylabel(r"Pair distribution $g(r)$", fontsize=12)
-    plt.title("Pair distribution function", fontsize=14)
-
-    plt.grid(True, linestyle=":", alpha=0.7)
-
-    _pdf_plot = mo.ui.matplotlib(plt.gca())
-    _pdf_plot
-    return
-
-
-@app.function
-def generate_kernel_stencil(kernel_func, kernel_n: np.integer, kernel_dz: np.floating):
-    """Sample a continuous kernel on a discrete odd-length stencil.
-
-    Given a callable ``kernel_func`` that evaluates a kernel $K(x)$ on an
-    arbitrary array of offsets, this function places an odd-length stencil
-    of ``kernel_n`` points with spacing ``kernel_dz`` centered at $x = 0$
-    and evaluates the kernel there.
-
-    ## Parameters
-
-    kernel_func : callable
-        A function that accepts a 1-D numpy array of offsets $x$ (in
-        metres) and returns the kernel values $K(x)$ on that grid.
-        Typical examples:
-
-        * Force closure:
-          ``lambda x: compute_force_closure_kernel(x, u_prime_func=..., g_func=...)``
-        * Potential closure:
-          ``lambda x: compute_potential_closure_kernel(x, u_func=..., g_func=...)``
-
-    kernel_n : int
-        Number of stencil points.  Must be an odd integer $\\geq 3$
-        so that the stencil has a well-defined centre.
-
-    kernel_dz : float
-        Spacing between adjacent stencil points, in metres.
-
-    ## Returns
-
-    `numpy.ndarray`
-        1-D array of ``kernel_n`` kernel values
-        $K(x_i)$ with $x_i = i \\cdot \\text{kernel\\_dz}$,
-        $i = -(N-1)/2, \\ldots, (N-1)/2$.
-
-    ## Raises
-
-    AssertionError
-        If ``kernel_n`` is even.
-
-    ## Examples
-
-    # Force Closure
-
-    ```python
-        x_sample, K_sample = generate_kernel_stencil(
-        kernel_func=lambda x: compute_force_closure_kernel(
-            x,
-            u_prime_func=lambda r: lj_derivative(r, U, SIGMA),
-            g_func=lambda r: pdf_nearest_neighbor(r, G0, EQ_DIST, SIGMA_C),
-        ),
-        kernel_n=31,
-        kernel_dz=fine_dz,
-    )
-    ```
-
-    # Potential closure
-
-    >>> x_sample, K_sample = generate_kernel_stencil(
-    ...     kernel_func=lambda x: compute_potential_closure_kernel(
-    ...         x,
-    ...         u_func=lambda r: lj_potential(r, U, SIGMA),
-    ...         g_func=lambda r: pdf_nearest_neighbor(r, G0, EQ_DIST, SIGMA_C),
-    ...     ),
-    ...     kernel_n=31,
-    ...     kernel_dz=fine_dz,
-    ... )
-    """
-    assert kernel_n % 2 != 0, "`kernel_n` needs to be odd!"
-    center_idx = (kernel_n - 1) // 2
-    x = (np.arange(kernel_n, dtype=np.float64) - center_idx) * kernel_dz
-    return x, kernel_func(x)
-
-
-@app.cell
-def _(
-    KernelExportConfig,
-    build_export_parser,
-    closure_label,
-    guard_pair_distribution,
-    normalize_closure_name,
-    normalize_pair_distribution_name,
-    pair_distribution_label,
-    validate_export_namespace,
-):
-    def build_pair_distribution_function(
-        pair_distribution: str,
-        *,
-        U: float,
-        sigma: float,
-        g0: float | None = None,
-        nn_d: float | None = None,
-        nn_sigma: float | None = None,
-        lambda_: float | None = None,
-    ) -> Callable[[np.ndarray], np.ndarray]:
-        pair_key = normalize_pair_distribution_name(pair_distribution)
-
-        if pair_key == "mean-field":
-            return guard_pair_distribution(pdf_mean_field)
-
-        if pair_key == "nearest-neighbor":
-            if g0 is None or nn_d is None or nn_sigma is None:
-                raise ValueError(
-                    "Nearest-neighbor pair distribution requires g0, nn_d, and nn_sigma."
-                )
-            return guard_pair_distribution(
-                lambda x: pdf_nearest_neighbor(x, g0, nn_d, nn_sigma)
-            )
-
-        if lambda_ is None:
-            raise ValueError("Exponential pair distribution requires lambda_.")
-        if U == 0.0:
-            raise ValueError("Exponential pair distribution requires nonzero U.")
-        return guard_pair_distribution(
-            lambda x: np.exp(-(lambda_ * (lj_potential(x, U, sigma) / U)))
-        )
-
-    def build_kernel_function(
-        closure: str,
-        pair_distribution: str,
-        *,
-        U: float,
-        sigma: float,
-        g0: float | None = None,
-        nn_d: float | None = None,
-        nn_sigma: float | None = None,
-        lambda_: float | None = None,
-    ) -> Callable[[np.ndarray], np.ndarray]:
-        pair_func = build_pair_distribution_function(
-            pair_distribution,
-            U=U,
-            sigma=sigma,
-            g0=g0,
-            nn_d=nn_d,
-            nn_sigma=nn_sigma,
-            lambda_=lambda_,
-        )
-        closure_key = normalize_closure_name(closure)
-
-        if closure_key == "force":
-            return lambda x: compute_force_closure_kernel(
-                x,
-                u_prime_func=lambda r: lj_derivative(r, U, sigma),
-                g_func=pair_func,
-            )
-
-        return lambda x: compute_potential_closure_kernel(
-            x,
-            u_func=lambda r: lj_potential(r, U, sigma),
-            g_func=pair_func,
-        )
-
-    def compute_kernel_stencil_data(
-        closure: str,
-        pair_distribution: str,
-        *,
-        U: float,
-        sigma: float,
-        kernel_n: int,
-        dz: float,
-        subdiv: int,
-        g0: float | None = None,
-        nn_d: float | None = None,
-        nn_sigma: float | None = None,
-        lambda_: float | None = None,
-    ):
-        if kernel_n < 3 or kernel_n % 2 == 0:
-            raise ValueError("kernel_n must be an odd integer >= 3.")
-        if subdiv <= 0:
-            raise ValueError("subdiv must be positive.")
-        if dz <= 0.0:
-            raise ValueError("dz must be positive.")
-
-        fine_dz = dz / subdiv
-        kernel_func = build_kernel_function(
-            closure,
-            pair_distribution,
-            U=U,
-            sigma=sigma,
-            g0=g0,
-            nn_d=nn_d,
-            nn_sigma=nn_sigma,
-            lambda_=lambda_,
-        )
-        x_sample, K_sample = generate_kernel_stencil(
-            kernel_func=kernel_func,
-            kernel_n=kernel_n,
-            kernel_dz=fine_dz,
-        )
-        return fine_dz, x_sample, K_sample, kernel_func
-
-    def write_cuda_kernel_h5(
-        output_path: str | Path,
-        *,
-        x_sample: np.ndarray,
-        K_sample: np.ndarray,
-        kernel_n: int,
-        fine_dz: float,
-        dz: float,
-        subdiv: int,
-        closure: str,
-        pair_distribution: str,
-        U: float,
-    ) -> "Path":
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with h5py.File(output_path, "w") as f:
-            kernel_group = f.create_group("kernel")
-            kernel_group.create_dataset(
-                "values", data=np.asarray(K_sample, dtype=np.float64)
-            )
-            kernel_group.create_dataset(
-                "x", data=np.asarray(x_sample, dtype=np.float64)
-            )
-            kernel_group.attrs["kernelN"] = int(kernel_n)
-            kernel_group.attrs["spacing"] = float(fine_dz)
-            kernel_group.attrs["DZ"] = float(dz)
-            kernel_group.attrs["subDiv"] = int(subdiv)
-            kernel_group.attrs["closure"] = closure_label(closure)
-            kernel_group.attrs["pair_distribution"] = pair_distribution_label(
-                pair_distribution
-            )
-            kernel_group.attrs["U"] = float(U)
-            kernel_group.attrs["cuda_compatible"] = 1
-            kernel_group.attrs["generated_by"] = "analysis/kernel.py"
-
-        return output_path
-
-    def export_kernel_file(cfg: KernelExportConfig):
-        fine_dz, x_sample, K_sample, _ = compute_kernel_stencil_data(
-            cfg.closure,
-            cfg.pair_distribution,
-            U=cfg.U,
-            sigma=cfg.sigma,
-            kernel_n=cfg.kernel_n,
-            dz=cfg.dz,
-            subdiv=cfg.subdiv,
-            g0=cfg.g0,
-            nn_d=cfg.nn_d,
-            nn_sigma=cfg.nn_sigma,
-            lambda_=cfg.lambda_,
-        )
-        output_path = write_cuda_kernel_h5(
-            cfg.output_path,
-            x_sample=x_sample,
-            K_sample=K_sample,
-            kernel_n=cfg.kernel_n,
-            fine_dz=fine_dz,
-            dz=cfg.dz,
-            subdiv=cfg.subdiv,
-            closure=cfg.closure,
-            pair_distribution=cfg.pair_distribution,
-            U=cfg.U,
-        )
-        return output_path, fine_dz, x_sample, K_sample
-
-    def run_export_cli(argv: list[str]) -> int:
-        parser = build_export_parser()
-        args = parser.parse_args(argv)
-        cfg = validate_export_namespace(parser, args)
-        output_path, fine_dz, _, _ = export_kernel_file(cfg)
-
-        print(f"Exported CUDA-compatible convolution kernel to {output_path}")
-        print(
-            f"Stored {cfg.kernel_n} samples with spacing {fine_dz:.6e} m on /kernel/values"
-        )
-        print(
-            "Used parameters: "
-            f"closure={cfg.closure}, "
-            f"pair_distribution={cfg.pair_distribution}, "
-            f"DZ={cfg.dz:.6e}, "
-            f"subdiv={cfg.subdiv}, "
-            f"U={cfg.U:.6e} J"
-        )
-        return 0
-
-    return (
-        build_pair_distribution_function,
-        compute_kernel_stencil_data,
-        run_export_cli,
-        write_cuda_kernel_h5,
-    )
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## 4. Inspect Kernel
-
-    First pick parameters for the export
-    """)
-    return
-
-
-@app.cell
-def _(mo):
-    ui_kernel_n = mo.ui.number(start=3, stop=10001, step=2, value=31, label="kernelN")
-    ui_dz = mo.ui.number(
-        start=1e-12,
-        step=1e-8,
-        value=256.0 * 1.0455122765372783e-6,
-        label="(coarse) $\\Delta z$",
-    )
-    ui_subDiv = mo.ui.number(start=1, step=1, value=256, label="subDiv")
-
-    mo.vstack([ui_kernel_n, ui_dz, ui_subDiv])
-    return ui_dz, ui_kernel_n, ui_subDiv
-
-
-@app.cell
-def _(
-    compute_kernel_stencil_data,
-    normalize_closure_name,
-    normalize_pair_distribution_name,
-    ui_closure_type,
-    ui_dz,
-    ui_kernel_n,
-    ui_pair_distribution_type,
-    ui_pair_potential_U,
-    ui_pair_potential_sigma,
-    ui_pdf_ee_lambda,
-    ui_pdf_nn_d,
-    ui_pdf_nn_g0,
-    ui_pdf_nn_sigma,
-    ui_subDiv,
-):
-    coarse_dz = float(ui_dz.value)
-    sub_div = int(ui_subDiv.value)
-    kernelN = int(ui_kernel_n.value)
-    U = ui_pair_potential_U.value * 1e-18
-    sigma = ui_pair_potential_sigma.value * 1e-6
-    closure = normalize_closure_name(str(ui_closure_type.value))
-    pair_distribution = normalize_pair_distribution_name(
-        str(ui_pair_distribution_type.value)
-    )
-
-    fine_dz, x_sample, K_sample, kernel_func = compute_kernel_stencil_data(
-        closure,
-        pair_distribution,
-        U=U,
-        sigma=sigma,
-        kernel_n=kernelN,
-        dz=coarse_dz,
-        subdiv=sub_div,
-        g0=ui_pdf_nn_g0.value * 1e7,
-        nn_d=ui_pdf_nn_d.value * 1e-6,
-        nn_sigma=ui_pdf_nn_sigma.value * 1e-6,
-        lambda_=ui_pdf_ee_lambda.value,
-    )
-
-    # Keep a separate continuum path for inspection/plotting.
-    _scale = 101
-    x, K = generate_kernel_stencil(
-        kernel_func=kernel_func,
-        kernel_n=kernelN * _scale,
-        kernel_dz=fine_dz / _scale,
-    )
-    return K, K_sample, U, fine_dz, kernelN, x, x_sample
-
-
-@app.cell
-def _(
-    K,
-    K_sample,
-    active_pair_distribution,
-    mo,
-    plt,
-    ui_closure_type,
-    x,
-    x_sample,
-):
-    _fig, _ax = plt.subplots(figsize=(8, 6))
-    _ax.plot(x * 1e6, K, color="blue", linewidth=2, label="dense sampled curve")
-    _ax.scatter(
-        x_sample * 1e6,
-        K_sample,
-        s=18,
-        color="black",
-        label="exported stencil",
-        zorder=3,
-    )
-
-    _closure_name = ui_closure_type.value
-    _pair_key = active_pair_distribution.key
-
-    _ax.axhline(0, color="black", linewidth=1)
-    _ax.set_xlabel(r"Offset $x$ ($\mu$m)", fontsize=12)
-    _ax.set_ylabel(r"Kernel $K(x)$", fontsize=12)
-    _ax.set_title(f"{_closure_name} ({_pair_key})", fontsize=14)
+    _ax.set_xlabel(r"Distance $r$ ($\mu$m)", fontsize=12)
+    _ax.set_ylabel(r"Potential $u(r)$ ($10^{-18}$ J)", fontsize=12)
+    _ax.set_title("Lennard-Jones potential", fontsize=14)
+    _ax.set_ylim(-150, 100)
     _ax.grid(True, linestyle=":", alpha=0.7)
     _ax.legend()
+    _fig
+    return
 
-    mo.ui.matplotlib(_ax)
+
+@app.cell
+def _(kernel_cfg):
+    plot_pair_distribution(kernel_cfg)
+    return
+
+
+@app.cell
+def _(kernel_cfg, kernel_result):
+    plot_kernel(kernel_result, kernel_cfg)
     return
 
 
 @app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## CUDA Export
+def _(kernel_result):
+    mo.md(rf"""
+    ### Numerical Taylor coefficients
 
-    This export form writes the **discrete convolution stencil** expected by the
-    CUDA code. The exported stencil is built from the currently selected closure
-    and pair distribution.
+    $$
+    \begin{{aligned}}
+    \nu &= {latex_scientific(kernel_result.nu)}, \\
+    \mu &= {latex_scientific(kernel_result.mu)}.
+    \end{{aligned}}
+    $$
     """)
     return
 
 
 @app.cell(hide_code=True)
-def _(mo):
+def _():
     mo.md(r"""
-    ### How The Simulation Samples The Kernel
+    ## 3. CUDA Export
 
-    The CUDA simulation does not consume a continuous kernel $K(x)$. Instead, it
-    uses a discrete odd-length stencil
-
-    $$
-    \,\{K_i\}_{i=-(N_K-1)/2}^{(N_K-1)/2}
-    $$
-
-    with `kernelN = N_K` samples and spacing
-
-    $$
-    \Delta z_K = \frac{DZ}{\text{subDiv}}.
-    $$
-
-    The sampled offsets are therefore
-
-    $$
-    x_i = i\,\Delta z_K,
-    \qquad
-    i = -\frac{N_K-1}{2}, \ldots, \frac{N_K-1}{2}.
-    $$
-
-    so the total sampled support is
-
-    $$
-    L_K = (N_K - 1)\,\Delta z_K.
-    $$
-
-    During the convolution step, CUDA multiplies these discrete kernel entries by
-    the interpolated density values and then applies one additional factor of
-
-    $$
-    \Delta z_K = \frac{DZ}{\text{subDiv}}
-    $$
-
-    outside the summation. That means the exported `/kernel/values` dataset must
-    already be sampled on this exact grid to reproduce the legacy simulation
-    behavior.
+    Writes the discrete convolution stencil expected by the CUDA code, built from
+    the live parameters above.
     """)
     return
 
 
 @app.cell
-def _(mo):
+def cell_export_form():
     export_dir = mo.ui.file_browser(
         initial_path=Path.cwd(),
         ignore_empty_dirs=False,
@@ -1329,10 +263,7 @@ def _(mo):
     {export_name}
     """
         )
-        .batch(
-            export_dir=export_dir,
-            export_name=export_name,
-        )
+        .batch(export_dir=export_dir, export_name=export_name)
         .form(
             submit_button_label="Export CUDA kernel",
             clear_on_submit=False,
@@ -1344,137 +275,38 @@ def _(mo):
 
 
 @app.cell
-def _():
-    from wigglystuff import CopyToClipboard
-
-    return (CopyToClipboard,)
-
-
-@app.cell
-def _(
-    CopyToClipboard,
-    K_sample,
-    U,
-    export_form,
-    fine_dz,
-    kernelN,
-    mo,
-    normalize_closure_name,
-    normalize_pair_distribution_name,
-    ui_closure_type,
-    ui_dz,
-    ui_pair_distribution_type,
-    ui_subDiv,
-    write_cuda_kernel_h5,
-    x_sample,
-):
+def _(export_form, kernel_cfg, kernel_result):
     if export_form.value is None:
-        _result = mo.md(
-            "Submit the form to export a CUDA-compatible convolution kernel."
-        )
+        _result = mo.md("Submit the form to export a CUDA-compatible kernel.")
     else:
-        _export_dir_entries = export_form.value.get("export_dir") or []
+        _dir_entries = export_form.value.get("export_dir") or []
         _file_name = str(export_form.value.get("export_name", "")).strip()
-        # Always export with the same live parameters used for plotting.
-        _kernel_n = int(kernelN)
-        _dz = float(ui_dz.value)
-        _sub_div = int(ui_subDiv.value)
-        _u_scale = U
-
-        if not _export_dir_entries:
+        if not _dir_entries:
             _result = mo.md("Please select a directory before exporting.")
         elif not _file_name:
             _result = mo.md("Please enter a file name before exporting.")
         else:
-            _selected_dir = Path(_export_dir_entries[0].path)
-            _path = _selected_dir / _file_name
-
-            _closure = normalize_closure_name(str(ui_closure_type.value))
-            _pair_key = normalize_pair_distribution_name(
-                str(ui_pair_distribution_type.value)
-            )
-
+            _path = Path(_dir_entries[0].path) / _file_name
             try:
-                write_cuda_kernel_h5(
-                    _path,
-                    x_sample=np.asarray(x_sample, dtype=np.float64),
-                    K_sample=np.asarray(K_sample, dtype=np.float64),
-                    kernel_n=int(kernelN),
-                    fine_dz=float(fine_dz),
-                    dz=float(_dz),
-                    subdiv=int(_sub_div),
-                    closure=_closure,
-                    pair_distribution=_pair_key,
-                    U=float(_u_scale),
+                _written = write_kernel_h5(
+                    _path, kernel_result, replace(kernel_cfg, output_path=_path)
                 )
             except Exception as _exc:
                 _result = mo.md(rf"Export failed: `{_exc}`")
             else:
-                _clipboard = mo.ui.anywidget(CopyToClipboard(text_to_copy=str(_path)))
                 _result = mo.vstack(
                     [
+                        mo.md(rf"Exported CUDA-compatible kernel to `{_written}`."),
                         mo.md(
-                            rf"Exported CUDA-compatible convolution kernel to `{_path}`."
-                        ),
-                        mo.md(
-                            rf"Stored `{_kernel_n}` samples with spacing `{fine_dz:.6e}` m on `/kernel/values`."
-                        ),
-                        mo.md(
-                            rf"Used live plotting parameters: `kernelN={_kernel_n}`, `DZ={_dz:.6e}`, `subDiv={_sub_div}`, `U={_u_scale:.6e}` (J), `closure={_closure}`, `pair_distribution={_pair_key}`."
-                        ),
-                        mo.hstack(
-                            [mo.md("Copy exported path:"), _clipboard], justify="start"
+                            rf"`kernelN={kernel_cfg.kernel_n}`, "
+                            rf"`spacing={kernel_result.fine_dz:.6e}` m, "
+                            rf"`closure={kernel_cfg.closure}`, "
+                            rf"`pair_distribution={kernel_cfg.pair_distribution}`, "
+                            rf"`U={kernel_cfg.U:.6e}` J."
                         ),
                     ]
                 )
-
     _result
-    return
-
-
-@app.function
-def calculate_nu_mu(x: Array1F, K: Array1F) -> tuple[np.floating, np.floating]:
-    """
-    Compute the Taylor-expansion moments $\\nu$ and $\\mu$ from a discrete kernel stencil.
-
-    $$
-    \\begin{aligned}
-        \\nu &= \\int_{-\\infty}^{+\\infty} d\\eta \\, K(\\eta)\\eta, \\\\
-        \\mu &= \\frac{1}{3!}\\int_{-\\infty}^{+\\infty} d\\eta \\, K(\\eta)\\eta^3.
-    \\end{aligned}
-    $$
-    """
-    x = np.asarray(x, dtype=np.float64)
-    K = np.asarray(K, dtype=np.float64)
-    if x.ndim != 1 or K.ndim != 1 or x.shape != K.shape:
-        raise ValueError("`x` and `K` must be 1-D arrays with the same shape")
-    if x.size < 2:
-        raise ValueError("Need at least two stencil points to infer the spacing")
-
-    dz = float(x[1] - x[0])
-    nu = dz * float(np.sum(x * K))
-    mu = (dz * float(np.sum((x**3) * K))) / 6.0
-
-    return nu, mu
-
-
-@app.cell
-def _(K, mo, x):
-    # _nu, _mu = calculate_nu_mu(x_sample, K_sample)
-    _nu, _mu = calculate_nu_mu(x, K)
-
-    mo.md(
-        rf"""
-    ### Numerical Coefficients
-
-    $$
-    \begin{{aligned}}
-    \nu &= {latex_scientific(_nu)}, \\
-    \mu &= {latex_scientific(_mu)}.
-    \end{{aligned}}
-    $$
-    """
-    )
     return
 
 

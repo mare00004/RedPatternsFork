@@ -11,3 +11,4 @@ data/
 DOCKER_TOKEN
 analysis/__marimo__/*
 analysis/__pycache__/*
+__pycache__/

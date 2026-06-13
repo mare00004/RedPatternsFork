@@ -10,9 +10,9 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import os
 
-Array1F = NDArray[np.float32]
-Array2F = NDArray[np.float32]
-Array3F = NDArray[np.float32]
+Array1F = NDArray[np.float64]
+Array2F = NDArray[np.float64]
+Array3F = NDArray[np.float64]
 
 AttrScalar: TypeAlias = str | int | float | bool
 
@@ -496,6 +496,39 @@ def plot_psi_arrays(
         cbar.set_label(cbar_label)
 
     return fig
+
+
+def find_peaks(
+    z: Array1F,
+    psi: Array1F,
+) -> tuple[Array1F, Array1F, float, float]:
+    r"""Find the peaks of $\psi(z)$.
+
+    Args:
+        z: 1D array with shape (z,).
+        psi: 1D array with shape (z,).
+
+    Returns:
+        Tuple of (z-coordinates of peaks, psi at each peak, average spacing,
+        standard deviation of the spacing). Edge peaks are trimmed: the first
+        peak is dropped only when its z < 1, the last only when its z > 6.
+    """
+    from scipy.signal import find_peaks as _scipy_find_peaks
+
+    peak_indices, _ = _scipy_find_peaks(psi, prominence=0.1)
+
+    peak_indices = peak_indices[
+        1 if z[peak_indices[0]] < 1 else 0 : -1 if z[peak_indices[-1]] > 6 else None
+    ]
+
+    peak_z = z[peak_indices]
+    peak_psi = psi[peak_indices]
+
+    distances = np.diff(peak_z)
+    average_spacing = np.mean(distances)
+    standard_deviation = np.std(distances)
+
+    return peak_z, peak_psi, average_spacing, standard_deviation
 
 
 def cli_args_from_run_h5(
