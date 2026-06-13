@@ -93,7 +93,7 @@ def _(Array1F, np, scipy_find_peaks):
         z: Array1F,
         psi: Array1F,
     ) -> tuple[Array1F, Array1F, float, float]:
-        r"""Find the peaks of $\psi(z)$
+        """Find the peaks of $\psi(z)$
 
         Args:
             psi: 1D array with shape (z)

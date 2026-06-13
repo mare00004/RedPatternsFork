@@ -2,9 +2,6 @@ BIN       := ./build/red-patterns
 PHI_INIT  := uv run analysis/phi_init.py export
 KERNEL_CLI := uv run analysis/kernel.py export
 
-U         := 1.1115e-16
-PSI       := 0.02
-
 # phi defaults
 PHI_N      := 256
 PHI_WING   := 30
@@ -99,7 +96,6 @@ $(KERNEL):
 		--output=$(KERNEL) \
 		--closure=$(K_CLOSURE) \
 		--pair-distribution=$(K_PAIRDIST) \
-		--U=$(U) \
 		--sigma=$(K_SIGMA) \
 		--kernel-n=$(K_N) \
 		--dz=$(K_DZ) \
@@ -114,7 +110,7 @@ run-tayl-gauss-linear: $(PHI_GAUSS)
 	mkdir -p ./data/tayl_gauss_linear
 	$(BIN) --use-taylor \
 		--T=1000.0 --DT=1e-02 --NO=500 \
-		--gradient=linear --U=$(U) --PSI=$(PSI) \
+		--gradient=linear \
 		--NU=$(NU) --MU=$(MU) \
 		--phi-file=$(PHI_GAUSS) \
 		--out-dir=./data/tayl_gauss_linear
@@ -123,7 +119,7 @@ run-tayl-gauss-sigmoid: $(PHI_GAUSS)
 	mkdir -p ./data/tayl_gauss_sigmoid
 	$(BIN) --use-taylor \
 		--T=1000.0 --DT=1e-02 --NO=500 \
-		--gradient=sigmoid --U=$(U) --PSI=$(PSI) \
+		--gradient=sigmoid \
 		--NU=$(NU) --MU=$(MU) \
 		--phi-file=$(PHI_GAUSS) \
 		--out-dir=./data/tayl_gauss_sigmoid
@@ -132,7 +128,7 @@ run-tayl-const-linear: $(PHI_CONST)
 	mkdir -p ./data/tayl_const_linear
 	$(BIN) --use-taylor \
 		--T=1000.0 --DT=1e-02 --NO=500 \
-		--gradient=linear --U=$(U) --PSI=$(PSI) \
+		--gradient=linear \
 		--NU=$(NU) --MU=$(MU) \
 		--phi-file=$(PHI_CONST) \
 		--out-dir=./data/tayl_const_linear
@@ -141,7 +137,7 @@ run-tayl-const-sigmoid: $(PHI_CONST)
 	mkdir -p ./data/tayl_const_sigmoid
 	$(BIN) --use-taylor \
 		--T=1000.0 --DT=1e-02 --NO=500 \
-		--gradient=sigmoid --U=$(U) --PSI=$(PSI) \
+		--gradient=sigmoid \
 		--NU=$(NU) --MU=$(MU) \
 		--phi-file=$(PHI_CONST) \
 		--out-dir=./data/tayl_const_sigmoid
@@ -152,7 +148,7 @@ run-conv-gauss-linear: $(PHI_GAUSS) $(KERNEL)
 	mkdir -p ./data/conv_gauss_linear
 	$(BIN) --use-convolution \
 		--T=300.0 --DT=1e-03 --NO=500 \
-		--gradient=linear --U=$(U) --PSI=$(PSI) \
+		--gradient=linear \
 		--kernel-file=$(KERNEL) \
 		--phi-file=$(PHI_GAUSS) \
 		--out-dir=./data/conv_gauss_linear
@@ -161,7 +157,7 @@ run-conv-gauss-sigmoid: $(PHI_GAUSS) $(KERNEL)
 	mkdir -p ./data/conv_gauss_sigmoid
 	$(BIN) --use-convolution \
 		--T=300.0 --DT=1e-03 --NO=500 \
-		--gradient=sigmoid --U=$(U) --PSI=$(PSI) \
+		--gradient=sigmoid \
 		--kernel-file=$(KERNEL) \
 		--phi-file=$(PHI_GAUSS) \
 		--out-dir=./data/conv_gauss_sigmoid
@@ -170,7 +166,7 @@ run-conv-const-linear: $(PHI_CONST) $(KERNEL)
 	mkdir -p ./data/conv_const_linear
 	$(BIN) --use-convolution \
 		--T=300.0 --DT=1e-03 --NO=500 \
-		--gradient=linear --U=$(U) --PSI=$(PSI) \
+		--gradient=linear \
 		--kernel-file=$(KERNEL) \
 		--phi-file=$(PHI_CONST) \
 		--out-dir=./data/conv_const_linear
@@ -179,7 +175,7 @@ run-conv-const-sigmoid: $(PHI_CONST) $(KERNEL)
 	mkdir -p ./data/conv_const_sigmoid
 	$(BIN) --use-convolution \
 		--T=300.0 --DT=1e-03 --NO=500 \
-		--gradient=sigmoid --U=$(U) --PSI=$(PSI) \
+		--gradient=sigmoid \
 		--kernel-file=$(KERNEL) \
 		--phi-file=$(PHI_CONST) \
 		--out-dir=./data/conv_const_sigmoid

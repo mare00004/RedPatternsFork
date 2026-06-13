@@ -164,8 +164,6 @@ class ModelParamsData:
 
     modelType: Literal["CONV", "TAYL"]
     gradientType: Literal["LINEAR", "SIGMOID"]
-    U: float
-    PSI: float
     alpha: float
     beta: float
     variant: ConvVariant | TaylVariant  # Tagged-union payload selected by `modelType`.
@@ -280,8 +278,6 @@ class RunData:
                         )
                     )
                 ),
-                U=float(model_attrs["U"]),
-                PSI=float(model_attrs["PSI"]),
                 alpha=float(model_attrs["alpha"]),
                 beta=float(model_attrs["beta"]),
                 variant=variant,
@@ -575,8 +571,6 @@ def cli_args_from_run_h5(
                 f"--T={f64(run_attrs['T'])}",
                 f"--DT={f64(run_attrs['DT'])}",
                 f"--NO={int(run_attrs['NO'])}",
-                f"--U={f64(model_attrs['U'])}",
-                f"--PSI={f64(model_attrs['PSI'])}",
             ]
         )
 

@@ -131,8 +131,6 @@ void writeConfig(hid_t file, const SimConfig *cfg) {
     } else {
         writeFixedStrAttr(g_model, "gradientType", "SIGMOID", 7);
     }
-    writeF64Attr(g_model, "U", cfg->model.U);
-    writeF64Attr(g_model, "PSI", cfg->model.PSI);
     writeF64Attr(g_model, "alpha", cfg->model.alpha);
     writeF64Attr(g_model, "beta", cfg->model.beta);
     writeStrAttr(g_model, "phiSource", strlen(cfg->model.initialPhiFile) > 0 ? cfg->model.initialPhiFile : "internal");

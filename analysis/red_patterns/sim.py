@@ -49,8 +49,6 @@ def build_cli_args(
     t_final: float,
     dt: float,
     save_every: int,
-    u_value: float,
-    psi_avg: float,
     nu: float,
     mu: float,
 ) -> list[str]:
@@ -62,8 +60,6 @@ def build_cli_args(
         f"--DT={dt}",
         f"--NO={save_every}",
         f"--gradient={gradient}",
-        f"--U={u_value}",
-        f"--PSI={psi_avg}",
         f"--phi-file={phi_path}",
         f"--out-dir={out_dir}",
     ]

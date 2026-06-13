@@ -215,9 +215,9 @@ def cell_sim_controls():
         },
         value="sigmoid",
     )
-    ui_t_final = mo.ui.number(start=0.1, step=0.1, value=1.0, label="T")
-    ui_dt = mo.ui.number(start=1e-5, step=1e-4, value=1e-3, label="DT")
-    ui_save_every = mo.ui.number(start=1, step=1, value=20, label="NO")
+    ui_t_final = mo.ui.number(start=0.1, step=0.1, value=1000.0, label="T")
+    ui_dt = mo.ui.number(start=1e-5, step=1e-4, value=1e-2, label="DT")
+    ui_save_every = mo.ui.number(start=1, step=1, value=500, label="NO")
     ui_run_button = mo.ui.run_button(label="Build inputs and run simulation")
     mo.vstack(
         [ui_mode, ui_gradient, ui_t_final, ui_dt, ui_save_every, ui_run_button],
@@ -294,8 +294,6 @@ def cell_run(
             t_final=float(ui_t_final.value),
             dt=float(ui_dt.value),
             save_every=int(ui_save_every.value),
-            u_value=float(kernel_cfg.U),
-            psi_avg=float(phi_cfg.psi_avg),
             nu=_nu,
             mu=_mu,
         )

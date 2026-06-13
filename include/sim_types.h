@@ -40,8 +40,6 @@ typedef struct {
 typedef struct {
     ModelType modelType;
     GradientType gradientType;
-    double U;
-    double PSI;
     double alpha;
     double beta;
     char initialPhiFile[256];

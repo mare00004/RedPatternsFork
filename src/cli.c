@@ -10,8 +10,6 @@ typedef struct {
     struct arg_dbl *T;
     struct arg_dbl *DT;
     struct arg_int *NO;
-    struct arg_dbl *U;
-    struct arg_dbl *PSI;
     struct arg_file *outDir;
     struct arg_file *phiFile;
     struct arg_str *gradient;
@@ -34,12 +32,6 @@ void setCommonArguments(CommonCLIArguments *args, SimConfig *cfg) {
         strncpy(cfg->model.initialPhiFile, args->phiFile->filename[0], sizeof(cfg->model.initialPhiFile) - 1);
         cfg->model.initialPhiFile[sizeof(cfg->model.initialPhiFile) - 1] = '\0';
     }
-    if (args->U->count > 0) {
-        cfg->model.U = args->U->dval[0];
-    }
-    if (args->PSI->count > 0) {
-        cfg->model.PSI = args->PSI->dval[0];
-    }
     if (args->gradient->count > 0) {
         char gradientTypeStr[textFieldSize];
         strncpy(gradientTypeStr, args->gradient->sval[0], textFieldSize - 1);
@@ -61,9 +53,6 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         arg_dbl0(NULL, "DT", "<double>", "time increment in seconds");
     struct arg_int *cli_NO =
         arg_int0(NULL, "NO", "<int>", "time steps between saves");
-    struct arg_dbl *cli_U = arg_dbl0(NULL, "U", "<double>", "RBC effective interaction energy in Joule");
-    struct arg_dbl *cli_PSI =
-        arg_dbl0(NULL, "PSI", "<double>", "RBC average volume fraction");
     struct arg_file *cli_outDir = arg_file0(
         "o",
         "out-dir",
@@ -77,8 +66,6 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         .T = cli_T,
         .DT = cli_DT,
         .NO = cli_NO,
-        .U = cli_U,
-        .PSI = cli_PSI,
         .outDir = cli_outDir,
         .phiFile = cli_phiFile,
         .gradient = cli_gradient,
@@ -86,7 +73,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
 
     // DEFAULT
     struct arg_end *endDefault = arg_end(20);
-    void *argtableDefault[] = { cli_help, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_outDir, cli_phiFile, endDefault };
+    void *argtableDefault[] = { cli_help, cli_T, cli_DT, cli_NO, cli_gradient, cli_outDir, cli_phiFile, endDefault };
     int nErrorsDefault;
 
     // CONVOLUTION
@@ -95,7 +82,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     struct arg_file *cli_kernelFile =
         arg_file1(NULL, "kernel-file", "<file>", "external HDF5 convolution kernel file");
     struct arg_end *endConv = arg_end(20);
-    void *argtableConv[] = { cli_help, cli_conv, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_outDir, cli_phiFile, cli_kernelFile, endConv };
+    void *argtableConv[] = { cli_help, cli_conv, cli_T, cli_DT, cli_NO, cli_gradient, cli_outDir, cli_phiFile, cli_kernelFile, endConv };
     int nErrorsConv;
 
     // TAYLOR
@@ -104,7 +91,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     struct arg_dbl *cli_NU = arg_dbl0(NULL, "NU", "<double>", "interaction nu");
     struct arg_dbl *cli_MU = arg_dbl0(NULL, "MU", "<double>", "interaction mu");
     struct arg_end *endTayl = arg_end(20);
-    void *argtableTayl[] = { cli_help, cli_tayl, cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_outDir, cli_phiFile, cli_NU, cli_MU, endTayl };
+    void *argtableTayl[] = { cli_help, cli_tayl, cli_T, cli_DT, cli_NO, cli_gradient, cli_outDir, cli_phiFile, cli_NU, cli_MU, endTayl };
     int nErrorsTayl;
 
     // UNIQUE ARGUMENTS (for freeing argtables)
@@ -116,8 +103,6 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         cli_DT,
         cli_NO,
         cli_gradient,
-        cli_U,
-        cli_PSI,
         cli_outDir,
         cli_phiFile,
         cli_kernelFile,
@@ -144,7 +129,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     nErrorsTayl = arg_parse(argc, argv, argtableTayl);
 
     if (cli_help->count > 0) {
-        void *argtableCommon[] = { cli_T, cli_DT, cli_NO, cli_gradient, cli_U, cli_PSI, cli_outDir, cli_phiFile, endDefault };
+        void *argtableCommon[] = { cli_T, cli_DT, cli_NO, cli_gradient, cli_outDir, cli_phiFile, endDefault };
         void *argsHelpConv[] = { cli_conv, cli_kernelFile, endConv };
         void *argsHelpTayl[] = { cli_tayl, cli_NU, cli_MU, endTayl };
 

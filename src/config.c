@@ -34,8 +34,6 @@ void setDefaults(SimConfig *c) {
         .model = {
             .modelType = CONV,
             .gradientType = LINEAR,
-            .U = 100e-18,
-            .PSI = 0.02,
             .alpha = 2.0e-05, // (a * V) / ZETA
             .beta = 7.4e23,   // (2 PI) / (ZETA * V)
             .initialPhiFile = "",
@@ -68,8 +66,6 @@ int printConfig(SimConfig *c) {
         printf("-> Using Taylor-Model:\n");
     }
     printf("-> Using %s gradient", (c->model.gradientType == LINEAR) ? "linear" : "sigmoid");
-    printf("\t-> U: %.5e\n", c->model.U);
-    printf("\t-> PSI: %.5e\n", c->model.PSI);
     if (strlen(c->model.initialPhiFile) > 0) {
         printf("\t-> initial phi file: %s\n", c->model.initialPhiFile);
     }
@@ -104,14 +100,6 @@ int deriveAndValidateOrDie(SimConfig *c) {
         closedir(dir);
     } else {
         fprintf(stderr, "%s is not a valid directory\n", c->run.outDir);
-        return -1;
-    }
-    if (c->model.PSI <= 0 || c->model.PSI >= 1) {
-        fprintf(stderr, "PSI needs to be between 0 and 1!\n");
-        return -1;
-    }
-    if (c->model.U <= 0) {
-        fprintf(stderr, "U needs to be positive\n");
         return -1;
     }
     if (!(c->model.gradientType == LINEAR || c->model.gradientType == SIGMOID)) {
