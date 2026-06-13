@@ -33,7 +33,7 @@ requirements = (UidDomain == "cs.uni-saarland.de") && (GPUs_Capability >= 7.0) &
 
 max_idle = 100
 
-should_transfer_files = IF_NEEDED
+should_transfer_files = YES
 when_to_transfer_output = ON_EXIT
 preserve_relative_paths = True
 

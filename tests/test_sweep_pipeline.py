@@ -180,12 +180,17 @@ touch "${out_dir}/run.h5"
         submit_text = (REPO_ROOT / "cluster" / "sweep.submit").read_text(
             encoding="utf-8"
         )
+        submit_wrapper = (REPO_ROOT / "cluster" / "submit-sweep.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("should_transfer_files = YES", submit_text)
         self.assertIn("queue run_id from $(RUN_IDS_FILE)", submit_text)
         self.assertIn("transfer_input_files = $(LAUNCH_SH),$(RUNS_JSONL)", submit_text)
         self.assertIn("arguments = $(run_id)", submit_text)
         self.assertIn("log = logs/$(run_id).log", submit_text)
         self.assertIn("output = logs/$(run_id).out", submit_text)
         self.assertIn("error = logs/$(run_id).err", submit_text)
+        self.assertIn('RUN_DIR="$(cd "${RUN_DIR}" && pwd -P)"', submit_wrapper)
 
 
 if __name__ == "__main__":

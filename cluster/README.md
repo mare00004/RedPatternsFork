@@ -56,11 +56,12 @@ python3 /opt/red-patterns/sweep/run_one.py --runs-jsonl runs.jsonl --run-id <run
 - generating `phi.h5` for every run
 - generating `kernel.h5` for convolution runs only
 - translating the payload into the final simulation CLI
-- running the simulation in the job working directory
+- running the simulation in the per-job HTCondor scratch working directory
 - writing `command.txt`, `run_spec.json`, and `run.h5`
 - treating generated `phi.h5` and `kernel.h5` as scratch-only inputs
 
-HTCondor remaps those returned artifacts into `results/<run_id>/`.
+HTCondor transfers `runs.jsonl` and `launch.sh` into that scratch directory, then
+remaps the returned artifacts into `results/<run_id>/` on the submit node.
 
 - `results/<run_id>/command.txt`
 - `results/<run_id>/run_spec.json`

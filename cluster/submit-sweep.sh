@@ -11,6 +11,7 @@ if [[ ! -d "${RUN_DIR}" ]]; then
 	echo "${RUN_DIR} does not exist!" >&2
 	exit 1
 fi
+RUN_DIR="$(cd "${RUN_DIR}" && pwd -P)"
 
 RUNS_JSONL="${RUN_DIR}/runs.jsonl"
 RUN_IDS_FILE="${RUN_DIR}/run_ids.txt"
