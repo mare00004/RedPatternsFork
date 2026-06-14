@@ -514,7 +514,7 @@ def find_peaks(
     peak_indices, _ = _scipy_find_peaks(psi, prominence=0.1)
 
     peak_indices = peak_indices[
-        1 if z[peak_indices[0]] < 1 else 0 : -1 if z[peak_indices[-1]] > 6 else None
+        1 if z[peak_indices[0]] < 1 else 0 : -1 if z[peak_indices[-1]] > 5.8 else None
     ]
 
     peak_z = z[peak_indices]
