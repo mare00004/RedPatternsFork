@@ -262,11 +262,11 @@ def _(alt, format_label, mo, valid_df):
                 title="μ",
                 sort=alt.SortField(field="μ", order="ascending"),
             ),
-            color=alt.Color(
-                "wavelength_cm:Q",
-                title="λ [cm]",
-                scale=alt.Scale(scheme="viridis"),
-            ),
+             color=alt.Color(
+                 "wavelength_cm:Q",
+                 title="λ [cm]",
+                 scale=alt.Scale(type="log", scheme="viridis"),
+             ),
             opacity=alt.condition(click, alt.value(1.0), alt.value(0.45)),
             tooltip=[
                 alt.Tooltip("NU:Q", format=".3e"),
