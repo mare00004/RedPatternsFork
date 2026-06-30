@@ -12,18 +12,21 @@
 
 import marimo
 
-__generated_with = "0.23.9"
-app = marimo.App(width="medium")
+__generated_with = "0.23.11"
+app = marimo.App(width="wide")
 
 with app.setup:
+    import matplotlib.pyplot as plt
+    import numpy as np
     import subprocess
     import sys
     import tempfile
     import time
+    from matplotlib.ticker import MaxNLocator
     from pathlib import Path
 
     import marimo as mo
-    from wigglystuff import ProgressBar
+    from wigglystuff import PlaySlider, ProgressBar
 
     NOTEBOOK_FILE = (
         Path(__file__).resolve()
@@ -50,6 +53,7 @@ with app.setup:
         write_kernel_h5,
     )
     from red_patterns.phi import (
+        PhiResult,
         compute_phi,
         make_phi_ui,
         phi_config_from_ui,
@@ -370,44 +374,424 @@ def _():
 
 
 @app.cell
-def cell_psi_plot(run_h5):
+def cell_inspect_run(run_h5):
     mo.stop(
         run_h5 is None or not run_h5.exists(),
         mo.md("Run a simulation to inspect the resulting `run.h5`."),
     )
-    run = RunData.from_h5(run_h5, load_fields=False)
-    plot_psi(run, vmin=0.0, vmax=100.0, cmap=get_rbc_cmap(), title=run_h5.parent.name)
-    return (run,)
+    inspect_run = RunData.from_h5(run_h5, load_fields=False)
+    inspect_run_md = mo.md(f"**Active file:** `{run_h5}`")
+    return inspect_run, inspect_run_md
 
 
 @app.cell
-def cell_peaks(run):
-    z = run.z * 100  # m -> cm
-    psi = run.load_psi()[-1] * 100  # last timestep, fraction -> %
-    peak_z, peak_psi, peak_spacing, peak_dev = find_peaks(z, psi)
+def _(inspect_run):
+    inspect_psi = np.asarray(inspect_run.load_psi(), dtype=np.float64)
+    inspect_time = np.asarray(inspect_run.time, dtype=np.float64)
+    inspect_z = np.asarray(inspect_run.z, dtype=np.float64)
+    return inspect_psi, inspect_time, inspect_z
 
-    import matplotlib.pyplot as _plt
 
-    _fig, _ax = _plt.subplots(constrained_layout=True)
-    _ax.plot(z, psi, label=r"$\psi(z)$")
-    _ax.plot(peak_z, peak_psi, "x", color="red", label="Detected peaks")
+@app.cell
+def _(inspect_run):
+    fft_time_slider = mo.ui.anywidget(
+        PlaySlider(
+            value=0,
+            min_value=0,
+            max_value=inspect_run.n_saved - 1,
+            step=1,
+            interval_ms=200,
+            loop=False,
+            width=480,
+        )
+    )
+    return (fft_time_slider,)
+
+
+@app.cell
+def _(inspect_z):
+    fft_z_index_range = mo.ui.range_slider(
+        start=0,
+        stop=inspect_z.shape[0] - 1,
+        step=1,
+        value=[0, inspect_z.shape[0] - 1],
+        debounce=True,
+        show_value=True,
+        full_width=True,
+        label="FFT z-index range",
+    )
+    return (fft_z_index_range,)
+
+
+@app.cell
+def _(fft_time_slider):
+    fft_time_index = int(fft_time_slider.value["value"])
+    return (fft_time_index,)
+
+
+@app.cell
+def _(fft_z_index_range):
+    fft_z_start_index, fft_z_stop_index = (
+        int(_value) for _value in fft_z_index_range.value
+    )
+    return fft_z_start_index, fft_z_stop_index
+
+
+@app.cell
+def _(fft_z_start_index, fft_z_stop_index, inspect_psi, inspect_z):
+    _z_slice = slice(fft_z_start_index, fft_z_stop_index + 1)
+    fft_z = np.asarray(inspect_z[_z_slice], dtype=np.float64)
+    fft_n_points = int(fft_z.shape[0])
+
+    mo.stop(
+        fft_n_points < 2,
+        mo.md("Select at least two z indices for the Fourier transform."),
+    )
+
+    _psi_fft = np.asarray(inspect_psi[:, _z_slice], dtype=np.float64)
+    _delta_psi = _psi_fft - _psi_fft.mean(axis=1, keepdims=True)
+    fft_coeffs = np.fft.rfft(_delta_psi, axis=1)
+    fft_amplitudes = np.abs(fft_coeffs)
+    fft_phases = np.angle(fft_coeffs)
+
+    _dz = float(fft_z[1] - fft_z[0])
+    fft_mode_numbers = np.arange(fft_coeffs.shape[1], dtype=int)
+    fft_spatial_freqs = np.fft.rfftfreq(fft_z.shape[0], d=_dz)
+    fft_wavenumbers = 2.0 * np.pi * fft_spatial_freqs
+    fft_wavelengths = np.full(fft_spatial_freqs.shape, np.inf, dtype=np.float64)
+    _nonzero_modes = fft_spatial_freqs > 0.0
+    fft_wavelengths[_nonzero_modes] = 1.0 / fft_spatial_freqs[_nonzero_modes]
+    return (
+        fft_amplitudes,
+        fft_coeffs,
+        fft_mode_numbers,
+        fft_n_points,
+        fft_phases,
+        fft_spatial_freqs,
+        fft_wavelengths,
+        fft_wavenumbers,
+        fft_z,
+    )
+
+
+@app.cell
+def _(fft_coeffs):
+    _fft_max_mode = fft_coeffs.shape[1] - 1
+    mo.stop(
+        _fft_max_mode < 1,
+        mo.md("The selected run does not contain any non-zero Fourier modes."),
+    )
+    fft_mode_selector = mo.ui.slider(
+        start=1,
+        stop=_fft_max_mode,
+        step=1,
+        value=min(1, _fft_max_mode),
+        label="Fourier mode n",
+    )
+    return (fft_mode_selector,)
+
+
+@app.cell
+def _(fft_mode_selector):
+    fft_selected_mode = int(fft_mode_selector.value)
+    return (fft_selected_mode,)
+
+
+@app.cell
+def _(
+    fft_n_points,
+    fft_z,
+    fft_z_index_range,
+    fft_z_start_index,
+    fft_z_stop_index,
+    inspect_z,
+):
+    fft_z_range_panel = mo.vstack(
+        [
+            mo.md("### FFT z-Index Range"),
+            fft_z_index_range,
+            mo.md(
+                f"Indices `{fft_z_start_index}` to `{fft_z_stop_index}`  \n"
+                + f"Physical range `{100.0 * fft_z[0]:.6g}` to `{100.0 * fft_z[-1]:.6g}` cm  \n"
+                + f"Grid points used in FFT `{fft_n_points}` of `{inspect_z.shape[0]}`"
+            ),
+        ],
+        align="stretch",
+    )
+    return (fft_z_range_panel,)
+
+
+@app.cell
+def _(fft_time_index, fft_time_slider, inspect_run, inspect_time):
+    fft_time_panel = mo.vstack(
+        [
+            mo.md("### Time Step"),
+            fft_time_slider,
+            mo.md(
+                f"Step `{fft_time_index}` of `{inspect_run.n_saved - 1}`  \n"
+                + f"Time `{inspect_time[fft_time_index]:.6g}` s"
+            ),
+        ],
+        align="stretch",
+    )
+    return (fft_time_panel,)
+
+
+@app.cell
+def _(
+    fft_amplitudes,
+    fft_mode_selector,
+    fft_selected_mode,
+    fft_spatial_freqs,
+    fft_wavelengths,
+):
+    _wavelength_text = (
+        r"$\infty$"
+        if not np.isfinite(fft_wavelengths[fft_selected_mode])
+        else f"{100.0 * fft_wavelengths[fft_selected_mode]:.6g} cm"
+    )
+    fft_mode_panel = mo.vstack(
+        [
+            mo.md("### Mode Selection"),
+            fft_mode_selector,
+            mo.md(
+                f"Mode `{fft_selected_mode}`  \n"
+                + f"Spatial frequency `{fft_spatial_freqs[fft_selected_mode]:.6g}` m$^{{-1}}$  \n"
+                + f"Wavelength `{_wavelength_text}`  \n"
+                + f"Stored coefficient series shape `{fft_amplitudes[:, fft_selected_mode].shape}`"
+            ),
+        ],
+        align="stretch",
+    )
+    return (fft_mode_panel,)
+
+
+@app.cell
+def _(fft_time_index, inspect_run, inspect_time):
+    _phi_frame = inspect_run.phi_frame(fft_time_index)
+    _phi_figure = plot_phi(
+        PhiResult(
+            rho=inspect_run.rho,
+            z=inspect_run.z,
+            phi_values=_phi_frame,
+        )
+    )
+    _phi_figure.axes[0].set_title(
+        rf"$\varphi(\rho, z)$ at $t={inspect_time[fft_time_index]:.3f}\,\mathrm{{s}}$"
+    )
+    phi_panel = mo.vstack(
+        [
+            mo.md("### Phi(z, rho)"),
+            mo.as_html(_phi_figure),
+        ],
+        align="stretch",
+    )
+    return (phi_panel,)
+
+
+@app.cell
+def _(
+    fft_time_index,
+    fft_z_start_index,
+    fft_z_stop_index,
+    inspect_run,
+    inspect_time,
+    inspect_z,
+    run_h5,
+):
+    _psi_figure = plot_psi(
+        inspect_run,
+        vmin=0.0,
+        vmax=100.0,
+        cmap=get_rbc_cmap(),
+        title=run_h5.parent.name,
+    )
+    _psi_figure.axes[0].axvline(
+        inspect_time[fft_time_index],
+        color="white",
+        linestyle="--",
+        linewidth=1.0,
+        alpha=0.9,
+    )
+    _psi_figure.axes[0].axhline(
+        100.0 * inspect_z[fft_z_start_index],
+        color="#fbbf24",
+        linestyle="--",
+        linewidth=1.0,
+        alpha=0.9,
+    )
+    _psi_figure.axes[0].axhline(
+        100.0 * inspect_z[fft_z_stop_index],
+        color="#fbbf24",
+        linestyle="--",
+        linewidth=1.0,
+        alpha=0.9,
+    )
+    psi_panel = mo.vstack(
+        [
+            mo.md("### Psi(z, t)"),
+            mo.as_html(_psi_figure),
+        ],
+        align="stretch",
+    )
+    return (psi_panel,)
+
+
+@app.cell
+def _(fft_amplitudes, fft_mode_numbers, fft_selected_mode, fft_time_index):
+    _fft_fig, _fft_ax = plt.subplots(constrained_layout=True)
+    _fft_ax.plot(
+        fft_mode_numbers[1:],
+        fft_amplitudes[fft_time_index, 1:],
+        color="#2563eb",
+        linewidth=1.5,
+    )
+    _fft_ax.scatter(
+        [fft_selected_mode],
+        [fft_amplitudes[fft_time_index, fft_selected_mode]],
+        color="#dc2626",
+        zorder=3,
+        label=f"mode {fft_selected_mode}",
+    )
+    _fft_ax.set_xlabel("Mode number n")
+    _fft_ax.set_ylabel(r"$A_n(t) = |\delta\hat{\psi}_n(t)|$")
+    _fft_ax.set_title(rf"FFT amplitude at step {fft_time_index}")
+    _fft_ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    _fft_ax.legend()
+    fft_panel = mo.vstack(
+        [
+            mo.md("### FFT Amplitude"),
+            mo.ui.matplotlib(_fft_ax),
+        ],
+        align="stretch",
+    )
+    return (fft_panel,)
+
+
+@app.cell
+def _(fft_amplitudes, fft_selected_mode, fft_time_index, inspect_time):
+    fft_mode_amplitude = np.asarray(
+        fft_amplitudes[:, fft_selected_mode], dtype=np.float64
+    )
+    _safe_amplitude = np.clip(fft_mode_amplitude, np.finfo(np.float64).tiny, None)
+    _ln_amplitude = _safe_amplitude
+
+    _growth_fig, _growth_ax = plt.subplots(constrained_layout=True)
+    _growth_ax.plot(inspect_time, _ln_amplitude, color="#059669", linewidth=1.5)
+    _growth_ax.scatter(
+        [inspect_time[fft_time_index]],
+        [_ln_amplitude[fft_time_index]],
+        color="#dc2626",
+        zorder=3,
+        label=f"mode {fft_selected_mode} at step {fft_time_index}",
+    )
+    _growth_ax.set_xlabel(r"$t\;[s]$")
+    _growth_ax.set_ylabel(r"$A_n(t)$")
+    _growth_ax.set_title(rf"Growth of mode {fft_selected_mode}")
+    _growth_ax.legend()
+
+    fft_growth_panel = mo.vstack(
+        [
+            mo.md("### Growth Rate"),
+            mo.ui.matplotlib(_growth_ax),
+        ],
+        align="stretch",
+    )
+    return fft_growth_panel, fft_mode_amplitude
+
+
+@app.cell(hide_code=True)
+def _(
+    fft_coeffs,
+    fft_growth_panel,
+    fft_mode_amplitude,
+    fft_mode_panel,
+    fft_n_points,
+    fft_panel,
+    fft_phases,
+    fft_selected_mode,
+    fft_spatial_freqs,
+    fft_time_index,
+    fft_time_panel,
+    fft_wavenumbers,
+    fft_z,
+    fft_z_range_panel,
+    fft_z_start_index,
+    fft_z_stop_index,
+    inspect_run_md,
+    phi_panel,
+    psi_panel,
+):
+    _coefficient_summary = mo.md(
+        f"Stored complex Fourier coefficients with shape `{fft_coeffs.shape}`.  \n"
+        + f"FFT window uses z indices `{fft_z_start_index}:{fft_z_stop_index}` inclusive, i.e. `{100.0 * fft_z[0]:.6g}` to `{100.0 * fft_z[-1]:.6g}` cm over `{fft_n_points}` grid points.  \n"
+        + f"Selected mode `{fft_selected_mode}` at step `{fft_time_index}`:  \n"
+        + f"`|coeff| = {fft_mode_amplitude[fft_time_index]:.6g}`, `phase = {fft_phases[fft_time_index, fft_selected_mode]:.6g}` rad, `k = {fft_wavenumbers[fft_selected_mode]:.6g}` m$^{{-1}}$, `nu = {fft_spatial_freqs[fft_selected_mode]:.6g}` m$^{{-1}}$."
+    )
+
+    mo.vstack(
+        [
+            inspect_run_md,
+            mo.hstack([phi_panel, psi_panel], align="start", justify="start", gap=1),
+            mo.hstack(
+                [fft_panel, fft_growth_panel],
+                align="start",
+                justify="start",
+                gap=1,
+            ),
+            mo.hstack(
+                [fft_time_panel, fft_mode_panel, fft_z_range_panel],
+                align="start",
+                justify="start",
+                gap=1,
+            ),
+            _coefficient_summary,
+        ],
+        align="stretch",
+        gap=1,
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### Peak Detection
+    """)
+    return
+
+
+@app.cell
+def cell_peaks(inspect_run):
+    _z_cm = inspect_run.z * 100.0
+    _psi_last_pct = inspect_run.load_psi()[-1] * 100.0
+    _peak_z, _peak_psi, _peak_spacing, _peak_dev = find_peaks(_z_cm, _psi_last_pct)
+
+    _fig, _ax = plt.subplots(constrained_layout=True)
+    _ax.plot(_z_cm, _psi_last_pct, label=r"$\psi(z)$")
+    _ax.plot(_peak_z, _peak_psi, "x", color="red", label="Detected peaks")
     _ax.set_xlabel(r"$z \; [cm]$")
     _ax.set_ylabel(r"$\psi \; [\%]$")
     _ax.set_title("Peak detection")
     _ax.legend()
 
-    _freq = 1.0 / peak_spacing
-    _freq_dev = peak_dev / peak_spacing**2  # error propagation
+    _freq = 1.0 / _peak_spacing
+    _freq_dev = _peak_dev / _peak_spacing**2  # error propagation
     _table = mo.md(
         f"""
     | Quantity | Value |
     |----------|-------|
-    | **Number of peaks** | {len(peak_z)} |
-    | **λ** (avg. spacing) | {peak_spacing:.4f} ± {peak_dev:.4f} cm |
+    | **Number of peaks** | {len(_peak_z)} |
+    | **λ** (avg. spacing) | {_peak_spacing:.4f} ± {_peak_dev:.4f} cm |
     | **ν** (frequency) | {_freq:.4f} ± {_freq_dev:.4f} cm⁻¹ |
     """
     )
     mo.vstack([mo.as_html(_fig), _table])
+    return
+
+
+@app.cell
+def _():
     return
 
 
