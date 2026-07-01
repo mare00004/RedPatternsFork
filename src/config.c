@@ -19,6 +19,10 @@ void setDefaults(SimConfig *c) {
     double sysL = (double)(M - 1) * fineDZ;
     double DZ = sysL / ((double)N - 1);
 
+    StoreBitMap store = 0;
+    BITMAP_ADD(store, PHI);
+    BITMAP_ADD(store, PSI);
+
     *c = (SimConfig){
         .run = {
             .N = N,
@@ -29,6 +33,7 @@ void setDefaults(SimConfig *c) {
             .fineDZ = fineDZ,
             .sysL = sysL,
             .NO = 2000,
+            .store = store,
             .outDir = "./",
         },
         .model = {

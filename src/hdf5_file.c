@@ -411,26 +411,39 @@ int ts_create(
     hid_t g_fields = H5Gcreate2(w->file, "fields", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
 
     /* /fields/phi -> extendable along T (T, N, N) of float64 */
-    w->dsetPhi = createExtendableF64Dataset(g_fields, "phi", 3, (hsize_t[]){ 0, N, N }, (hsize_t[]){ H5S_UNLIMITED, N, N }, (hsize_t[]){ 1, N, N });
-    writeStrAttr(w->dsetPhi, "long_name", "time series of specific volume fraction of RBCs");
-    writeStrAttr(w->dsetPhi, "units", "volume fractoin (unit-less)");
-    writeStrAttr(w->dsetPhi, "coordinates", "time rho z");
-    writeStrAttr(w->dsetPhi, "storage_order", "phi[i*N + j] = phi(rho_i, z_j)");
+    if (BITMAP_CONTAINS(cfg->run.store, PHI)) {
+        w->dsetPhi = createExtendableF64Dataset(g_fields, "phi", 3, (hsize_t[]){ 0, N, N }, (hsize_t[]){ H5S_UNLIMITED, N, N }, (hsize_t[]){ 1, N, N });
+        writeStrAttr(w->dsetPhi, "long_name", "time series of specific volume fraction of RBCs");
+        writeStrAttr(w->dsetPhi, "units", "volume fractoin (unit-less)");
+        writeStrAttr(w->dsetPhi, "coordinates", "time rho z");
+        writeStrAttr(w->dsetPhi, "storage_order", "phi[i*N + j] = phi(rho_i, z_j)");
+    }
 
     /* /fields/psi -> extendable along T (T, N) of float64 */
-    w->dsetPsi = createExtendableF64Dataset(g_fields, "psi", 2, (hsize_t[]){ 0, N }, (hsize_t[]){ H5S_UNLIMITED, N }, (hsize_t[]){ 1, N });
-    writeStrAttr(w->dsetPsi, "long_name", "time series of total volume fraction of RBCs");
-    writeStrAttr(w->dsetPsi, "units", "total volume fraction (unit-less)");
-    writeStrAttr(w->dsetPsi, "coordinates", "time z");
+    if (BITMAP_CONTAINS(cfg->run.store, PSI)) {
+        w->dsetPsi = createExtendableF64Dataset(g_fields, "psi", 2, (hsize_t[]){ 0, N }, (hsize_t[]){ H5S_UNLIMITED, N }, (hsize_t[]){ 1, N });
+        writeStrAttr(w->dsetPsi, "long_name", "time series of total volume fraction of RBCs");
+        writeStrAttr(w->dsetPsi, "units", "total volume fraction (unit-less)");
+        writeStrAttr(w->dsetPsi, "coordinates", "time z");
+    }
+
+    /* /fields/percoll -> extendable along T (T, N) of float64 */
+    if (BITMAP_CONTAINS(cfg->run.store, PERCOLL)) {
+        w->dsetPercoll = createExtendableF64Dataset(g_fields, "percoll", 2, (hsize_t[]){ 0, N }, (hsize_t[]){ H5S_UNLIMITED, N }, (hsize_t[]){ 1, N });
+        writeStrAttr(w->dsetPercoll, "long_name", "time series of percoll density");
+        // TODO: should be g/L
+        writeStrAttr(w->dsetPercoll, "units", "???");
+        writeStrAttr(w->dsetPercoll, "coordinates", "time z");
+    }
 
     return 0;
 }
 
-int ts_append(TSWriter *w, double t, const double *phi, const double *psi) {
+int ts_append(TSWriter *w, double t, StoreBitMap store, const double *phi, const double *psi, const double *percoll) {
     const hsize_t N = w->N;
 
-    // Append one phi NxN array
-    {
+    if (BITMAP_CONTAINS(store, PHI)) {
+        // Append one phi NxN array
         hsize_t newSize[3] = { w->t + 1, N, N };
         if (H5Dset_extent(w->dsetPhi, newSize) < 0)
             return -1;
@@ -452,8 +465,8 @@ int ts_append(TSWriter *w, double t, const double *phi, const double *psi) {
         H5Sclose(fspace);
     }
 
-    // Append one psi N array
-    {
+    if (BITMAP_CONTAINS(store, PSI)) {
+        // Append one psi N array
         hsize_t newSize[2] = { w->t + 1, N };
         if (H5Dset_extent(w->dsetPsi, newSize) < 0)
             return -1;
@@ -467,6 +480,30 @@ int ts_append(TSWriter *w, double t, const double *phi, const double *psi) {
         hid_t mspace = H5Screate_simple(2, mdims, NULL);
 
         if (H5Dwrite(w->dsetPsi, H5T_NATIVE_DOUBLE, mspace, fspace, H5P_DEFAULT, psi)) {
+            H5Sclose(mspace);
+            H5Sclose(fspace);
+            return -1;
+        }
+        H5Sclose(mspace);
+        H5Sclose(fspace);
+    }
+
+    if (BITMAP_CONTAINS(store, PERCOLL)) {
+        printf("Percoll bitmap found\n");
+        // Append one percoll N array
+        hsize_t newSize[2] = { w->t + 1, N };
+        if (H5Dset_extent(w->dsetPercoll, newSize) < 0)
+            return -1;
+
+        hid_t fspace = H5Dget_space(w->dsetPercoll);
+        hsize_t start[2] = { w->t, 0 };
+        hsize_t count[2] = { 1, N };
+        H5Sselect_hyperslab(fspace, H5S_SELECT_SET, start, NULL, count, NULL);
+
+        hsize_t mdims[2] = { 1, N };
+        hid_t mspace = H5Screate_simple(2, mdims, NULL);
+
+        if (H5Dwrite(w->dsetPercoll, H5T_NATIVE_DOUBLE, mspace, fspace, H5P_DEFAULT, percoll)) {
             H5Sclose(mspace);
             H5Sclose(fspace);
             return -1;

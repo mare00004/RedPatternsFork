@@ -17,6 +17,7 @@ typedef struct {
     struct arg_file *outDir;
     struct arg_file *phiFile;
     struct arg_str *gradient;
+    struct arg_str *store;
 } CommonCLIArguments;
 
 void setCommonArguments(CommonCLIArguments *args, SimConfig *cfg) {
@@ -37,12 +38,25 @@ void setCommonArguments(CommonCLIArguments *args, SimConfig *cfg) {
         cfg->model.initialPhiFile[sizeof(cfg->model.initialPhiFile) - 1] = '\0';
     }
     if (args->gradient->count > 0) {
-        char gradientTypeStr[textFieldSize];
-        strncpy(gradientTypeStr, args->gradient->sval[0], textFieldSize - 1);
-        if (strcmp(gradientTypeStr, "linear") == 0) {
+        if (strcmp(args->gradient->sval[0], "linear") == 0) {
             cfg->model.gradientType = LINEAR;
         } else if (strcmp(args->gradient->sval[0], "sigmoid") == 0) {
             cfg->model.gradientType = SIGMOID;
+        }
+    }
+    if (args->store->count > 0) {
+        for (int i = 0; i < args->store->count; i++) {
+            char const *str = args->store->sval[i];
+            if (strcmp(str, "phi") == 0) {
+                BITMAP_ADD(cfg->run.store, PHI);
+            }
+            if (strcmp(str, "psi") == 0) {
+                BITMAP_ADD(cfg->run.store, PSI);
+            }
+            if (strcmp(str, "percoll") == 0) {
+                printf("Percoll bitmap set\n");
+                BITMAP_ADD(cfg->run.store, PERCOLL);
+            }
         }
     }
 }
@@ -65,6 +79,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     struct arg_file *cli_phiFile =
         arg_file1(NULL, "phi-file", "<file>", "initial phi file");
     struct arg_str *cli_gradient = arg_str0(NULL, "gradient", "linear|sigmoid", "Pressure gradient");
+    struct arg_str *cli_store = arg_strn("s", "store", "phi|psi|percoll", 0, 3, "Arrays to store in HDF5 out file");
 
     CommonCLIArguments commonArgs = {
         .T = cli_T,
@@ -73,6 +88,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         .outDir = cli_outDir,
         .phiFile = cli_phiFile,
         .gradient = cli_gradient,
+        .store = cli_store,
     };
 
     // TODO:
@@ -87,7 +103,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     struct arg_file *cli_kernelFile =
         arg_file1(NULL, "kernel-file", "<file>", "external HDF5 convolution kernel file");
     struct arg_end *endConv = arg_end(20);
-    void *argtableConv[] = { cli_help, cli_conv, cli_T, cli_DT, cli_NO, cli_gradient, cli_outDir, cli_phiFile, cli_kernelFile, endConv };
+    void *argtableConv[] = { cli_help, cli_conv, cli_T, cli_DT, cli_NO, cli_gradient, cli_store, cli_outDir, cli_phiFile, cli_kernelFile, endConv };
     int nErrorsConv;
 
     // TAYLOR - Options that are only valid for the taylor branch
@@ -96,7 +112,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     struct arg_dbl *cli_NU = arg_dbl0(NULL, "NU", "<double>", "interaction nu");
     struct arg_dbl *cli_MU = arg_dbl0(NULL, "MU", "<double>", "interaction mu");
     struct arg_end *endTayl = arg_end(20);
-    void *argtableTayl[] = { cli_help, cli_tayl, cli_T, cli_DT, cli_NO, cli_gradient, cli_outDir, cli_phiFile, cli_NU, cli_MU, endTayl };
+    void *argtableTayl[] = { cli_help, cli_tayl, cli_T, cli_DT, cli_NO, cli_gradient, cli_store, cli_outDir, cli_phiFile, cli_NU, cli_MU, endTayl };
     int nErrorsTayl;
 
     // UNIQUE ARGUMENTS - for freeing argtables
@@ -108,6 +124,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         cli_DT,
         cli_NO,
         cli_gradient,
+        cli_store,
         cli_outDir,
         cli_phiFile,
         cli_kernelFile,
@@ -134,7 +151,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     nErrorsTayl = arg_parse(argc, argv, argtableTayl);
 
     if (cli_help->count > 0) {
-        void *argtableCommon[] = { cli_T, cli_DT, cli_NO, cli_gradient, cli_outDir, cli_phiFile, endDefault };
+        void *argtableCommon[] = { cli_T, cli_DT, cli_NO, cli_gradient, cli_store, cli_outDir, cli_phiFile, endDefault };
         void *argsHelpConv[] = { cli_conv, cli_kernelFile, endConv };
         void *argsHelpTayl[] = { cli_tayl, cli_NU, cli_MU, endTayl };
 

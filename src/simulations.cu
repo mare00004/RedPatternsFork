@@ -176,7 +176,7 @@ int runSim(SimConfig &cfg) {
 
     std::vector<double> h_J(N * N);
     std::vector<double> h_dJ(N * N);
-    std::vector<double> h_percoll(N);
+    std::vector<double> h_percoll(numZCells);
     std::vector<double> h_gradWing(N);
 
     printf("Allocating device memory...\n");
@@ -411,8 +411,12 @@ int runSim(SimConfig &cfg) {
             // retrieve data from GPU mem
             checkCuda(cudaMemcpy(h_phi.data(), d_phi, TO_BYTES(numPhiPoints), cudaMemcpyDeviceToHost));
             checkCuda(cudaMemcpy(h_psi.data(), d_psi, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
+            // TODO: Might be doing unnecessary work
+            checkCuda(cudaMemcpy(h_percoll.data(), d_percoll, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
+            checkCuda(cudaMemcpy(h_percoll.data(), d_gradWing, TO_BYTES(30), cudaMemcpyDeviceToHost));                            // copies to h_percoll[0..29]
+            checkCuda(cudaMemcpy(&h_percoll[numZCells - 30], &d_gradWing[numZCells - 30], TO_BYTES(30), cudaMemcpyDeviceToHost)); // copies to h_percoll[numZCells-30..numZCells-1]
 
-            if (ts_append(&w, savedTime, h_phi.data(), h_psi.data()) != 0) {
+            if (ts_append(&w, savedTime, cfg.run.store, h_phi.data(), h_psi.data(), h_percoll.data()) != 0) {
                 fprintf(stderr, "Failed to append timestep data to %s\n", outFilePath);
                 cleanup();
                 return failRun("Failed to append timestep data", currentStep, 0.0, 0.0, savedTime);

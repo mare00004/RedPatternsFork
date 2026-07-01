@@ -62,6 +62,9 @@ def build_cli_args(
         f"--gradient={gradient}",
         f"--phi-file={phi_path}",
         f"--out-dir={out_dir}",
+        "--store=phi",
+        "--store=psi",
+        "--store=percoll",
     ]
     if mode == "Taylor":
         args.extend([f"--NU={nu}", f"--MU={mu}"])

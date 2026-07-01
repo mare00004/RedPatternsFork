@@ -368,8 +368,29 @@ def cell_run(
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    ## 4. Inspect the result
+    ## 4. Percoll Field Inspection
     """)
+    return
+
+
+@app.cell
+def cell_check_perco(fft_time_index, inspect_z, run_h5):
+    import h5py
+    perco_path = Path(run_h5)
+    mo.stop(predicate=not perco_path.exists(), output=f"{perco_path} does not exist.")
+    with h5py.File(perco_path, "r") as f:
+        P0 = 1100.0
+        perco_data = P0 - np.array(f["/fields/percoll/"])
+
+    def plot_perco(t_idx):
+        plt.figure()
+        plt.plot(inspect_z, perco_data[t_idx, :])
+        plt.xlabel("$z$ [cm]")
+        plt.ylabel("Percoll field")
+        plt.title("Perco field vs z")
+        return mo.ui.matplotlib(plt.gca())
+
+    plot_perco(fft_time_index)
     return
 
 

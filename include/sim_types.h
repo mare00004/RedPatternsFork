@@ -13,6 +13,21 @@ typedef enum {
     SIGMOID = 1,
 } GradientType;
 
+typedef enum {
+    PHI,
+    PSI,
+    PERCOLL,
+    NUM_STORE_TYPES,
+} StoreType;
+
+#include <stdint.h>
+
+typedef uint8_t StoreBitMap;
+
+#define BITMAP_ADD(set, e) ((set) |= (1ULL << (e)))
+#define BITMAP_REMOVE(set, e) ((set) &= ~(1ULL << (e)))
+#define BITMAP_CONTAINS(set, e) (((set) >> (e)) & 1ULL)
+
 typedef struct {
     int N;
     int NT;
@@ -22,6 +37,7 @@ typedef struct {
     double fineDZ;
     double sysL;
     int NO;
+    StoreBitMap store;
     char outDir[256];
 } RunParams;
 
