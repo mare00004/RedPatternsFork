@@ -2,6 +2,10 @@
 #include "sim_types.h"
 #include <string.h>
 
+#define STRINGIFY2(x) #x
+#define STRINGIFY(x) STRINGIFY2(x)
+#define FIELD_WIDTH 30
+
 /* TODO:
  * - Do some actual agrument validation
  */
@@ -71,12 +75,13 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         .gradient = cli_gradient,
     };
 
-    // DEFAULT
+    // TODO:
+    // DEFAULT - ???
     struct arg_end *endDefault = arg_end(20);
     void *argtableDefault[] = { cli_help, cli_T, cli_DT, cli_NO, cli_gradient, cli_outDir, cli_phiFile, endDefault };
     int nErrorsDefault;
 
-    // CONVOLUTION
+    // CONVOLUTION - Options that are only valid for the convolution branch
     struct arg_lit *cli_conv =
         arg_lit1("c", "use-convolution", "use convolution integral");
     struct arg_file *cli_kernelFile =
@@ -85,7 +90,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     void *argtableConv[] = { cli_help, cli_conv, cli_T, cli_DT, cli_NO, cli_gradient, cli_outDir, cli_phiFile, cli_kernelFile, endConv };
     int nErrorsConv;
 
-    // TAYLOR
+    // TAYLOR - Options that are only valid for the taylor branch
     struct arg_lit *cli_tayl =
         arg_lit1("t", "use-taylor", "use taylor approximation");
     struct arg_dbl *cli_NU = arg_dbl0(NULL, "NU", "<double>", "interaction nu");
@@ -94,7 +99,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     void *argtableTayl[] = { cli_help, cli_tayl, cli_T, cli_DT, cli_NO, cli_gradient, cli_outDir, cli_phiFile, cli_NU, cli_MU, endTayl };
     int nErrorsTayl;
 
-    // UNIQUE ARGUMENTS (for freeing argtables)
+    // UNIQUE ARGUMENTS - for freeing argtables
     void *argtableUnique[] = {
         cli_help,
         cli_conv,
@@ -152,13 +157,13 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
 
         printf("\n");
         printf("COMMON:\n");
-        arg_print_glossary(stdout, argtableCommon, "\t%-25s %s\n");
+        arg_print_glossary(stdout, argtableCommon, "\t%-" STRINGIFY(FIELD_WIDTH) "s %s\n");
 
         printf("CONVOLUTION:\n");
-        arg_print_glossary(stdout, argsHelpConv, "\t%-25s %s\n");
+        arg_print_glossary(stdout, argsHelpConv, "\t%-" STRINGIFY(FIELD_WIDTH) "s %s\n");
 
         printf("TAYLOR:\n");
-        arg_print_glossary(stdout, argsHelpTayl, "\t%-25s %s\n");
+        arg_print_glossary(stdout, argsHelpTayl, "\t%-" STRINGIFY(FIELD_WIDTH) "s %s\n");
 
         arg_dstr_destroy(ds);
         exitCode = 1;
