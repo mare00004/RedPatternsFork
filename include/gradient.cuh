@@ -43,9 +43,12 @@ __global__ void CuKernelWingLinear(double *percoll, double *gradWing, double t) 
         gradWing[i] = a * i * i + b * i + c;
     if (i >= N - 1 - wingL)
         gradWing[i] = -(a * (N - 1 - i) * (N - 1 - i) + b * (N - 1 - i) + c);
-    if (i >= N - 1 - 13)
+    if (i >= N - 1 - 13) {
+        // Set Wing constant
         gradWing[i] = gradWing[N - 1 - 13];
+    }
     if (i <= 13)
+        // Set Wing constant
         gradWing[i] = gradWing[13];
 }
 
