@@ -113,10 +113,7 @@ run-tayl-gauss-linear: $(PHI_GAUSS)
 		--gradient=linear \
 		--NU=$(NU) --MU=$(MU) \
 		--phi-file=$(PHI_GAUSS) \
-		--out-dir=./data/tayl_gauss_linear \
-		--store=phi \
-		--store=psi \
-		--store=percoll
+		--out-dir=./data/tayl_gauss_linear
 
 run-tayl-gauss-sigmoid: $(PHI_GAUSS)
 	mkdir -p ./data/tayl_gauss_sigmoid
@@ -130,7 +127,7 @@ run-tayl-gauss-sigmoid: $(PHI_GAUSS)
 run-tayl-const-linear: $(PHI_CONST)
 	mkdir -p ./data/tayl_const_linear
 	$(BIN) --use-taylor \
-		--T=2000.0 --DT=1e-02 --NO=500 \
+		--T=1000.0 --DT=1e-02 --NO=500 \
 		--gradient=linear \
 		--NU=$(NU) --MU=$(MU) \
 		--phi-file=$(PHI_CONST) \
