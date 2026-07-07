@@ -48,7 +48,7 @@ Array2F = NDArray[np.float64]
 # --------------------------------------------------------------------------- #
 
 DEFAULT_N = 256
-DEFAULT_WING = 30
+DEFAULT_WING = 30 + 2
 DEFAULT_RHO_CENTER = 1100.0
 DEFAULT_RHO_SPAN = 30.0
 DEFAULT_DZ = 0.000267651
@@ -88,7 +88,8 @@ class PhiConfig:
     phi_type: PhiType
     psi_avg: float
     N: int = DEFAULT_N
-    wing: int = DEFAULT_WING
+    wing_z: int = DEFAULT_WING
+    wing_r: int = DEFAULT_WING
     rho_center: float = DEFAULT_RHO_CENTER
     rho_span: float = DEFAULT_RHO_SPAN
     dz: float = DEFAULT_DZ
@@ -133,18 +134,18 @@ def phi_gaussian(
     return radial_profile[:, np.newaxis] * np.ones(N_z)
 
 
-def phi_add_wing(phi, wing):
+def phi_add_wing(phi, wing_z, wing_r):
     """
     Zeros out phi iff
-        (z_j < w + 2 or z_j > L_z - (w + 2))
-        and (rho_i < w or rho_i > L_rho - w)
+        (z_j < wing_z or z_j > N_z - 1 - wing_z)
+        and (rho_i < wing_r or rho_i > N_r - 1 - wing_r)
     See `analysis/phi_init.py` for details.
     """
     N_rho, N_z = phi.shape
     rho_idx = np.arange(N_rho)
     z_idx = np.arange(N_z)
-    z_mask = (z_idx < wing + 2) | (z_idx > (N_z - 1 - (wing + 2)))
-    rho_mask = (rho_idx < wing) | (rho_idx > (N_rho - 1 - wing))
+    z_mask = (z_idx < wing_z) | (z_idx > (N_z - 1 - wing_z))
+    rho_mask = (rho_idx < wing_r) | (rho_idx > (N_rho - 1 - wing_r))
 
     result = phi.copy()
     result[:, z_mask] = 0.0
@@ -152,14 +153,14 @@ def phi_add_wing(phi, wing):
     return result
 
 
-def renormalize_phi(phi, rho, z, psi_avg, wing):
+def renormalize_phi(phi, rho, z, psi_avg, wing_z):
     """
     See `analysis/phi_init.py` under "Normalization" for details
     """
     _, N_z = phi.shape
 
-    z_start = wing + 2
-    z_end = N_z - (wing + 2)
+    z_start = wing_z
+    z_end = N_z - wing_z
     n_z_eff = z_end - z_start  # N_z - 2*(wing+2)
     psi_profile = phi.sum(axis=0)
     current_avg = psi_profile[z_start:z_end].sum() / n_z_eff
@@ -202,7 +203,7 @@ def compute_phi(cfg: PhiConfig) -> PhiResult:
         phi = phi_homogeneous(rho, z, cfg.psi_avg)
 
     phi_wing = renormalize_phi(
-        phi_add_wing(phi, cfg.wing), rho, z, cfg.psi_avg, cfg.wing
+        phi_add_wing(phi, cfg.wing_z, cfg.wing_r), rho, z, cfg.psi_avg, cfg.wing_z
     )
     return PhiResult(rho=rho, z=z, phi_values=np.asarray(phi_wing, dtype=np.float64))
 
@@ -220,7 +221,8 @@ def write_phi_h5(output_path: str | Path, result: PhiResult, cfg: PhiConfig) -> 
         _ = group.create_dataset("z", data=np.asarray(result.z, dtype=np.float64))
         group.attrs["N"] = int(cfg.N)
         group.attrs["PSI"] = float(cfg.psi_avg)
-        group.attrs["wingL"] = int(cfg.wing)
+        group.attrs["wing_z"] = int(cfg.wing_z)
+        group.attrs["wing_r"] = int(cfg.wing_r)
         group.attrs["phi_type"] = cfg.phi_type.label
         group.attrs["storage_order"] = "phi[rho_idx, z_idx]"
         group.attrs["generated_by"] = "red_patterns/phi.py"
@@ -255,10 +257,16 @@ def build_export_parser(prog: str = "phi export") -> argparse.ArgumentParser:
         "--N", type=int, default=DEFAULT_N, help="Grid size in rho and z."
     )
     _ = parser.add_argument(
-        "--wing",
+        "--wingz",
         type=int,
         default=DEFAULT_WING,
-        help="Wing size used by the CUDA initialization.",
+        help="wing size in z direction",
+    )
+    _ = parser.add_argument(
+        "--wingr",
+        type=int,
+        default=DEFAULT_WING,
+        help="wing size in z direction",
     )
     _ = parser.add_argument(
         "--rho-center",
@@ -291,8 +299,10 @@ def validate_export_namespace(
 
     if args.N < 3:
         errors.append("--N must be an integer >= 3.")
-    if args.wing < 0:
-        errors.append("--wing must be non-negative.")
+    if args.wingz < 0:
+        errors.append("--wingz must be non-negative.")
+    if args.wingr < 0:
+        errors.append("--wingz must be non-negative.")
     if args.psi_avg < 0.0:
         errors.append("--psi-avg must be non-negative.")
     if args.rho_span <= 0.0:
@@ -300,15 +310,15 @@ def validate_export_namespace(
     if args.dz <= 0.0:
         errors.append("--dz must be positive.")
 
-    active_rho = args.N - 2 * args.wing
-    active_z = args.N - 2 * (args.wing + 2)
-    if active_rho <= 0:
-        errors.append(
-            "--wing is too large for --N: the active rho region would be empty."
-        )
+    active_z = args.N - 2 * args.wingz
+    active_rho = args.N - 2 * args.wingr
     if active_z <= 0:
         errors.append(
-            "--wing is too large for --N: the active z region would be empty."
+            "--wingz is too large for --N: the active z region would be empty."
+        )
+    if active_rho <= 0:
+        errors.append(
+            "--wingr is too large for --N: the active rho region would be empty."
         )
 
     if args.phi_type == PhiType.GAUSSIAN:
@@ -333,7 +343,8 @@ def validate_export_namespace(
         phi_type=PhiType(args.phi_type),
         psi_avg=args.psi_avg,
         N=args.N,
-        wing=args.wing,
+        wing_z=args.wingz,
+        wing_r=args.wingr,
         rho_center=args.rho_center,
         rho_span=args.rho_span,
         dz=args.dz,
@@ -358,7 +369,8 @@ def run_export_cli(argv: list[str], prog: str = "phi export") -> int:
         f"phi_type={cfg.phi_type}",
         f"PSI={cfg.psi_avg:.6e}",
         f"N={cfg.N}",
-        f"wing={cfg.wing}",
+        f"wingz={cfg.wing_z}",
+        f"wingr={cfg.wing_r}",
         f"rho_center={cfg.rho_center:.6e}",
         f"rho_span={cfg.rho_span:.6e}",
         f"DZ={cfg.dz:.6e}",
@@ -431,6 +443,20 @@ def make_phi_ui(
                 value=gaussian_sigma,
                 label="$\\sigma_\\rho \\; [\\frac{g}{L}]$",
             ),
+            "wingz": mo.ui.number(
+                start=0,
+                stop=100,
+                step=1,
+                value=DEFAULT_WING,
+                label="z wing size",
+            ),
+            "wingr": mo.ui.number(
+                start=0,
+                stop=100,
+                step=1,
+                value=DEFAULT_WING,
+                label="r wing size",
+            ),
         }
     )
 
@@ -445,9 +471,17 @@ def phi_ui_layout(phi_ui):
         phi_ui["psi_avg"],
         mo.md("### Distribution type"),
         phi_ui["phi_type"],
+        mo.md("### Wing Settings"),
+        mo.hstack([phi_ui["wingz"], phi_ui["wingr"]], justify="start", align="center"),
     ]
     if str(phi_ui["phi_type"].value) == PhiType.GAUSSIAN.label:
-        items.extend([phi_ui["gaussian_mu"], phi_ui["gaussian_sigma"]])
+        items.extend(
+            [
+                mo.md("### Gaussian Parameters"),
+                phi_ui["gaussian_mu"],
+                phi_ui["gaussian_sigma"],
+            ]
+        )
     return mo.vstack(items, gap=0.5)
 
 
@@ -460,6 +494,8 @@ def phi_config_from_ui(
     return PhiConfig(
         output_path=Path(output_path),
         phi_type=phi_type,
+        wing_z=int(value["wingz"]),
+        wing_r=int(value["wingr"]),
         psi_avg=float(value["psi_avg"]),
         gaussian_mu=float(value["gaussian_mu"]) if is_gaussian else None,
         gaussian_sigma=float(value["gaussian_sigma"]) if is_gaussian else None,
