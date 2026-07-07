@@ -172,5 +172,102 @@ def _(mo, plot, result, table):
     return
 
 
+@app.cell
+def _(Array1F, mo, np, peak_spacing, plt, psi, z):
+    def fft_dominant_wavelengths(
+        z: Array1F,
+        psi: Array1F,
+        n_components: int = 5,
+        apply_window: bool = True,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        r"""Find dominant wavelength components using FFT of $\psi(z)$.
+
+        Args:
+            z: 1D spatial coordinate array [cm]
+            psi: 1D signal array
+            n_components: number of dominant components to return
+            apply_window: whether to apply a Hann window to reduce spectral leakage
+
+        Returns:
+            Tuple of (wavelengths [cm], spatial frequencies [cm⁻¹], power)
+            sorted by power in descending order (DC component excluded).
+        """
+        dz = z[1] - z[0]
+        n = len(psi)
+
+        signal = psi.copy()
+        if apply_window:
+            signal = signal * np.hanning(n)
+
+        fft_vals = np.fft.rfft(signal)
+        fft_freqs = np.fft.rfftfreq(n, d=dz)
+
+        power = np.abs(fft_vals) ** 2
+
+        # Exclude DC component (index 0) — its "wavelength" is infinite
+        nonzero_mask = fft_freqs > 0
+        freqs_nz = fft_freqs[nonzero_mask]
+        power_nz = power[nonzero_mask]
+
+        # Sort by power descending
+        sorted_idx = np.argsort(power_nz)[::-1]
+        top_idx = sorted_idx[:n_components]
+
+        dominant_freqs = freqs_nz[top_idx]
+        dominant_wavelengths = 1.0 / dominant_freqs
+        dominant_powers = power_nz[top_idx]
+
+        return dominant_wavelengths, dominant_freqs, dominant_powers
+
+
+    _fft_wavelengths, _fft_freqs, _fft_powers = fft_dominant_wavelengths(z, psi)
+
+    # --- FFT Power Spectrum Plot ---
+    fig_fft, ax_fft = plt.subplots(constrained_layout=True)
+    ax_fft.plot(_fft_freqs, _fft_powers, "o-", markersize=3, label="FFT Power")
+    ax_fft.set_xlabel(r"Spatial Frequency $\nu$ [cm$^{-1}$]")
+    ax_fft.set_ylabel("Power")
+    ax_fft.set_title("FFT Power Spectrum of $\\psi(z)$")
+
+    # Mark dominant components
+    for _i, (_f, _wl, _p) in enumerate(zip(_fft_freqs, _fft_wavelengths, _fft_powers)):
+        ax_fft.annotate(
+            f"#{_i+1}: λ={_wl:.2f} cm",
+            xy=(_f, _p),
+            xytext=(5, 5),
+            textcoords="offset points",
+            fontsize=8,
+            color="red",
+        )
+        ax_fft.plot(_f, _p, "rx", markersize=8)
+
+    ax_fft.legend()
+
+    _fft_plot = mo.ui.matplotlib(ax_fft)
+
+    # --- Table ---
+    _n_show = min(5, len(_fft_wavelengths))
+    _fft_table_rows = "\n".join(
+        f"| {i+1} | {_fft_wavelengths[i]:.4f} | {_fft_freqs[i]:.4f} | {_fft_powers[i]:.2e} |"
+        for i in range(_n_show)
+    )
+
+    _fft_table = mo.md(
+        f"""
+    ### FFT Dominant Wavelength Components
+
+    | # | Wavelength [cm] | Spatial Freq [cm⁻¹] | Power |
+    |---|-----------------|---------------------|-------|
+    {_fft_table_rows}
+
+    **Peak spacing from find_peaks:** {peak_spacing:.4f} cm  
+    **Dominant FFT wavelength:** {_fft_wavelengths[0]:.4f} cm
+    """
+    )
+
+    mo.vstack([_fft_plot, _fft_table], align="stretch")
+    return
+
+
 if __name__ == "__main__":
     app.run()
