@@ -34,7 +34,6 @@ typedef struct {
     double T;
     double DT;
     double DZ;
-    double fineDZ;
     double L;
     double wingL;
     double sysL;
@@ -47,6 +46,7 @@ typedef struct {
     int kernelN;
     int subDiv;
     int M;
+    double fineDZ;
     char kernelFile[256];
 } ConvParams;
 

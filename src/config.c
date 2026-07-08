@@ -7,7 +7,7 @@
 
 /* API */
 void setDefaults(SimConfig *c) {
-    int N = 256;
+    int N = 512;
     int subDiv = 256;
 
     double L = 0.06;                 // Physical system size [cm]
@@ -20,6 +20,7 @@ void setDefaults(SimConfig *c) {
     int M = (N - 1) * subDiv + 1;
 
     double DZ = sysL / N;
+    double fineDZ = sysL / M;
 
     StoreBitMap store = 0;
     BITMAP_ADD(store, PHI);
@@ -32,7 +33,6 @@ void setDefaults(SimConfig *c) {
             .T = 1200,
             .DT = 0.005,
             .DZ = DZ,
-            .fineDZ = 0.0,
             .L = L,
             .wingL = wingL,
             .sysL = sysL,
@@ -50,6 +50,7 @@ void setDefaults(SimConfig *c) {
                 .Conv = (ConvParams){
                     .kernelN = 31, // TODO: why 31?
                     .subDiv = 256,
+                    .fineDZ = fineDZ,
                     .M = M,
                     .kernelFile = "",
                 },
