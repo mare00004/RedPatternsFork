@@ -137,7 +137,6 @@ class RunParamsData:
     T: float
     DT: float
     DZ: float
-    fineDZ: float
     sysL: float
     NO: int
 
@@ -260,7 +259,6 @@ class RunData:
                 T=float(run_attrs["T"]),
                 DT=float(run_attrs["DT"]),
                 DZ=float(run_attrs["DZ"]),
-                fineDZ=float(run_attrs["fineDZ"]),
                 sysL=float(run_attrs["sysL"]),
                 NO=int(run_attrs["NO"]),
             )
