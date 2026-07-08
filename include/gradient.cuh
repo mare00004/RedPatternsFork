@@ -10,10 +10,11 @@
  * LINEAR *
  **********/
 
-constexpr double P = 18.0;       // example value – replace with your own
-constexpr double offset = 0.002; // example value – replace with your own
+constexpr double P = 18.0;
+constexpr double offset = 0.002;
+// FIX: that shouldn't be hardcoded
 constexpr double R_min = -30.0;
-constexpr double R_max = 30.0; // example value – replace with your own
+constexpr double R_max = 30.0;
 
 __device__ __forceinline__ double p_func(double x) {
     return (P / d_cfg.run.L) * (x - (d_cfg.run.L / 2.0));
@@ -28,9 +29,6 @@ __device__ __forceinline__ double l_func(double x) {
     return a * (dx * dx) + (P / L) * dx - (P / 2.0);
 }
 
-// ------------------------------------------------------------------
-// Piece‑wise wrapper that reproduces the np.piecewise logic
-// ------------------------------------------------------------------
 __device__ __forceinline__ double piecewise_func(double x) {
     const double wingL = d_cfg.run.wingL;
     const double sysL = d_cfg.run.sysL;
@@ -59,40 +57,6 @@ __global__ void CuKernelGradLinear(double *percoll) {
     percoll[idx] = piecewise_func(z);
 }
 
-__global__ void CuKernelWingLinear(double *percoll, double *gradWing, double t) {
-    // get indices
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int N = d_cfg.run.N;
-    int wingL = 30;
-    // compute gradient wing
-    double r1, r2, r3;
-    double x1, x2;
-    r3 = (percoll[wingL] - percoll[wingL - 1]);
-    r2 = percoll[wingL];
-    r1 = r2 - 10;
-    x1 = 20;
-    x2 = wingL;
-    if (percoll[int(x1)] < r1)
-        r1 = percoll[int(x1)];
-
-    double a, b, c; // parameters of parabola
-    a = (r1 - r2 + r3 * (x2 - x1)) / ((x1 - x2) * (x1 - x2));
-    b = r3 - 2 * a * x2;
-    c = r2 - r3 * x2 + x2 * x2 * a;
-    gradWing[i] = 0.0;
-    if (i <= wingL)
-        gradWing[i] = a * i * i + b * i + c;
-    if (i >= N - 1 - wingL)
-        gradWing[i] = -(a * (N - 1 - i) * (N - 1 - i) + b * (N - 1 - i) + c);
-    if (i >= N - 1 - 13) {
-        // Set Wing constant
-        gradWing[i] = gradWing[N - 1 - 13];
-    }
-    if (i <= 13)
-        // Set Wing constant
-        gradWing[i] = gradWing[13];
-}
-
 /*********************************************************
  * SIGMOID                                               *
  *  - Equation (3) from supplementary material of paper. *
@@ -106,10 +70,7 @@ __global__ void CuKernelWingLinear(double *percoll, double *gradWing, double t) 
 #define mu_2 0.6
 #define delta_2 1.5205
 
-__global__ void CuKernelGradSigmoid(double *percoll, double t) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int N = d_cfg.run.N;
-
+__device__ __forceinline__ double sigmoid_value_at_index(int i, int N, double t) {
     // double z = d_cfg.run.DZ * double(i);
     double z = (d_cfg.run.sysL / ((double)N - 1.0)) * double(i);
     double mu = mu_1 * t + mu_2;
@@ -128,33 +89,48 @@ __global__ void CuKernelGradSigmoid(double *percoll, double t) {
     }
 
     double denom = pow(1.0 - pow(abs_chi, mu), 1.0 / mu);
-    percoll[i] = delta_1 * pow(t, delta_2) * (chi / denom);
+    return delta_1 * pow(t, delta_2) * (chi / denom);
 }
 
-__global__ void CuKernelWingSigmoid(double *percoll, double *gradWing, double t) {
-    // get indices
+__global__ void CuKernelGradSigmoid(double *percoll, double t) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int N = d_cfg.run.N;
-    // compute gradient wing
-    double r1, r2, r3;
-    double x1, x2;
-    int wingL = 30;
-    r3 = (percoll[wingL] - percoll[wingL - 1]);
-    r2 = percoll[wingL];
-    r1 = r2 - 50;
-    x1 = 12;
-    x2 = wingL;
-    if (percoll[int(x1)] < r1)
-        r1 = percoll[int(x1)];
+    if (i >= N) {
+        return;
+    }
+
+    percoll[i] = sigmoid_value_at_index(i, N, t);
+
+    const double dz = d_cfg.run.sysL / ((double)N - 1.0);
+    int wingL = int((d_cfg.run.wingL / dz) + 0.5);
+    if (wingL < 1) {
+        wingL = 1;
+    }
+    if (wingL > N - 2) {
+        wingL = N - 2;
+    }
+
+    const int x1_idx = (wingL > 12) ? 12 : wingL - 1;
+    const double x1 = double(x1_idx);
+    const double x2 = double(wingL);
+    const double r3 = sigmoid_value_at_index(wingL, N, t) - sigmoid_value_at_index(wingL - 1, N, t);
+    const double r2 = sigmoid_value_at_index(wingL, N, t);
+    double r1 = r2 - 50.0;
+    const double x1_value = sigmoid_value_at_index(x1_idx, N, t);
+    if (x1_value < r1) {
+        r1 = x1_value;
+    }
 
     double a, b, c; // parameters of parabola
     a = (r1 - r2 + r3 * (x2 - x1)) / ((x1 - x2) * (x1 - x2));
     b = r3 - 2 * a * x2;
     c = r2 - r3 * x2 + x2 * x2 * a;
 
-    gradWing[i] = 0.0;
-    if (i <= wingL)
-        gradWing[i] = a * i * i + b * i + c;
-    if (i >= N - 1 - wingL)
-        gradWing[i] = -(a * (N - 1 - i) * (N - 1 - i) + b * (N - 1 - i) + c);
+    if (i <= wingL) {
+        percoll[i] = a * i * i + b * i + c;
+    }
+    if (i >= N - 1 - wingL) {
+        const double mirrored = double(N - 1 - i);
+        percoll[i] = -(a * mirrored * mirrored + b * mirrored + c);
+    }
 }

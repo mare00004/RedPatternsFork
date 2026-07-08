@@ -7,7 +7,7 @@
 
 /* API */
 void setDefaults(SimConfig *c) {
-    int N = 512;
+    int N = 256;
     int subDiv = 256;
 
     double L = 0.06;                 // Physical system size [cm]

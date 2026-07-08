@@ -381,7 +381,6 @@ int runSim(SimConfig &cfg) {
             CuKernelGradLinear<<<cell_grid_dim, cell_block_dim>>>(d_percoll);
         } else if (cfg.model.gradientType == SIGMOID) {
             CuKernelGradSigmoid<<<cell_grid_dim, cell_block_dim>>>(d_percoll, t);
-            CuKernelWingSigmoid<<<cell_grid_dim, cell_block_dim>>>(d_percoll, d_gradWing, t);
         } else {
             printf("This branch should never be reached!");
         }
