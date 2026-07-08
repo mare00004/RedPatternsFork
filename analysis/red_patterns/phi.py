@@ -51,6 +51,7 @@ DEFAULT_N = 512
 DEFAULT_WING = 30 + 2
 DEFAULT_RHO_CENTER = 1100.0
 DEFAULT_RHO_SPAN = 30.0
+DEFAULT_RHO_RANGE = 5.0
 DEFAULT_DZ = 0.000267651 / 2.0
 DEFAULT_PSI_AVG = 0.02
 DEFAULT_GAUSSIAN_MU = 1100.0
@@ -60,6 +61,7 @@ DEFAULT_GAUSSIAN_SIGMA = 4.0
 class PhiType(StrEnum):
     GAUSSIAN = "gaussian"
     HOMOGENEOUS = "homogeneous"
+    SMOOTH_HOMOGENEOUS = "smooth_homogeneous"
 
     @property
     def label(self) -> str:
@@ -70,6 +72,7 @@ class PhiType(StrEnum):
 _DISPLAY = {
     PhiType.GAUSSIAN: "Gaussian",
     PhiType.HOMOGENEOUS: "Homogeneous",
+    PhiType.SMOOTH_HOMOGENEOUS: "Smooth Homogeneous",
 }
 
 LABEL_MAP = {t.label: t for t in PhiType}
@@ -92,6 +95,7 @@ class PhiConfig:
     wing_r: int = DEFAULT_WING
     rho_center: float = DEFAULT_RHO_CENTER
     rho_span: float = DEFAULT_RHO_SPAN
+    rho_range: float = DEFAULT_RHO_RANGE
     dz: float = DEFAULT_DZ
     gaussian_mu: float | None = None
     gaussian_sigma: float | None = None
@@ -107,6 +111,49 @@ class PhiResult:
 # --------------------------------------------------------------------------- #
 # Field builders
 # --------------------------------------------------------------------------- #
+
+
+def phi_smooth_homogeneous(
+    rho: Array1F,
+    z: Array1F,
+    psi_avg: float,
+    rho_center: float,
+    rho_range: float,
+    wing_r: int,
+) -> Array2F:
+    r"""Constant block in ρ with cosine taper to the wing boundaries.
+
+    The block spans physical coordinates
+    ``[rho_center - rho_range, rho_center + rho_range]`` in ρ and the full
+    active z‑range.  A cosine ramp bridges between the block edges and the
+    wing index boundaries (``wing_r`` on the left, ``N_rho - 1 - wing_r`` on
+    the right), so the field reaches zero exactly at the wing edge.
+    """
+    N_rho = rho.shape[0]
+    N_z = z.shape[0]
+
+    # ---- locate block edges in index space ----
+    left_edge_idx = int(np.searchsorted(rho, rho_center - rho_range, side="left"))
+    right_edge_idx = int(np.searchsorted(rho, rho_center + rho_range, side="right")) - 1
+
+    # ---- build radial profile: 1 inside block, cosine taper to wing ----
+    profile = np.zeros(N_rho)
+    profile[left_edge_idx : right_edge_idx + 1] = 1.0
+
+    # left taper: 0 at wing_r, 1 at left_edge_idx
+    n_left = left_edge_idx - wing_r
+    if n_left > 0:
+        x = np.linspace(0.0, 1.0, n_left + 2)[1:-1]  # interior points
+        profile[wing_r : wing_r + n_left] = 0.5 * (1 - np.cos(np.pi * x))
+
+    # right taper: 1 at right_edge_idx, 0 at N_rho - 1 - wing_r
+    n_right = (N_rho - 1 - wing_r) - right_edge_idx
+    if n_right > 0:
+        x = np.linspace(0.0, 1.0, n_right + 2)[1:-1]
+        idx_start = right_edge_idx + 1
+        profile[idx_start : idx_start + n_right] = 0.5 * (1 + np.cos(np.pi * x))
+
+    return (psi_avg * profile[:, np.newaxis] * np.ones(N_z)).astype(np.float64)
 
 
 def phi_homogeneous(rho: Array1F, z: Array1F, psi_avg: float) -> Array2F:
@@ -199,6 +246,15 @@ def compute_phi(cfg: PhiConfig) -> PhiResult:
         assert cfg.gaussian_mu is not None
         assert cfg.gaussian_sigma is not None
         phi = phi_gaussian(rho, z, cfg.psi_avg, cfg.gaussian_mu, cfg.gaussian_sigma)
+    elif cfg.phi_type == PhiType.SMOOTH_HOMOGENEOUS:
+        phi = phi_smooth_homogeneous(
+            rho,
+            z,
+            cfg.psi_avg,
+            cfg.rho_center,
+            cfg.rho_range,
+            cfg.wing_r,
+        )
     else:
         phi = phi_homogeneous(rho, z, cfg.psi_avg)
 
@@ -229,6 +285,9 @@ def write_phi_h5(output_path: str | Path, result: PhiResult, cfg: PhiConfig) -> 
         group.attrs["storage_order"] = "phi[rho_idx, z_idx]"
         group.attrs["generated_by"] = "red_patterns/phi.py"
         group.attrs["normalization"] = "no runtime renormalization required"
+
+        if cfg.phi_type == PhiType.SMOOTH_HOMOGENEOUS:
+            group.attrs["rho_range"] = float(cfg.rho_range)
 
     return output_path
 
@@ -283,6 +342,12 @@ def build_export_parser(prog: str = "phi export") -> argparse.ArgumentParser:
         help="Total rho-axis span in g/L.",
     )
     _ = parser.add_argument(
+        "--rho-range",
+        type=float,
+        default=DEFAULT_RHO_RANGE,
+        help="Half‑width of the constant block in the ρ direction.",
+    )
+    _ = parser.add_argument(
         "--dz", type=float, default=DEFAULT_DZ, help="Z-axis spacing in meters."
     )
     _ = parser.add_argument(
@@ -330,6 +395,18 @@ def validate_export_namespace(
             errors.append("--gaussian-sigma is required with --phi-type=gaussian.")
         elif args.gaussian_sigma <= 0.0:
             errors.append("--gaussian-sigma must be positive.")
+    elif args.phi_type == PhiType.SMOOTH_HOMOGENEOUS:
+        if args.rho_range is None:
+            errors.append("--rho-range is required with --phi-type=smooth_homogeneous.")
+        elif args.rho_range <= 0.0:
+            errors.append("--rho-range must be positive.")
+        # Ensure the block edges are at least wing_r indices from each boundary
+        dr = args.rho_span / (args.N - 1)  # physical spacing per cell
+        max_allowed = args.rho_span / 2.0 - args.wingr * dr
+        if args.rho_range > max_allowed:
+            errors.append(
+                "--rho-range + wingr exceeds the rho domain for smooth_homogeneous."
+            )
     else:
         if args.gaussian_mu is not None or args.gaussian_sigma is not None:
             errors.append(
@@ -348,6 +425,7 @@ def validate_export_namespace(
         wing_z=args.wingz,
         wing_r=args.wingr,
         rho_center=args.rho_center,
+        rho_range=args.rho_range,
         rho_span=args.rho_span,
         dz=args.dz,
         gaussian_mu=args.gaussian_mu,
@@ -386,6 +464,8 @@ def run_export_cli(argv: list[str], prog: str = "phi export") -> int:
                 f"gaussian_sigma={cfg.gaussian_sigma:.6e}",
             ]
         )
+    elif cfg.phi_type == PhiType.SMOOTH_HOMOGENEOUS:
+        summary.append(f"rho_range={cfg.rho_range:.6e}")
     print("Used parameters: " + ", ".join(summary))
     return 0
 
@@ -431,6 +511,10 @@ def make_phi_ui(
                     PhiType.HOMOGENEOUS.label: mo.md(
                         r"$\varphi(\rho, z) = \langle \psi \rangle / L_\rho$"
                     ),
+                    PhiType.SMOOTH_HOMOGENEOUS.label: mo.md(
+                        r"$\varphi(\rho, z) = \langle \psi \rangle$ in a rectangular block, "
+                        + r"cosine‑tapered to zero along $\rho$"
+                    ),
                 },
                 value=phi_type,
             ),
@@ -462,6 +546,13 @@ def make_phi_ui(
                 value=DEFAULT_WING,
                 label="r wing size",
             ),
+            "rho_range": mo.ui.number(
+                start=0.0,
+                stop=100.0,
+                step=0.1,
+                value=DEFAULT_RHO_RANGE,
+                label="ρ half‑width (region)",
+            ),
         }
     )
 
@@ -481,6 +572,13 @@ def phi_ui_layout(phi_ui):
         mo.md("### Wing Settings"),
         mo.hstack([phi_ui["wingz"], phi_ui["wingr"]], justify="start", align="center"),
     ]
+    if str(phi_ui["phi_type"].value) == PhiType.SMOOTH_HOMOGENEOUS.label:
+        items.extend(
+            [
+                mo.md("### Smooth Homogeneous Parameters"),
+                phi_ui["rho_range"],
+            ]
+        )
     if str(phi_ui["phi_type"].value) == PhiType.GAUSSIAN.label:
         items.extend(
             [
@@ -506,6 +604,7 @@ def phi_config_from_ui(
         wing_z=int(value["wingz"]),
         wing_r=int(value["wingr"]),
         psi_avg=float(value["psi_avg"]),
+        rho_range=float(value["rho_range"]),
         gaussian_mu=float(value["gaussian_mu"]) if is_gaussian else None,
         gaussian_sigma=float(value["gaussian_sigma"]) if is_gaussian else None,
     )
