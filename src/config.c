@@ -7,17 +7,19 @@
 
 /* API */
 void setDefaults(SimConfig *c) {
-    int N = 256;
-    double fineDZ = 1.041412353515625e-6;
+    int N = 512;
     int subDiv = 256;
+
+    double L = 0.06;                 // Physical system size [cm]
+    double wingL = 0.005;            // wing size [cm]
+    double sysL = L + (2.0 * wingL); // simulation system size [cm]
 
     /*
      * To reproduce the old code use: `int M = (N)*subDiv + 1;`
      */
     int M = (N - 1) * subDiv + 1;
 
-    double sysL = (double)(M - 1) * fineDZ;
-    double DZ = sysL / ((double)N - 1);
+    double DZ = sysL / N;
 
     StoreBitMap store = 0;
     BITMAP_ADD(store, PHI);
@@ -30,7 +32,9 @@ void setDefaults(SimConfig *c) {
             .T = 1200,
             .DT = 0.005,
             .DZ = DZ,
-            .fineDZ = fineDZ,
+            .fineDZ = 0.0,
+            .L = L,
+            .wingL = wingL,
             .sysL = sysL,
             .NO = 2000,
             .store = store,

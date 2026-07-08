@@ -35,6 +35,8 @@ typedef struct {
     double DT;
     double DZ;
     double fineDZ;
+    double L;
+    double wingL;
     double sysL;
     int NO;
     StoreBitMap store;

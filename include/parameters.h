@@ -10,7 +10,6 @@
 #define Rsigma 4.0f // [g/l] gaussian width
 #define Rmu 1100.0f // [g/l] central RBC density
 
-#define wingL 30  // [grid] length of gradient wings
 #define P0 1100.0 // [g/l] central percoll density
 
 // degenerate diffusion flux

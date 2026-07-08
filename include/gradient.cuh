@@ -10,19 +10,60 @@
  * LINEAR *
  **********/
 
-/* Linear Percoll gradient kernel */
-#define PL 8.0 // Spread of gradient (in units of density)
-__global__ void CuKernelGradLinear(double *percoll, double t) {
-    // get indices
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    double x = d_cfg.run.DZ * double(i);
-    percoll[i] = (x - zShift - gradL / 2) / (gradL / 2) * PL / 2;
+constexpr double P = 18.0;       // example value – replace with your own
+constexpr double offset = 0.002; // example value – replace with your own
+constexpr double R_min = -30.0;
+constexpr double R_max = 30.0; // example value – replace with your own
+
+__device__ __forceinline__ double p_func(double x) {
+    return (P / d_cfg.run.L) * (x - (d_cfg.run.L / 2.0));
+}
+
+__device__ __forceinline__ double l_func(double x) {
+    const double L = d_cfg.run.L;
+    const double wingL = d_cfg.run.wingL;
+    const double t = offset - wingL;
+    const double a = ((P / 2.0) + R_min - ((P / L) * t)) / (t * t);
+    const double dx = x - wingL;
+    return a * (dx * dx) + (P / L) * dx - (P / 2.0);
+}
+
+// ------------------------------------------------------------------
+// Piece‑wise wrapper that reproduces the np.piecewise logic
+// ------------------------------------------------------------------
+__device__ __forceinline__ double piecewise_func(double x) {
+    const double wingL = d_cfg.run.wingL;
+    const double sysL = d_cfg.run.sysL;
+
+    if (x <= offset) {
+        return R_min;
+    } else if ((offset < x) && (x <= wingL)) {
+        return l_func(x);
+    } else if ((wingL < x) && (x < (sysL - wingL))) {
+        return p_func(x - wingL);
+    } else if ((sysL - wingL <= x) && (x < (sysL - offset))) {
+        return -l_func(sysL - x);
+    } else {
+        return R_max;
+    }
+}
+
+__global__ void CuKernelGradLinear(double *percoll) {
+    const std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= d_cfg.run.N) {
+        return;
+    }
+
+    const double dz = d_cfg.run.DZ;
+    const double z = ((double)idx + 0.5) * dz;
+    percoll[idx] = piecewise_func(z);
 }
 
 __global__ void CuKernelWingLinear(double *percoll, double *gradWing, double t) {
     // get indices
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int N = d_cfg.run.N;
+    int wingL = 30;
     // compute gradient wing
     double r1, r2, r3;
     double x1, x2;
@@ -97,6 +138,7 @@ __global__ void CuKernelWingSigmoid(double *percoll, double *gradWing, double t)
     // compute gradient wing
     double r1, r2, r3;
     double x1, x2;
+    int wingL = 30;
     r3 = (percoll[wingL] - percoll[wingL - 1]);
     r2 = percoll[wingL];
     r1 = r2 - 50;

@@ -47,11 +47,11 @@ Array2F = NDArray[np.float64]
 # Defaults / labels
 # --------------------------------------------------------------------------- #
 
-DEFAULT_N = 256
+DEFAULT_N = 512
 DEFAULT_WING = 30 + 2
 DEFAULT_RHO_CENTER = 1100.0
 DEFAULT_RHO_SPAN = 30.0
-DEFAULT_DZ = 0.000267651
+DEFAULT_DZ = 0.000267651 / 2.0
 DEFAULT_PSI_AVG = 0.02
 DEFAULT_GAUSSIAN_MU = 1100.0
 DEFAULT_GAUSSIAN_SIGMA = 4.0
@@ -205,6 +205,8 @@ def compute_phi(cfg: PhiConfig) -> PhiResult:
     phi_wing = renormalize_phi(
         phi_add_wing(phi, cfg.wing_z, cfg.wing_r), rho, z, cfg.psi_avg, cfg.wing_z
     )
+    # FIX: Remove
+    print(phi_wing.sum(axis=0).sum() / (cfg.N - 2 * cfg.wing_z))
     return PhiResult(rho=rho, z=z, phi_values=np.asarray(phi_wing, dtype=np.float64))
 
 
@@ -417,6 +419,9 @@ def make_phi_ui(
                 value=psi_avg,
                 label="$\\langle \\psi \\rangle$",
             ),
+            "N": mo.ui.dropdown(
+                options=[2**x for x in range(6, 12, 1)], value=2**10, label="N"
+            ),
             "phi_type": mo.ui.tabs(
                 {
                     PhiType.GAUSSIAN.label: mo.md(
@@ -469,6 +474,8 @@ def phi_ui_layout(phi_ui):
     items = [
         mo.md("### Average volume fraction"),
         phi_ui["psi_avg"],
+        mo.md("### Grid size"),
+        phi_ui["N"],
         mo.md("### Distribution type"),
         phi_ui["phi_type"],
         mo.md("### Wing Settings"),
@@ -494,6 +501,8 @@ def phi_config_from_ui(
     return PhiConfig(
         output_path=Path(output_path),
         phi_type=phi_type,
+        N=int(value["N"]),
+        dz=(0.07 / float(value["N"])),
         wing_z=int(value["wingz"]),
         wing_r=int(value["wingr"]),
         psi_avg=float(value["psi_avg"]),

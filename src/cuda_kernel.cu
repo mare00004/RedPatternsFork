@@ -267,9 +267,10 @@ __device__ inline double pressure_cell_value(
     const double *__restrict__ gradWing,
     int idx,
     int N) {
-    return (idx > wingL && idx < N - 1 - wingL)
-               ? percoll[idx]
-               : gradWing[idx];
+    // return (idx > wingL && idx < N - 1 - wingL)
+    //            ? percoll[idx]
+    //            : gradWing[idx];
+    return percoll[idx];
 }
 
 __global__ void CuKernelComputeFluxFVM(

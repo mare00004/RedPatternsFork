@@ -174,10 +174,11 @@ int runSim(SimConfig &cfg) {
     std::vector<double> h_psi(numPsiPoints);
     std::vector<double> h_I(numPsiPoints);
 
-    std::vector<double> h_J(N * N);
-    std::vector<double> h_dJ(N * N);
+    // FIX: Remove
+    // std::vector<double> h_J(N * N);
+    // std::vector<double> h_dJ(N * N);
+    // std::vector<double> h_gradWing(N);
     std::vector<double> h_percoll(numZCells);
-    std::vector<double> h_gradWing(N);
 
     printf("Allocating device memory...\n");
     double *d_R = nullptr, *d_phi = nullptr, *d_F = nullptr, *d_intKernel = nullptr, *d_I = nullptr, *d_psi = nullptr, *d_psiIntp = nullptr,
@@ -252,12 +253,19 @@ int runSim(SimConfig &cfg) {
     // Initializing phi from an external file when requested.
     double *loadedPhi = NULL;
 
+    printf("Loading Initial Phi file...\n");
+
+    // FIX: Update N to numPhiPoints?
     if (loadInitialPhiFile(cfg.model.initialPhiFile, &loadedPhi, N) != 0) {
+        printf("wassup\n");
         fprintf(stderr, "Failed to load initial phi from %s\n", cfg.model.initialPhiFile);
         cleanup();
         return failRun("Failed to load initial phi", 0, 0.0, 0.0, 0.0);
     }
 
+    printf("Initial Phi file loaded.\n");
+
+    // FIX: Update N to numPhiPoints?
     h_phi.assign(loadedPhi, loadedPhi + N * N);
     free(loadedPhi);
 
@@ -313,7 +321,8 @@ int runSim(SimConfig &cfg) {
 
     printf("defining grid and starting loop.\n");
 
-    constexpr unsigned int one_dim_block_size = 256;
+    // TODO: Make variable
+    constexpr unsigned int one_dim_block_size = 512;
     const dim3 cell_block_dim(one_dim_block_size, 1, 1);
     const dim3 cell_grid_dim((numZCells + cell_block_dim.x - 1) / cell_block_dim.x, 1, 1);
     const dim3 face_block_dim(one_dim_block_size, 1, 1);
@@ -334,6 +343,7 @@ int runSim(SimConfig &cfg) {
             const dim3 fine_cell_grid_dim((numFineZCells + fine_cell_block_dim.x - 1) / fine_cell_block_dim.x, 1, 1);
             const size_t spline_shared_bytes = 2ull * numZCells * sizeof(double);
 
+            // FIX: Use one of the num...Points instead of `cfg.run.N`
             CuKernelSplineCoeffs<<<1, 1, spline_shared_bytes>>>(d_psi, d_b, d_c, d_d, cfg.run.N);
             CuKernelSplineEvalCellCentered<<<fine_cell_grid_dim, fine_cell_block_dim>>>(d_psi, d_b, d_c, d_d, d_psiIntp, cfg.run.N, cfg.model.variant.Conv.M, subDiv);
 
@@ -368,8 +378,7 @@ int runSim(SimConfig &cfg) {
         }
 
         if (cfg.model.gradientType == LINEAR) {
-            CuKernelGradLinear<<<cell_grid_dim, cell_block_dim>>>(d_percoll, t);
-            CuKernelWingLinear<<<cell_grid_dim, cell_block_dim>>>(d_percoll, d_gradWing, t);
+            CuKernelGradLinear<<<cell_grid_dim, cell_block_dim>>>(d_percoll);
         } else if (cfg.model.gradientType == SIGMOID) {
             CuKernelGradSigmoid<<<cell_grid_dim, cell_block_dim>>>(d_percoll, t);
             CuKernelWingSigmoid<<<cell_grid_dim, cell_block_dim>>>(d_percoll, d_gradWing, t);
@@ -413,8 +422,8 @@ int runSim(SimConfig &cfg) {
             checkCuda(cudaMemcpy(h_psi.data(), d_psi, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
             // TODO: Might be doing unnecessary work
             checkCuda(cudaMemcpy(h_percoll.data(), d_percoll, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
-            checkCuda(cudaMemcpy(h_percoll.data(), d_gradWing, TO_BYTES(30), cudaMemcpyDeviceToHost));                            // copies to h_percoll[0..29]
-            checkCuda(cudaMemcpy(&h_percoll[numZCells - 30], &d_gradWing[numZCells - 30], TO_BYTES(30), cudaMemcpyDeviceToHost)); // copies to h_percoll[numZCells-30..numZCells-1]
+            // checkCuda(cudaMemcpy(h_percoll.data(), d_gradWing, TO_BYTES(30), cudaMemcpyDeviceToHost));                            // copies to h_percoll[0..29]
+            // checkCuda(cudaMemcpy(&h_percoll[numZCells - 30], &d_gradWing[numZCells - 30], TO_BYTES(30), cudaMemcpyDeviceToHost)); // copies to h_percoll[numZCells-30..numZCells-1]
 
             if (ts_append(&w, savedTime, cfg.run.store, h_phi.data(), h_psi.data(), h_percoll.data()) != 0) {
                 fprintf(stderr, "Failed to append timestep data to %s\n", outFilePath);
