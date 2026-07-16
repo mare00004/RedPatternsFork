@@ -257,7 +257,6 @@ int runSim(SimConfig &cfg) {
 
     // FIX: Update N to numPhiPoints?
     if (loadInitialPhiFile(cfg.model.initialPhiFile, &loadedPhi, N) != 0) {
-        printf("wassup\n");
         fprintf(stderr, "Failed to load initial phi from %s\n", cfg.model.initialPhiFile);
         cleanup();
         return failRun("Failed to load initial phi", 0, 0.0, 0.0, 0.0);
