@@ -56,12 +56,18 @@ DEFAULT_DZ = 0.000267651 / 2.0
 DEFAULT_PSI_AVG = 0.02
 DEFAULT_GAUSSIAN_MU = 1100.0
 DEFAULT_GAUSSIAN_SIGMA = 4.0
+DEFAULT_GAUSSIAN_BLOB_MU_Z = 0.035
+DEFAULT_GAUSSIAN_BLOB_SIGMA_Z = 0.01
+DEFAULT_Z_SYSTEM_SIZE = 0.07
+DEFAULT_SINGLE_BIN_IDX = 256
 
 
 class PhiType(StrEnum):
     GAUSSIAN = "gaussian"
+    GAUSSIAN_BLOB = "gaussian_blob"
     HOMOGENEOUS = "homogeneous"
     SMOOTH_HOMOGENEOUS = "smooth_homogeneous"
+    SINGLE_BIN = "single_bin"
 
     @property
     def label(self) -> str:
@@ -71,8 +77,10 @@ class PhiType(StrEnum):
 # Display Names for UI
 _DISPLAY = {
     PhiType.GAUSSIAN: "Gaussian",
+    PhiType.GAUSSIAN_BLOB: "Gaussian Blob",
     PhiType.HOMOGENEOUS: "Homogeneous",
     PhiType.SMOOTH_HOMOGENEOUS: "Smooth Homogeneous",
+    PhiType.SINGLE_BIN: "Single Bin",
 }
 
 LABEL_MAP = {t.label: t for t in PhiType}
@@ -99,6 +107,9 @@ class PhiConfig:
     dz: float = DEFAULT_DZ
     gaussian_mu: float | None = None
     gaussian_sigma: float | None = None
+    gaussian_blob_mu_z: float | None = None
+    gaussian_blob_sigma_z: float | None = None
+    single_bin_idx: int | None = None
 
 
 @dataclass
@@ -181,6 +192,35 @@ def phi_gaussian(
     return radial_profile[:, np.newaxis] * np.ones(N_z)
 
 
+def phi_gaussian_blob(
+    rho: Array1F,
+    z: Array1F,
+    psi_avg: float,
+    mu_rho: float,
+    sigma_rho: float,
+    mu_z: float,
+    sigma_z: float,
+) -> Array2F:
+    r"""2D Gaussian blob in $(\rho, z)$ scaled by ``psi_avg``."""
+    norm = psi_avg / (2.0 * np.pi * sigma_rho * sigma_z)
+    rho_part = np.exp(-((rho - mu_rho) ** 2) / (2.0 * sigma_rho**2))
+    z_part = np.exp(-((z - mu_z) ** 2) / (2.0 * sigma_z**2))
+    return (norm * rho_part[:, np.newaxis] * z_part[np.newaxis, :]).astype(np.float64)
+
+
+def phi_single_bin(
+    rho: Array1F,
+    z: Array1F,
+    psi_avg: float,
+    bin_idx: int,
+) -> Array2F:
+    r"""Delta-function-like ridge: ``psi_avg`` at one rho bin, zero elsewhere."""
+    N_rho, N_z = rho.shape[0], z.shape[0]
+    phi = np.zeros((N_rho, N_z), dtype=np.float64)
+    phi[bin_idx, :] = psi_avg
+    return phi
+
+
 def phi_add_wing(phi, wing_z, wing_r):
     """
     Zeros out phi iff
@@ -222,7 +262,7 @@ def build_phi_axes(
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Builds the following two axis
-        `z := [0, N * dz]`
+        `z := [0, (N-1) * dz]`   (system size ≈ 0.07 m)
         `rho := [rho_center - rho_span / 2.0, rho_center + rho_span / 2.0]`
     with N points each.
     """
@@ -246,6 +286,20 @@ def compute_phi(cfg: PhiConfig) -> PhiResult:
         assert cfg.gaussian_mu is not None
         assert cfg.gaussian_sigma is not None
         phi = phi_gaussian(rho, z, cfg.psi_avg, cfg.gaussian_mu, cfg.gaussian_sigma)
+    elif cfg.phi_type == PhiType.GAUSSIAN_BLOB:
+        assert cfg.gaussian_mu is not None
+        assert cfg.gaussian_sigma is not None
+        assert cfg.gaussian_blob_mu_z is not None
+        assert cfg.gaussian_blob_sigma_z is not None
+        phi = phi_gaussian_blob(
+            rho,
+            z,
+            cfg.psi_avg,
+            cfg.gaussian_mu,
+            cfg.gaussian_sigma,
+            cfg.gaussian_blob_mu_z,
+            cfg.gaussian_blob_sigma_z,
+        )
     elif cfg.phi_type == PhiType.SMOOTH_HOMOGENEOUS:
         phi = phi_smooth_homogeneous(
             rho,
@@ -255,6 +309,9 @@ def compute_phi(cfg: PhiConfig) -> PhiResult:
             cfg.rho_range,
             cfg.wing_r,
         )
+    elif cfg.phi_type == PhiType.SINGLE_BIN:
+        assert cfg.single_bin_idx is not None
+        phi = phi_single_bin(rho, z, cfg.psi_avg, cfg.single_bin_idx)
     else:
         phi = phi_homogeneous(rho, z, cfg.psi_avg)
 
@@ -288,6 +345,14 @@ def write_phi_h5(output_path: str | Path, result: PhiResult, cfg: PhiConfig) -> 
 
         if cfg.phi_type == PhiType.SMOOTH_HOMOGENEOUS:
             group.attrs["rho_range"] = float(cfg.rho_range)
+        if cfg.phi_type in (PhiType.GAUSSIAN, PhiType.GAUSSIAN_BLOB):
+            group.attrs["gaussian_mu"] = float(cfg.gaussian_mu)  # type: ignore[arg-type]
+            group.attrs["gaussian_sigma"] = float(cfg.gaussian_sigma)  # type: ignore[arg-type]
+        if cfg.phi_type == PhiType.GAUSSIAN_BLOB:
+            group.attrs["gaussian_blob_mu_z"] = float(cfg.gaussian_blob_mu_z)  # type: ignore[arg-type]
+            group.attrs["gaussian_blob_sigma_z"] = float(cfg.gaussian_blob_sigma_z)  # type: ignore[arg-type]
+        if cfg.phi_type == PhiType.SINGLE_BIN:
+            group.attrs["single_bin_idx"] = int(cfg.single_bin_idx)  # type: ignore[arg-type]
 
     return output_path
 
@@ -356,6 +421,21 @@ def build_export_parser(prog: str = "phi export") -> argparse.ArgumentParser:
     _ = parser.add_argument(
         "--gaussian-sigma", type=float, help="Gaussian rho width in g/L."
     )
+    _ = parser.add_argument(
+        "--gaussian-blob-mu-z",
+        type=float,
+        help="Gaussian blob z center in meters.",
+    )
+    _ = parser.add_argument(
+        "--gaussian-blob-sigma-z",
+        type=float,
+        help="Gaussian blob z width in meters.",
+    )
+    _ = parser.add_argument(
+        "--single-bin-idx",
+        type=int,
+        help="Rho bin index for single-bin phi type.",
+    )
     return parser
 
 
@@ -395,6 +475,31 @@ def validate_export_namespace(
             errors.append("--gaussian-sigma is required with --phi-type=gaussian.")
         elif args.gaussian_sigma <= 0.0:
             errors.append("--gaussian-sigma must be positive.")
+        if (
+            args.gaussian_blob_mu_z is not None
+            or args.gaussian_blob_sigma_z is not None
+        ):
+            errors.append(
+                "--gaussian-blob-mu-z and --gaussian-blob-sigma-z are only valid with "
+                + "--phi-type=gaussian_blob."
+            )
+    elif args.phi_type == PhiType.GAUSSIAN_BLOB:
+        if args.gaussian_mu is None:
+            errors.append("--gaussian-mu is required with --phi-type=gaussian_blob.")
+        if args.gaussian_sigma is None:
+            errors.append("--gaussian-sigma is required with --phi-type=gaussian_blob.")
+        elif args.gaussian_sigma <= 0.0:
+            errors.append("--gaussian-sigma must be positive.")
+        if args.gaussian_blob_mu_z is None:
+            errors.append(
+                "--gaussian-blob-mu-z is required with --phi-type=gaussian_blob."
+            )
+        if args.gaussian_blob_sigma_z is None:
+            errors.append(
+                "--gaussian-blob-sigma-z is required with --phi-type=gaussian_blob."
+            )
+        elif args.gaussian_blob_sigma_z <= 0.0:
+            errors.append("--gaussian-blob-sigma-z must be positive.")
     elif args.phi_type == PhiType.SMOOTH_HOMOGENEOUS:
         if args.rho_range is None:
             errors.append("--rho-range is required with --phi-type=smooth_homogeneous.")
@@ -407,11 +512,43 @@ def validate_export_namespace(
             errors.append(
                 "--rho-range + wingr exceeds the rho domain for smooth_homogeneous."
             )
+    elif args.phi_type == PhiType.SINGLE_BIN:
+        if args.single_bin_idx is None:
+            errors.append("--single-bin-idx is required with --phi-type=single_bin.")
+        elif args.single_bin_idx < 0 or args.single_bin_idx >= args.N:
+            errors.append(
+                f"--single-bin-idx must be in [0, {args.N - 1}] for N={args.N}."
+            )
+        if args.gaussian_mu is not None or args.gaussian_sigma is not None:
+            errors.append(
+                "--gaussian-mu and --gaussian-sigma are only valid with "
+                + "--phi-type=gaussian or --phi-type=gaussian_blob."
+            )
+        if (
+            args.gaussian_blob_mu_z is not None
+            or args.gaussian_blob_sigma_z is not None
+        ):
+            errors.append(
+                "--gaussian-blob-mu-z and --gaussian-blob-sigma-z are only valid with "
+                + "--phi-type=gaussian_blob."
+            )
     else:
         if args.gaussian_mu is not None or args.gaussian_sigma is not None:
             errors.append(
                 "--gaussian-mu and --gaussian-sigma are only valid with "
-                + "--phi-type=gaussian."
+                + "--phi-type=gaussian or --phi-type=gaussian_blob."
+            )
+        if (
+            args.gaussian_blob_mu_z is not None
+            or args.gaussian_blob_sigma_z is not None
+        ):
+            errors.append(
+                "--gaussian-blob-mu-z and --gaussian-blob-sigma-z are only valid with "
+                + "--phi-type=gaussian_blob."
+            )
+        if args.single_bin_idx is not None:
+            errors.append(
+                "--single-bin-idx is only valid with --phi-type=single_bin."
             )
 
     if errors:
@@ -430,6 +567,9 @@ def validate_export_namespace(
         dz=args.dz,
         gaussian_mu=args.gaussian_mu,
         gaussian_sigma=args.gaussian_sigma,
+        gaussian_blob_mu_z=args.gaussian_blob_mu_z,
+        gaussian_blob_sigma_z=args.gaussian_blob_sigma_z,
+        single_bin_idx=args.single_bin_idx,
     )
 
 
@@ -464,8 +604,24 @@ def run_export_cli(argv: list[str], prog: str = "phi export") -> int:
                 f"gaussian_sigma={cfg.gaussian_sigma:.6e}",
             ]
         )
+    elif cfg.phi_type == PhiType.GAUSSIAN_BLOB:
+        assert cfg.gaussian_mu is not None
+        assert cfg.gaussian_sigma is not None
+        assert cfg.gaussian_blob_mu_z is not None
+        assert cfg.gaussian_blob_sigma_z is not None
+        summary.extend(
+            [
+                f"gaussian_mu={cfg.gaussian_mu:.6e}",
+                f"gaussian_sigma={cfg.gaussian_sigma:.6e}",
+                f"gaussian_blob_mu_z={cfg.gaussian_blob_mu_z:.6e}",
+                f"gaussian_blob_sigma_z={cfg.gaussian_blob_sigma_z:.6e}",
+            ]
+        )
     elif cfg.phi_type == PhiType.SMOOTH_HOMOGENEOUS:
         summary.append(f"rho_range={cfg.rho_range:.6e}")
+    elif cfg.phi_type == PhiType.SINGLE_BIN:
+        assert cfg.single_bin_idx is not None
+        summary.append(f"single_bin_idx={cfg.single_bin_idx}")
     print("Used parameters: " + ", ".join(summary))
     return 0
 
@@ -481,6 +637,8 @@ def make_phi_ui(
     phi_type: str = PhiType.GAUSSIAN.label,
     gaussian_mu: float = DEFAULT_GAUSSIAN_MU,
     gaussian_sigma: float = DEFAULT_GAUSSIAN_SIGMA,
+    gaussian_blob_mu_z: float = DEFAULT_GAUSSIAN_BLOB_MU_Z,
+    gaussian_blob_sigma_z: float = DEFAULT_GAUSSIAN_BLOB_SIGMA_Z,
 ):
     """Build every phi control as a single ``mo.ui.dictionary``.
 
@@ -508,12 +666,20 @@ def make_phi_ui(
                         r"$$\varphi(\rho, z) = \langle \psi \rangle \,"
                         + r"\mathcal{N}(\rho;\mu_\rho,\sigma_\rho)$$"
                     ),
+                    PhiType.GAUSSIAN_BLOB.label: mo.md(
+                        r"$$\varphi(\rho, z) = \langle \psi \rangle \,"
+                        + r"\mathcal{N}(\rho,z;\mu_\rho,\sigma_\rho,\mu_z,\sigma_z)$$"
+                    ),
                     PhiType.HOMOGENEOUS.label: mo.md(
                         r"$\varphi(\rho, z) = \langle \psi \rangle / L_\rho$"
                     ),
                     PhiType.SMOOTH_HOMOGENEOUS.label: mo.md(
                         r"$\varphi(\rho, z) = \langle \psi \rangle$ in a rectangular block, "
                         + r"cosine‑tapered to zero along $\rho$"
+                    ),
+                    PhiType.SINGLE_BIN.label: mo.md(
+                        r"$\varphi(\rho_i, z) = \langle \psi \rangle$ "
+                        + r"(single bin, zero elsewhere)"
                     ),
                 },
                 value=phi_type,
@@ -532,16 +698,30 @@ def make_phi_ui(
                 value=gaussian_sigma,
                 label="$\\sigma_\\rho \\; [\\frac{g}{L}]$",
             ),
+            "gaussian_blob_mu_z": mo.ui.number(
+                start=0.0,
+                stop=1.0,
+                step=0.001,
+                value=gaussian_blob_mu_z,
+                label="$\\mu_z \\; [m]$",
+            ),
+            "gaussian_blob_sigma_z": mo.ui.number(
+                start=0.0,
+                stop=0.1,
+                step=0.001,
+                value=gaussian_blob_sigma_z,
+                label="$\\sigma_z \\; [m]$",
+            ),
             "wingz": mo.ui.number(
                 start=0,
-                stop=100,
+                stop=1000,
                 step=1,
                 value=DEFAULT_WING,
                 label="z wing size",
             ),
             "wingr": mo.ui.number(
                 start=0,
-                stop=100,
+                stop=1000,
                 step=1,
                 value=DEFAULT_WING,
                 label="r wing size",
@@ -552,6 +732,13 @@ def make_phi_ui(
                 step=0.1,
                 value=DEFAULT_RHO_RANGE,
                 label="ρ half‑width (region)",
+            ),
+            "single_bin_idx": mo.ui.number(
+                start=0,
+                stop=1023,
+                step=1,
+                value=DEFAULT_SINGLE_BIN_IDX,
+                label="ρ bin index",
             ),
         }
     )
@@ -587,6 +774,23 @@ def phi_ui_layout(phi_ui):
                 phi_ui["gaussian_sigma"],
             ]
         )
+    if str(phi_ui["phi_type"].value) == PhiType.GAUSSIAN_BLOB.label:
+        items.extend(
+            [
+                mo.md("### Gaussian Blob Parameters"),
+                phi_ui["gaussian_mu"],
+                phi_ui["gaussian_sigma"],
+                phi_ui["gaussian_blob_mu_z"],
+                phi_ui["gaussian_blob_sigma_z"],
+            ]
+        )
+    if str(phi_ui["phi_type"].value) == PhiType.SINGLE_BIN.label:
+        items.extend(
+            [
+                mo.md("### Single Bin Parameters"),
+                phi_ui["single_bin_idx"],
+            ]
+        )
     return mo.vstack(items, gap=0.5)
 
 
@@ -596,17 +800,26 @@ def phi_config_from_ui(
     """Map a ``make_phi_ui()`` value dict to a :class:`PhiConfig`."""
     phi_type = LABEL_MAP[str(value["phi_type"])]
     is_gaussian = phi_type == PhiType.GAUSSIAN
+    is_blob = phi_type == PhiType.GAUSSIAN_BLOB
+    is_single_bin = phi_type == PhiType.SINGLE_BIN
     return PhiConfig(
         output_path=Path(output_path),
         phi_type=phi_type,
         N=int(value["N"]),
-        dz=(0.07 / float(value["N"])),
+        dz=(DEFAULT_Z_SYSTEM_SIZE / float(value["N"])),
         wing_z=int(value["wingz"]),
         wing_r=int(value["wingr"]),
         psi_avg=float(value["psi_avg"]),
         rho_range=float(value["rho_range"]),
-        gaussian_mu=float(value["gaussian_mu"]) if is_gaussian else None,
-        gaussian_sigma=float(value["gaussian_sigma"]) if is_gaussian else None,
+        gaussian_mu=float(value["gaussian_mu"]) if (is_gaussian or is_blob) else None,
+        gaussian_sigma=float(value["gaussian_sigma"])
+        if (is_gaussian or is_blob)
+        else None,
+        gaussian_blob_mu_z=float(value["gaussian_blob_mu_z"]) if is_blob else None,
+        gaussian_blob_sigma_z=float(value["gaussian_blob_sigma_z"])
+        if is_blob
+        else None,
+        single_bin_idx=int(value["single_bin_idx"]) if is_single_bin else None,
     )
 
 
