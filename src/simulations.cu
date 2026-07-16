@@ -271,7 +271,7 @@ int runSim(SimConfig &cfg) {
 
     cudaMemcpy(d_phi, h_phi.data(), TO_BYTES(numPhiPoints), cudaMemcpyHostToDevice);
     cudaMemset(d_I, 0, TO_BYTES(numZCells));
-    cudaMemset(d_psi, 0, TO_BYTES(numPhiPoints));
+    cudaMemset(d_psi, 0, TO_BYTES(numPsiPoints));
     cudaMemset(d_percoll, 0, TO_BYTES(numZCells));
     cudaMemset(d_gradWing, 0, TO_BYTES(numZCells));
 
