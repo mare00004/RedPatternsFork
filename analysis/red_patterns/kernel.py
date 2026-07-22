@@ -660,7 +660,7 @@ def make_kernel_ui(
                 value=pair_distribution,
             ),
             "g0": mo.ui.number(
-                start=0.0, stop=10.0, step=0.1, value=g0, label="$g_0 \\; [10^{7}]$"
+                start=0.0, stop=10.0, step=0.001, value=g0, label="$g_0 \\; [10^{7}]$"
             ),
             "nn_d": mo.ui.number(
                 start=0.0,
@@ -683,7 +683,7 @@ def make_kernel_ui(
                 start=3, stop=10001, step=2, value=kernel_n, label="kernelN"
             ),
             "dz": mo.ui.number(
-                start=1e-12, step=1e-8, value=dz, label="(coarse) $\\Delta z$"
+                start=1e-12, step=1e-9, value=dz, label="(coarse) $\\Delta z$"
             ),
             "subdiv": mo.ui.number(start=1, step=1, value=subdiv, label="subDiv"),
         }
