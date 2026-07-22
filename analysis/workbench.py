@@ -12,7 +12,7 @@
 
 import marimo
 
-__generated_with = "0.23.13"
+__generated_with = "0.23.14"
 app = marimo.App(width="wide")
 
 with app.setup:
@@ -721,10 +721,113 @@ def _(fft_amplitudes, fft_selected_mode, fft_time_index, inspect_time):
     return fft_growth_panel, fft_mode_amplitude
 
 
+@app.cell
+def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time):
+    fft_dominant_mode = 1 + np.argmax(fft_amplitudes[:, 1:], axis=1)
+    fft_dominant_wavelength = np.asarray(
+        fft_wavelengths[fft_dominant_mode], dtype=np.float64
+    )
+    _dominant_wavelength_cm = 100.0 * fft_dominant_wavelength
+
+    _dominant_fig, _dominant_ax = plt.subplots(constrained_layout=True)
+    _dominant_ax.plot(
+        inspect_time,
+        _dominant_wavelength_cm,
+        color="#7c3aed",
+        linewidth=1.5,
+        drawstyle="steps-mid",
+    )
+    _dominant_ax.scatter(
+        [inspect_time[fft_time_index]],
+        [_dominant_wavelength_cm[fft_time_index]],
+        color="#dc2626",
+        zorder=3,
+        label=f"step {fft_time_index}",
+    )
+    _dominant_ax.set_xlabel(r"$t\;[s]$")
+    _dominant_ax.set_ylabel(r"$\lambda_{\mathrm{dom}}(t)\;[\mathrm{cm}]$")
+    _dominant_ax.set_title(
+        r"Dominant wavelength of $\text{arg}\max_{n > 1} A_n(t)$"
+    )
+    _dominant_ax.legend()
+
+    fft_dominant_wavelength_panel = mo.vstack(
+        [
+            mo.md("### Dominant Wavelength"),
+            mo.ui.matplotlib(_dominant_ax),
+        ],
+        align="stretch",
+    )
+    return (
+        fft_dominant_mode,
+        fft_dominant_wavelength,
+        fft_dominant_wavelength_panel,
+    )
+
+
+@app.cell
+def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time):
+    _safe_amplitudes = np.clip(fft_amplitudes[:, 1:], np.finfo(np.float64).tiny, None)
+    _log_amplitudes = np.log(_safe_amplitudes)
+    if inspect_time.shape[0] > 1:
+        fft_log_growth_rates = np.gradient(_log_amplitudes, inspect_time, axis=0)
+    else:
+        fft_log_growth_rates = np.zeros_like(_log_amplitudes)
+
+    fft_fastest_growing_mode = 1 + np.argmax(fft_log_growth_rates, axis=1)
+    fft_fastest_growing_wavelength = np.asarray(
+        fft_wavelengths[fft_fastest_growing_mode], dtype=np.float64
+    )
+    _fastest_wavelength_cm = 100.0 * fft_fastest_growing_wavelength
+
+    _fastest_fig, _fastest_ax = plt.subplots(constrained_layout=True)
+    _fastest_ax.plot(
+        inspect_time,
+        _fastest_wavelength_cm,
+        color="#ea580c",
+        linewidth=1.5,
+        drawstyle="steps-mid",
+    )
+    _fastest_ax.scatter(
+        [inspect_time[fft_time_index]],
+        [_fastest_wavelength_cm[fft_time_index]],
+        color="#dc2626",
+        zorder=3,
+        label=f"step {fft_time_index}",
+    )
+    _fastest_ax.set_xlabel(r"$t\;[s]$")
+    _fastest_ax.set_ylabel(r"$\lambda_{\mathrm{fast}}(t)\;[\mathrm{cm}]$")
+    _fastest_ax.set_title(
+        r"Wavelength of $\text{arg}\max_{n > 1}\,\partial_t \ln A_n(t)$"
+    )
+    _fastest_ax.legend()
+
+    fft_fastest_growing_panel = mo.vstack(
+        [
+            mo.md("### Fastest-Growing Wavelength"),
+            mo.ui.matplotlib(_fastest_ax),
+        ],
+        align="stretch",
+    )
+    return (
+        fft_fastest_growing_mode,
+        fft_fastest_growing_panel,
+        fft_fastest_growing_wavelength,
+        fft_log_growth_rates,
+    )
+
+
 @app.cell(hide_code=True)
 def _(
     fft_coeffs,
+    fft_dominant_mode,
+    fft_dominant_wavelength,
+    fft_dominant_wavelength_panel,
+    fft_fastest_growing_mode,
+    fft_fastest_growing_panel,
+    fft_fastest_growing_wavelength,
     fft_growth_panel,
+    fft_log_growth_rates,
     fft_mode_amplitude,
     fft_mode_panel,
     fft_n_points,
@@ -747,17 +850,34 @@ def _(
         f"Stored complex Fourier coefficients with shape `{fft_coeffs.shape}`.  \n"
         + f"FFT window uses z indices `{fft_z_start_index}:{fft_z_stop_index}` inclusive, i.e. `{100.0 * fft_z[0]:.6g}` to `{100.0 * fft_z[-1]:.6g}` cm over `{fft_n_points}` grid points.  \n"
         + f"Selected mode `{fft_selected_mode}` at step `{fft_time_index}`:  \n"
-        + f"`|coeff| = {fft_mode_amplitude[fft_time_index]:.6g}`, `phase = {fft_phases[fft_time_index, fft_selected_mode]:.6g}` rad, `k = {fft_wavenumbers[fft_selected_mode]:.6g}` m$^{{-1}}$, `nu = {fft_spatial_freqs[fft_selected_mode]:.6g}` m$^{{-1}}$."
+        + f"`|coeff| = {fft_mode_amplitude[fft_time_index]:.6g}`, `phase = {fft_phases[fft_time_index, fft_selected_mode]:.6g}` rad, `k = {fft_wavenumbers[fft_selected_mode]:.6g}` m$^{{-1}}$, `nu = {fft_spatial_freqs[fft_selected_mode]:.6g}` m$^{{-1}}$.  \n"
+        + f"Dominant mode at this step is `{fft_dominant_mode[fft_time_index]}` with wavelength `{100.0 * fft_dominant_wavelength[fft_time_index]:.6g}` cm.  \n"
+        + f"Fastest-growing mode at this step is `{fft_fastest_growing_mode[fft_time_index]}` with wavelength `{100.0 * fft_fastest_growing_wavelength[fft_time_index]:.6g}` cm and log-growth rate `{fft_log_growth_rates[fft_time_index, fft_fastest_growing_mode[fft_time_index] - 1]:.6g}` s$^{{-1}}$."
     )
 
     mo.vstack(
         [
             inspect_run_md,
             mo.hstack([phi_panel, psi_panel], align="start", justify="start", gap=1),
-            mo.hstack(
-                [fft_panel, fft_growth_panel],
+            mo.vstack(
+                [
+                    mo.hstack(
+                        [fft_panel, fft_growth_panel],
+                        align="start",
+                        justify="start",
+                        gap=1,
+                    ),
+                    mo.hstack(
+                        [
+                            fft_dominant_wavelength_panel,
+                            fft_fastest_growing_panel,
+                        ],
+                        align="start",
+                        justify="start",
+                        gap=1,
+                    ),
+                ],
                 align="start",
-                justify="start",
                 gap=1,
             ),
             mo.hstack(
@@ -790,7 +910,7 @@ def cell_peaks(inspect_run):
 
     _fig, _ax = plt.subplots(constrained_layout=True)
     _ax.plot(_z_cm, _psi_last_pct, label=r"$\psi(z)$")
-    _ax.plot(_peak_z, _peak_psi, "x", color="red", label="Detected peaks")
+    # _ax.plot(_peak_z, _peak_psi, "x", color="red", label="Detected peaks")
     _ax.set_xlabel(r"$z \; [cm]$")
     _ax.set_ylabel(r"$\psi \; [\%]$")
     _ax.set_title("Peak detection")
