@@ -12,6 +12,8 @@
 #include <time.h>
 #include <vector>
 
+#define BLOCK_SIZE 16
+
 #define TO_BYTES(num) num * sizeof(double)
 
 namespace {
@@ -385,7 +387,7 @@ int runSim(SimConfig &cfg) {
             printf("This branch should never be reached!");
         }
 
-        const dim3 flux_block_dim(16, 16, 1);
+        const dim3 flux_block_dim(BLOCK_SIZE, BLOCK_SIZE, 1);
         const dim3 flux_grid_dim(
             (numZFaces + flux_block_dim.x - 1) / flux_block_dim.x,
             (numZCells + flux_block_dim.y - 1) / flux_block_dim.y,
@@ -399,7 +401,7 @@ int runSim(SimConfig &cfg) {
             d_Iface,
             d_gradWing);
 
-        const dim3 update_block_dim(16, 16, 1);
+        const dim3 update_block_dim(BLOCK_SIZE, BLOCK_SIZE, 1);
         const dim3 update_grid_dim(
             (numZCells + update_block_dim.x - 1) / update_block_dim.x,
             (numZCells + update_block_dim.y - 1) / update_block_dim.y,
