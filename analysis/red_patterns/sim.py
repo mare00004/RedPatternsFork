@@ -48,7 +48,7 @@ def build_cli_args(
     gradient: str,
     t_final: float,
     dt: float,
-    save_every: int,
+    storeTime: float,
     nu: float,
     mu: float,
 ) -> list[str]:
@@ -58,7 +58,7 @@ def build_cli_args(
         "--use-taylor" if mode == "Taylor" else "--use-convolution",
         f"--T={t_final}",
         f"--DT={dt}",
-        f"--NO={save_every}",
+        f"--storeTime={storeTime}",
         f"--gradient={gradient}",
         f"--phi-file={phi_path}",
         f"--out-dir={out_dir}",

@@ -221,10 +221,10 @@ def cell_sim_controls():
     )
     ui_t_final = mo.ui.number(start=0.1, step=0.1, value=1000.0, label="T")
     ui_dt = mo.ui.number(start=1e-5, step=1e-4, value=1e-2, label="DT")
-    ui_save_every = mo.ui.number(start=1, step=1, value=500, label="NO")
+    ui_storeTime = mo.ui.number(start=0, step=1e-3, value=1.0, label="storeTime")
     ui_run_button = mo.ui.run_button(label="Build inputs and run simulation")
     mo.vstack(
-        [ui_mode, ui_gradient, ui_t_final, ui_dt, ui_save_every, ui_run_button],
+        [ui_mode, ui_gradient, ui_t_final, ui_dt, ui_storeTime, ui_run_button],
         gap=1,
     )
     return (
@@ -234,7 +234,7 @@ def cell_sim_controls():
         ui_mu,
         ui_nu,
         ui_run_button,
-        ui_save_every,
+        ui_storeTime,
         ui_t_final,
         ui_taylor_source,
     )
@@ -253,7 +253,7 @@ def cell_run(
     ui_mu,
     ui_nu,
     ui_run_button,
-    ui_save_every,
+    ui_storeTime,
     ui_t_final,
     ui_taylor_source,
 ):
@@ -297,7 +297,7 @@ def cell_run(
             gradient=ui_gradient.value,
             t_final=float(ui_t_final.value),
             dt=float(ui_dt.value),
-            save_every=int(ui_save_every.value),
+            storeTime=int(ui_storeTime.value),
             nu=_nu,
             mu=_mu,
         )
@@ -376,6 +376,7 @@ def _():
 @app.cell
 def cell_check_perco(fft_time_index, inspect_z, run_h5):
     import h5py
+
     perco_path = Path(run_h5)
     mo.stop(predicate=not perco_path.exists(), output=f"{perco_path} does not exist.")
     with h5py.File(perco_path, "r") as f:
@@ -746,9 +747,7 @@ def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time):
     )
     _dominant_ax.set_xlabel(r"$t\;[s]$")
     _dominant_ax.set_ylabel(r"$\lambda_{\mathrm{dom}}(t)\;[\mathrm{cm}]$")
-    _dominant_ax.set_title(
-        r"Dominant wavelength of $\text{arg}\max_{n > 1} A_n(t)$"
-    )
+    _dominant_ax.set_title(r"Dominant wavelength of $\text{arg}\max_{n > 1} A_n(t)$")
     _dominant_ax.legend()
 
     fft_dominant_wavelength_panel = mo.vstack(

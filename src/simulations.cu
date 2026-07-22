@@ -330,7 +330,8 @@ int runSim(SimConfig &cfg) {
     checkCuda(cudaEventRecord(startEvent, 0));
 
     // iteration loop
-    int n_out = cfg.run.NO;
+    double storeTime = cfg.run.storeTime;
+    double lastSave = 0.0;
     double t = 0.0;
     for (int i = 0; i < NT; i++) {
         /* integration */
@@ -404,29 +405,17 @@ int runSim(SimConfig &cfg) {
             (numZCells + update_block_dim.y - 1) / update_block_dim.y,
             1);
 
-        CuKernelUpdatePhiFVM<<<update_grid_dim, update_block_dim>>>(
-            d_phi,
-            d_F);
-
         cudaDeviceSynchronize();
 
-        if ((((i - 1) % n_out) == 0) || (i == 1) || (i == NT - 1)) {
-            const double savedTime = t + DT;
-            const int currentStep = i + 1;
-            CuKernelInte<<<cell_grid_dim, cell_block_dim>>>(d_phi, d_psi);
-
-            // retrieve data from GPU mem
+        if ((i == 0) || (t - lastSave >= storeTime) || (i == NT)) {
             checkCuda(cudaMemcpy(h_phi.data(), d_phi, TO_BYTES(numPhiPoints), cudaMemcpyDeviceToHost));
             checkCuda(cudaMemcpy(h_psi.data(), d_psi, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
-            // TODO: Might be doing unnecessary work
             checkCuda(cudaMemcpy(h_percoll.data(), d_percoll, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
-            // checkCuda(cudaMemcpy(h_percoll.data(), d_gradWing, TO_BYTES(30), cudaMemcpyDeviceToHost));                            // copies to h_percoll[0..29]
-            // checkCuda(cudaMemcpy(&h_percoll[numZCells - 30], &d_gradWing[numZCells - 30], TO_BYTES(30), cudaMemcpyDeviceToHost)); // copies to h_percoll[numZCells-30..numZCells-1]
 
-            if (ts_append(&w, savedTime, cfg.run.store, h_phi.data(), h_psi.data(), h_percoll.data()) != 0) {
+            if (ts_append(&w, t, cfg.run.store, h_phi.data(), h_psi.data(), h_percoll.data()) != 0) {
                 fprintf(stderr, "Failed to append timestep data to %s\n", outFilePath);
                 cleanup();
-                return failRun("Failed to append timestep data", currentStep, 0.0, 0.0, savedTime);
+                return failRun("Failed to append timestep data", i, 0.0, 0.0, t);
             }
 
             // measure time
@@ -434,9 +423,9 @@ int runSim(SimConfig &cfg) {
             checkCuda(cudaEventSynchronize(stopEvent));
             checkCuda(cudaEventElapsedTime(&milliseconds, startEvent, stopEvent));
             const double elapsedSec = milliseconds / 1000.0;
-            const double remainingSec = elapsedSec * double(NT - currentStep) / double(currentStep);
+            const double remainingSec = elapsedSec * double(NT - i) / double(i);
 
-            printf("step: %d/%d\n", currentStep, NT);
+            printf("step: %d/%d\n", i, NT);
             printf("runtime (sec): %.5f\n", elapsedSec);
             printf("remaining (sec): %.5f\n", remainingSec);
 
@@ -444,15 +433,21 @@ int runSim(SimConfig &cfg) {
                 progressPath,
                 ProgressState{
                     "running",
-                    currentStep,
+                    i,
                     NT,
                     elapsedSec,
                     remainingSec,
-                    savedTime,
+                    t,
                     outFilePath,
                     NULL,
                 });
+
+            lastSave = t;
         }
+
+        CuKernelUpdatePhiFVM<<<update_grid_dim, update_block_dim>>>(
+            d_phi,
+            d_F);
 
         t += DT;
     }

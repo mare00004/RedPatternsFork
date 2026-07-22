@@ -37,7 +37,7 @@ typedef struct {
     double L;
     double wingL;
     double sysL;
-    int NO;
+    double storeTime;
     StoreBitMap store;
     char outDir[256];
 } RunParams;

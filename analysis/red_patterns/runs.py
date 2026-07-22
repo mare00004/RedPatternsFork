@@ -138,7 +138,7 @@ class RunParamsData:
     DT: float
     DZ: float
     sysL: float
-    NO: int
+    storeTime: float
 
 
 @dataclass
@@ -260,7 +260,7 @@ class RunData:
                 DT=float(run_attrs["DT"]),
                 DZ=float(run_attrs["DZ"]),
                 sysL=float(run_attrs["sysL"]),
-                NO=int(run_attrs["NO"]),
+                storeTime=int(run_attrs["storeTime"]),
             )
 
             model = ModelParamsData(
@@ -568,7 +568,7 @@ def cli_args_from_run_h5(
             [
                 f"--T={f64(run_attrs['T'])}",
                 f"--DT={f64(run_attrs['DT'])}",
-                f"--NO={int(run_attrs['NO'])}",
+                f"--storeTime={int(run_attrs['storeTime'])}",
             ]
         )
 

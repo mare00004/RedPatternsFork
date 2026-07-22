@@ -22,6 +22,8 @@ void setDefaults(SimConfig *c) {
     double DZ = sysL / N;
     double fineDZ = sysL / M;
 
+    double DT = 0.005;
+
     StoreBitMap store = 0;
     BITMAP_ADD(store, PHI);
     BITMAP_ADD(store, PSI);
@@ -31,12 +33,12 @@ void setDefaults(SimConfig *c) {
             .N = N,
             .NT = 240000,
             .T = 1200,
-            .DT = 0.005,
+            .DT = DT,
             .DZ = DZ,
             .L = L,
             .wingL = wingL,
             .sysL = sysL,
-            .NO = 2000,
+            .storeTime = 500 * DT,
             .store = store,
             .outDir = "./",
         },
@@ -68,7 +70,7 @@ int printConfig(SimConfig *c) {
     printf("\t-> N: %d\n", c->run.N);
     printf("\t-> T: %f\n", c->run.T);
     printf("\t-> DT: %.5e\n", c->run.DT);
-    printf("\t-> NO: %d\n", c->run.NO);
+    printf("\t-> storeTime: %f\n", c->run.storeTime);
     printf("\t-> outDir: %s\n", c->run.outDir);
     if (c->model.modelType == CONV) {
         printf("-> Using Convolution-Model:\n");
@@ -93,8 +95,8 @@ int deriveAndValidateOrDie(SimConfig *c) {
     /************
      * VALIDATE *
      ************/
-    if (c->run.NO <= 0) {
-        fprintf(stderr, "NO needs to be positive!\n");
+    if (c->run.storeTime <= 0) {
+        fprintf(stderr, "storeTime needs to be positive!\n");
         return -1;
     }
     if (c->run.T <= 0) {

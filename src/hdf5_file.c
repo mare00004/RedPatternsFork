@@ -120,7 +120,7 @@ void writeConfig(hid_t file, const SimConfig *cfg) {
     writeF64Attr(g_run, "T", cfg->run.T);
     writeF64Attr(g_run, "DT", cfg->run.DT);
     writeF64Attr(g_run, "DZ", cfg->run.DZ);
-    writeU32Attr(g_run, "NO", cfg->run.NO);
+    writeU32Attr(g_run, "storeTime", cfg->run.storeTime);
     writeF64Attr(g_run, "sysL", cfg->run.sysL);
 
     /* /config/model */
