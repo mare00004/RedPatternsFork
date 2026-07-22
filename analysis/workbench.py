@@ -295,6 +295,7 @@ def cell_run(
             phi_path=_phi_path,
             kernel_path=_kernel_path,
             gradient=ui_gradient.value,
+            N=phi_cfg.N,
             t_final=float(ui_t_final.value),
             dt=float(ui_dt.value),
             storeTime=int(ui_storeTime.value),

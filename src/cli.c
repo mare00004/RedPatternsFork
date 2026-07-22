@@ -11,6 +11,7 @@
  */
 
 typedef struct {
+    struct arg_int *N;
     struct arg_dbl *T;
     struct arg_dbl *DT;
     struct arg_dbl *storeTime;
@@ -21,6 +22,9 @@ typedef struct {
 } CommonCLIArguments;
 
 void setCommonArguments(CommonCLIArguments *args, SimConfig *cfg) {
+    if (args->N->count > 0) {
+        cfg->run.N = args->N->ival[0];
+    }
     if (args->T->count > 0) {
         cfg->run.T = args->T->dval[0];
     }
@@ -65,6 +69,8 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     // COMMON
     struct arg_lit *cli_help =
         arg_litn(NULL, "help", 0, 1, "display this help and exit");
+    struct arg_int *cli_N =
+        arg_int0(NULL, "N", "<power of 2 int>", "number of grid points");
     struct arg_dbl *cli_T =
         arg_dbl0(NULL, "T", "<double>", "total simulation time in seconds");
     struct arg_dbl *cli_DT =
@@ -82,6 +88,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     struct arg_str *cli_store = arg_strn("s", "store", "phi|psi|percoll", 0, 3, "Arrays to store in HDF5 out file");
 
     CommonCLIArguments commonArgs = {
+        .N = cli_N,
         .T = cli_T,
         .DT = cli_DT,
         .storeTime = cli_storeTime,
@@ -94,7 +101,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     // TODO:
     // DEFAULT - ???
     struct arg_end *endDefault = arg_end(20);
-    void *argtableDefault[] = { cli_help, cli_T, cli_DT, cli_storeTime, cli_gradient, cli_outDir, cli_phiFile, endDefault };
+    void *argtableDefault[] = { cli_help, cli_N, cli_T, cli_DT, cli_storeTime, cli_gradient, cli_outDir, cli_phiFile, endDefault };
     int nErrorsDefault;
 
     // CONVOLUTION - Options that are only valid for the convolution branch
@@ -103,7 +110,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     struct arg_file *cli_kernelFile =
         arg_file1(NULL, "kernel-file", "<file>", "external HDF5 convolution kernel file");
     struct arg_end *endConv = arg_end(20);
-    void *argtableConv[] = { cli_help, cli_conv, cli_T, cli_DT, cli_storeTime, cli_gradient, cli_store, cli_outDir, cli_phiFile, cli_kernelFile, endConv };
+    void *argtableConv[] = { cli_help, cli_conv, cli_N, cli_T, cli_DT, cli_storeTime, cli_gradient, cli_store, cli_outDir, cli_phiFile, cli_kernelFile, endConv };
     int nErrorsConv;
 
     // TAYLOR - Options that are only valid for the taylor branch
@@ -112,7 +119,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     struct arg_dbl *cli_NU = arg_dbl0(NULL, "NU", "<double>", "interaction nu");
     struct arg_dbl *cli_MU = arg_dbl0(NULL, "MU", "<double>", "interaction mu");
     struct arg_end *endTayl = arg_end(20);
-    void *argtableTayl[] = { cli_help, cli_tayl, cli_T, cli_DT, cli_storeTime, cli_gradient, cli_store, cli_outDir, cli_phiFile, cli_NU, cli_MU, endTayl };
+    void *argtableTayl[] = { cli_help, cli_tayl, cli_N, cli_T, cli_DT, cli_storeTime, cli_gradient, cli_store, cli_outDir, cli_phiFile, cli_NU, cli_MU, endTayl };
     int nErrorsTayl;
 
     // UNIQUE ARGUMENTS - for freeing argtables
@@ -120,6 +127,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         cli_help,
         cli_conv,
         cli_tayl,
+        cli_N,
         cli_T,
         cli_DT,
         cli_storeTime,
@@ -151,7 +159,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     nErrorsTayl = arg_parse(argc, argv, argtableTayl);
 
     if (cli_help->count > 0) {
-        void *argtableCommon[] = { cli_T, cli_DT, cli_storeTime, cli_gradient, cli_store, cli_outDir, cli_phiFile, endDefault };
+        void *argtableCommon[] = { cli_N, cli_T, cli_DT, cli_storeTime, cli_gradient, cli_store, cli_outDir, cli_phiFile, endDefault };
         void *argsHelpConv[] = { cli_conv, cli_kernelFile, endConv };
         void *argsHelpTayl[] = { cli_tayl, cli_NU, cli_MU, endTayl };
 

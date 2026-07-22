@@ -46,6 +46,7 @@ def build_cli_args(
     phi_path: Path,
     kernel_path: Path | None,
     gradient: str,
+    N: int | None,
     t_final: float,
     dt: float,
     storeTime: float,
@@ -56,6 +57,7 @@ def build_cli_args(
     args = [
         str(binary_path),
         "--use-taylor" if mode == "Taylor" else "--use-convolution",
+        f"--N={N if N else 256}",
         f"--T={t_final}",
         f"--DT={dt}",
         f"--storeTime={storeTime}",

@@ -99,6 +99,10 @@ int deriveAndValidateOrDie(SimConfig *c) {
         fprintf(stderr, "storeTime needs to be positive!\n");
         return -1;
     }
+    if ((c->run.N < 32) || (c->run.N % 2 != 0)) {
+        fprintf(stderr, "N needs to be a power of 2 greater than 32");
+        return -1;
+    }
     if (c->run.T <= 0) {
         fprintf(stderr, "T needs to be positive!\n");
         return -1;
@@ -143,6 +147,13 @@ int deriveAndValidateOrDie(SimConfig *c) {
      * DERIVE *
      **********/
     c->run.NT = ceil(c->run.T / c->run.DT);
+
+    c->run.DZ = c->run.sysL / ((double)c->run.N);
+
+    if (c->model.modelType == CONV) {
+        c->model.variant.Conv.M = (c->run.N - 1) * c->model.variant.Conv.subDiv + 1;
+        c->model.variant.Conv.fineDZ = c->run.sysL / ((double)c->model.variant.Conv.M);
+    }
 
     if (c->model.gradientType == LINEAR) {
         c->model.alpha = 2.0e-05;
