@@ -10,7 +10,7 @@
 
 import marimo
 
-__generated_with = "0.23.14"
+__generated_with = "0.23.16"
 app = marimo.App(width="medium")
 
 
@@ -77,10 +77,10 @@ def _(mo):
     The Lennard-Jones potential is given by
 
     $$
-        u(r) = a \left[ \left( \frac{b}{r} \right)^{12} - 2 \left( \frac{b}{r} \right)^{6}\right]
+        u(r) = \alpha \left[ \left( \frac{\beta}{r} \right)^{12} - 2 \left( \frac{\beta}{r} \right)^{6}\right]
     $$
 
-    with $a, b \in \mathbb{R}$. The minimum is at $r_\text{min} = b$ with the value $u(r_\text{min}) = -a$.
+    with $\alpha, \beta \in \mathbb{R}$. The minimum is at $r_\text{min} = \beta$ with the value $u(r_\text{min}) = -\alpha$.
     """)
     return
 
@@ -103,10 +103,10 @@ def _(mo):
     The Morse potential is given by
 
     $$
-        u(r) = a (1 - e^{-b(r - c)})^2 - a
+        u(r) = \alpha (1 - e^{-\gamma(r - \beta)})^2 - \alpha
     $$
 
-    with $a, b, c \in \mathbb{R}$. The minimum is at $r_\text{min} = c$ with the value $u(r_\text{min}) = -a$.
+    with $\alpha, \beta, \gamma \in \mathbb{R}$. The minimum is at $r_\text{min} = \beta$ with the value $u(r_\text{min}) = -\alpha$.
     """)
     return
 
@@ -114,7 +114,7 @@ def _(mo):
 @app.cell
 def _(np):
     def pot_morse(r: np.ndarray, a: np.floating, b: np.floating, c: np.floating) -> np.ndarray:
-        return a * np.power(1 - np.exp(-b * (r - c)), 2) - a
+        return a * np.power(1 - np.exp(-c * (r - b)), 2) - a
 
     return (pot_morse,)
 
@@ -124,38 +124,81 @@ def _(mo):
     mo.md(r"""
     ### Comparision
 
-    Below you can see both of the potential plotted with similar coefficients....
+    Below you can see both of the potential plotted with similar coefficients.... as well as the pair distributions that we would get from $u(r) = - \varepsilon \ln g(r)$.
     """)
     return
 
 
 @app.cell
-def _(mo, np, plt, pot_lennard_jones, pot_morse):
-    fig, ax = plt.subplots(figsize=(8, 6))
+def _(mo):
+    ui_alpha = mo.ui.slider(-10, 10, 0.1, value=2, label=r"$\alpha$", show_value=True)
+    ui_beta = mo.ui.slider(-10, 10, 0.1, value=2, label=r"$\beta$", show_value=True)
+    ui_gamma = mo.ui.slider(-10, 10, 0.1, value=2, label=r"$\gamma$", show_value=True)
+    return ui_alpha, ui_beta, ui_gamma
+
+
+@app.cell
+def _(mo, ui_alpha, ui_beta, ui_gamma):
+    mo.hstack([ui_alpha, ui_beta, ui_gamma])
+    return
+
+
+@app.cell
+def _(mo, np, plt, pot_lennard_jones, pot_morse, ui_alpha, ui_beta, ui_gamma):
+    fig, (ax_pot, ax_g) = plt.subplots(1, 2, figsize=(10,5))
 
     r = np.linspace(1, 10, 1000)
 
-    a = 2
-    b = 2
-    c = b
+    _alpha = ui_alpha.value
+    _beta = ui_beta.value
+    _gamma = ui_gamma.value
 
-    pot_len = pot_lennard_jones(r, a, b)
-    pot_mor = pot_morse(r, a, b, c)
+    pot_len = pot_lennard_jones(r, _alpha, _beta)
+    pot_mor = pot_morse(r, _alpha, _beta, _gamma)
 
-    u_len = lambda t: pot_lennard_jones(t, a, b)
-    u_mor = lambda t: pot_morse(t, a, b, c)
+    u_len = lambda t: pot_lennard_jones(t, _alpha, _beta)
+    u_mor = lambda t: pot_morse(t, _alpha, _beta, _gamma)
 
-    ax.plot(r, pot_len, "r-", label="Lennard-Jones Potential")
+    u_mor_max = _alpha * ((1 - np.exp(_beta * _gamma))**2) - _alpha
 
-    ax.plot(r, pot_mor, "b-", label="Morse Potential")
+    ##############################
 
-    ax.set_xlim([1, 5])
-    ax.set_ylim([-3, 5])
-    ax.hlines([0], xmin=0, xmax=8, colors="grey", linestyles="dashed")
-    ax.legend()
+    ax_pot.plot(r, pot_len, "r-", label="Lennard-Jones Potential")
+    ax_pot.plot(r, pot_mor, "b-", label="Morse Potential")
 
-    mo.ui.matplotlib(ax)
-    return pot_len, pot_mor, r, u_len, u_mor
+    ax_pot.set_xlim([1, 5])
+    ax_pot.set_ylim([-2 * _alpha, 2*_alpha])
+    ax_pot.hlines([0], xmin=0, xmax=8, colors="grey", linestyles="dashed")
+    # ax_pot.vlines([0], ymin=-2*_alpha, ymax=+2*_alpha, colors="red", linestyles="dashed")
+    ax_pot.legend()
+    ax_pot.set_title("Pair Potential")
+    ax_pot.set_xlabel("r")
+    ax_pot.set_xlabel("u(r)")
+    ax_pot.set_box_aspect(1)
+
+
+    #############################
+
+    ep = 1
+
+    g_len = np.exp(- pot_len / ep)
+    g_mor = np.exp(- pot_mor / ep)
+
+
+    ax_g.plot(r, g_len, "r-", label="PDF (Lennard-Jones)")
+    ax_g.plot(r, g_mor, "b-", label="PDF (Morse)")
+
+    ax_g.hlines([1], xmin=r[0], xmax=r[-1], colors="grey", linestyles="dashed")
+
+    ax_g.set_title("Pair Distribution Functions")
+    ax_g.legend()
+
+    ax_g.set_xlabel("r")
+    ax_g.set_ylabel("g(r)")
+    ax_g.set_box_aspect(1)
+
+    mo.ui.matplotlib(ax_pot)
+    return pot_len, pot_mor, r
 
 
 @app.cell(hide_code=True)
@@ -186,27 +229,71 @@ def _(np):
 
 @app.cell
 def _(mo):
-    ui_a = mo.ui.slider(-10, 10, 0.1, value=1, label="$a$", show_value=True)
-    ui_b = mo.ui.slider(-10, 10, 0.1, value=1, label="$b$", show_value=True)
-    ui_c = mo.ui.slider(-10, 10, 0.1, value=1, label="$c$", show_value=True)
-
-    mo.hstack([ui_a, ui_b, ui_c])
+    ui_a = mo.ui.slider(-10, 10, 0.1, value=2, label="$a$", show_value=True)
+    ui_b = mo.ui.slider(-10, 10, 0.1, value=2, label="$b$", show_value=True)
+    ui_c = mo.ui.slider(-10, 10, 0.1, value=2, label="$c$", show_value=True)
     return ui_a, ui_b, ui_c
 
 
 @app.cell
-def _(mo, plt, pot_effective, pot_len, pot_mor, r, ui_a, ui_b, ui_c):
+def _(mo, ui_a, ui_b, ui_c):
+    mo.hstack([ui_a, ui_b, ui_c])
+    return
+
+
+@app.cell
+def _(
+    mo,
+    np,
+    plt,
+    pot_effective,
+    pot_len,
+    pot_mor,
+    r,
+    ui_a,
+    ui_alpha,
+    ui_b,
+    ui_beta,
+    ui_c,
+):
     _fig, _ax = plt.subplots(figsize=(8, 6))
 
     _pot_eff_len = pot_effective(pot_len, ui_a.value, ui_b.value, ui_c.value)
     _pot_eff_mor = pot_effective(pot_mor, ui_a.value, ui_b.value, ui_c.value)
 
-    _ax.plot(r, _pot_eff_len, "b-", label="Effective Potential (Lennard-Jones)")
-    _ax.plot(r, _pot_eff_mor, "r-", label="Effective Potential (Morse)")
+
+    _eff_max = ui_a.value * (np.exp(ui_alpha.value / ui_b.value) - 1) + ui_c.value * ui_alpha.value
+    _ylim = 1.2 * _eff_max
+
+    _ax.plot(r, _pot_eff_len, "r-", label="Effective Potential (Lennard-Jones)")
+    _ax.plot(r, _pot_eff_mor, "b-", label="Effective Potential (Morse)")
+
+    _ax.hlines([0], xmin=0, xmax=6, color="grey", linestyle="dashed")
+    _ax.vlines([ui_beta.value], ymin=-_ylim, ymax=_ylim, colors="grey", linestyles="dashed")
 
     _ax.set_xlim([0, 6])
-    _ax.set_ylim([-10, 10])
+    _ax.set_ylim([-_ylim, _ylim])
     _ax.legend()
+
+    ###########
+    # Add $\beta$ x tick
+    # See: https://matplotlib.org/stable/users/explain/axes/axes_ticks.html#tick-objects
+    _beta = ui_beta.value
+    _xticks = _ax.get_xticks()
+
+    try:
+        i = _xticks.index(_beta)[0]
+    except:
+        i = int(np.where(_beta >= _xticks)[0][-1]) + 1
+        _xticks = np.concatenate([_xticks[:i], [_beta], _xticks[i:]])
+
+    # Build label list — format numeric ticks, use LaTeX for the beta tick
+    _labels = [f"{t:.1f}" for t in _xticks]
+    _labels[i] = r"$\beta$"
+
+    _ax.set_xticks(_xticks)
+    _ax.set_xticklabels(_labels)
+    ###########
 
     mo.ui.matplotlib(_ax)
     return
@@ -217,65 +304,305 @@ def _(mo):
     mo.md(r"""
     ## Kernel
 
-    The interaction kernel will be, the "force closure", of the effective potential, i.e.
+    The interaction kernel will be,
 
     $$
-        K(x) = - x \int_{|x|}^{\infty} g(r) u_{\text{eff}}'(r) \;d r
+        K(x) = x \; u_{\text{eff}}(|x|)
     $$
-
-    which can be simplified to
-
-    $$
-        K(x) = x \left(e^{-\frac{u(|x|)}{b}} - 1\right) \left[\frac{a}{2} \left(e^{- \frac{u(|x|)}{b}} + 1\right) + bc\right]
-    $$
-
-    Where $a, b, c$ are the parameters of the effective potential.
     """)
     return
 
 
 @app.cell
 def _(np):
-    # def kernel(x: np.ndarray, pot: np.ndarray, a, b, c):
-    #     """
-    #     x has to be positive and start at 0
-    #     """
-    #     x_pos = x[x >= 0]
-    #     k_pos = x_pos * (np.exp(- pot / b) - 1) * ( (a / 2) * (np.exp(- pot / b) + 1) + b * c) 
-    #     return np.concat([-k_pos[::-1], k_pos[0::]])
-
-    def kernel(x: np.ndarray, pot: np.ufunc, a, b, c):
-        return x * (np.exp(- pot(np.abs(x)) / b) - 1) * ( (a / 2) * (np.exp(- pot(np.abs(x)) / b) + 1) + b * c) 
+    def kernel(x: np.ndarray, pot: np.ufunc):
+        return x * pot(np.abs(x))
 
     return (kernel,)
 
 
 @app.cell
-def _(mo, ui_a, ui_b, ui_c):
-    mo.hstack([
-        ui_a, ui_b, ui_c
-    ])
+def _(mo, ui_a, ui_alpha, ui_b, ui_beta, ui_c, ui_gamma):
+    mo.vstack(
+        [
+            mo.hstack([ui_a, ui_b, ui_c]),
+            mo.hstack([ui_alpha, ui_beta, ui_gamma]),
+        ]
+    )
     return
 
 
 @app.cell
-def _(kernel, mo, np, plt, u_len, u_mor, ui_a, ui_b, ui_c):
+def _(
+    kernel,
+    mo,
+    np,
+    plt,
+    pot_effective,
+    pot_lennard_jones,
+    pot_morse,
+    ui_a,
+    ui_alpha,
+    ui_b,
+    ui_beta,
+    ui_c,
+    ui_gamma,
+):
     _fig, _ax = plt.subplots(figsize=(8, 6))
 
     x = np.linspace(-10, 10, 2000) 
 
-    kernel_len = kernel(x, u_len, ui_a.value, ui_b.value, ui_c.value)
-    kernel_mor = kernel(x, u_mor, ui_a.value, ui_b.value, ui_c.value)
+    fn_pot_len = lambda t: pot_lennard_jones(t, ui_alpha.value, ui_beta.value)
+    fn_pot_mor = lambda t: pot_morse(t, ui_alpha.value, ui_beta.value, ui_gamma.value)
 
-    _ax.plot(x, kernel_len, "b-", label="Kernel (Lennard-Jones)")
-    _ax.plot(x, kernel_mor, "r-", label="Kernel (Morse)")
+    fn_eff_pot_len = lambda t: pot_effective(fn_pot_len(t), ui_a.value, ui_b.value, ui_c.value)
+    fn_eff_pot_mor = lambda t: pot_effective(fn_pot_mor(t), ui_a.value, ui_b.value, ui_c.value)
 
-    _ax.set_xlim([-10, 10])
-    _ax.set_ylim([-50, 50])
+    kernel_len = kernel(x, fn_eff_pot_len)
+    kernel_mor = kernel(x, fn_eff_pot_mor)
+
+    _ax.plot(x, kernel_len, "r-", label="Kernel (Lennard-Jones)")
+    _ax.plot(x, kernel_mor, "b-", label="Kernel (Morse)")
+
+    _ax.hlines([0], xmin=-10, xmax=10, color="grey", linestyle="dashed")
+
+    # _xmax = 2 * ui_beta.value
+    _xmax = 10
+    _ymax = 1.2 * np.max(kernel_mor)
+
+    _ax.set_xlim([-_xmax , +_xmax])
+    _ax.set_ylim([-_ymax, _ymax])
     _ax.legend()
 
     mo.ui.matplotlib(_ax)
     return kernel_len, kernel_mor, x
+
+
+@app.cell
+def _(MU, NU, a_len, b_len, latex_scientific, mo, solve_morse_system):
+    # Use physical Morse parameters matching the LJ potential
+    # alpha = a_len = U = 100e-18 J (depth)
+    # beta  = b_len = 2^(1/6) * SIGMA ~ 6.29e-6 m (minimum position)
+    # gamma is free — choose to match LJ curvature at the minimum:
+    #   For LJ:  u''(r_min) = 72 * alpha / beta^2
+    #   For Morse: u''(r_min) = 2 * alpha * gamma^2
+    #   => gamma = sqrt(36 / beta^2) = 6 / beta
+
+    gamma_test = 6.0 / b_len
+    b_test = 1e-10  # effective potential parameter b (order of U)
+
+    a_sol, c_sol, M_mat, cond_num = solve_morse_system(
+        a_len, b_len, gamma_test, b_test, NU, MU
+    )
+
+    mo.md(rf"""
+    **Solved parameters** (Morse potential with $\gamma = 6/\beta$):
+
+    $$
+        a = {latex_scientific(a_sol)}, \quad c = {latex_scientific(c_sol)}
+    $$
+
+    **Moment matrix:**
+
+    $$
+        M = \begin{{pmatrix}}
+        {latex_scientific(M_mat[0,0])} & {latex_scientific(M_mat[0,1])} \\
+        {latex_scientific(M_mat[1,0])} & {latex_scientific(M_mat[1,1])}
+        \end{{pmatrix}}
+    $$
+
+    **Condition number:** $\kappa = {latex_scientific(cond_num)}$
+    """)
+    return a_sol, b_test, c_sol, gamma_test
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## Moment-Based Solver for the Morse Potential
+
+    Given the Morse potential $u(r) = \alpha (1 - e^{-\gamma(r - \beta)})^2 - \alpha$ and a fixed effective potential parameter $b$, we can solve for $a$ and $c$ analytically via a linear system.
+
+    The moments (including the factor of 2 from the symmetric $(-\infty, +\infty)$ integration) are:
+
+    $$
+        M_n^{(e)}(b) = 2 \int_0^\infty dr \, r^n \left( e^{-u(r)/b} - 1 \right), \qquad
+        M_n^{(u)} = 2 \int_0^\infty dr \, r^n \, u(r)
+    $$
+
+    The linear system to solve is:
+
+    $$
+        \begin{pmatrix} \nu \\ 6\mu \end{pmatrix} =
+        \begin{pmatrix} M_2^{(e)}(b) & -M_2^{(u)} \\ M_4^{(e)}(b) & -M_4^{(u)} \end{pmatrix}
+        \begin{pmatrix} a \\ c \end{pmatrix}
+    $$
+    """)
+    return
+
+
+@app.cell
+def _(MU, NU, cond, np, pot_morse, quad, solve):
+    def solve_morse_system(alpha_m, beta_m, gamma_m, b_eff, nu_target=NU, mu_target=MU):
+        """
+        Given Morse potential parameters (alpha_m, beta_m, gamma_m) and the
+        effective potential parameter b_eff, solve the linear system
+
+            [nu    ]   [M2_e(b)  -M2_u] [a]
+            [6*mu  ] = [M4_e(b)  -M4_u] [c]
+
+        for a and c, using the Morse potential
+            u(r) = alpha_m * (1 - exp(-gamma_m * (r - beta_m)))^2 - alpha_m
+
+        Returns (a, c, M_mat, cond_num) where M_mat is the moment matrix.
+        """
+        def u(r):
+            return pot_morse(r, alpha_m, beta_m, gamma_m)
+
+        def safe_exp(z):
+            if z > 700:
+                return np.exp(700)
+            if z < -745:
+                return 0.0
+            return np.exp(z)
+
+        def integrate_half(f, limit=500):
+            """Integrate f from 0 to inf, splitting at the Morse minimum for stability."""
+            val1, _ = quad(f, 0, beta_m, limit=limit)
+            val2, _ = quad(f, beta_m, np.inf, limit=limit)
+            return val1 + val2
+
+        # Compute moments (factor of 2 for symmetric integration from -inf to +inf)
+        M2_e = 2 * integrate_half(lambda r: r**2 * (safe_exp(-u(r) / b_eff) - 1))
+        M2_u = 2 * integrate_half(lambda r: r**2 * u(r))
+        M4_e = 2 * integrate_half(lambda r: r**4 * (safe_exp(-u(r) / b_eff) - 1))
+        M4_u = 2 * integrate_half(lambda r: r**4 * u(r))
+
+        # Assemble and solve the linear system
+        M_mat = np.array([
+            [M2_e, -M2_u],
+            [M4_e, -M4_u]
+        ])
+
+        rhs = np.array([nu_target, 6 * mu_target])
+
+        a_sol, c_sol = solve(M_mat, rhs)
+
+        return a_sol, c_sol, M_mat, cond(M_mat)
+
+    return (solve_morse_system,)
+
+
+@app.cell
+def _(np, plt, pot_effective, pot_morse):
+    def plot_morse_analysis(
+        alpha_m, beta_m, gamma_m, a_eff, b_eff, c_eff,
+        eps=1.0, r_max=None, x_max=None
+    ):
+        """
+        Plot the Morse potential, pair distribution function,
+        effective potential, and kernel for the given parameters.
+
+        Parameters
+        ----------
+        alpha_m, beta_m, gamma_m : float
+            Morse potential parameters.
+        a_eff, b_eff, c_eff : float
+            Effective potential parameters (a, b, c).
+        eps : float
+            Energy scale for g(r) = exp(-u(r)/eps). Default 1.0.
+        r_max : float, optional
+            Upper r limit. Defaults to 3 * beta_m.
+        x_max : float, optional
+            Upper eta limit for kernel. Defaults to 3 * beta_m.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+        """
+        if r_max is None:
+            r_max = 3 * beta_m
+        if x_max is None:
+            x_max = 3 * beta_m
+
+        r_pos = np.linspace(0.01 * beta_m, r_max, 2000)
+        x_full = np.linspace(-x_max, x_max, 4000)
+
+        # 1. Morse potential
+        u_r = pot_morse(r_pos, alpha_m, beta_m, gamma_m)
+
+        # 2. Pair distribution function
+        g_r = np.exp(-u_r / eps)
+
+        # 3. Effective potential
+        u_eff_r = pot_effective(u_r, a_eff, b_eff, c_eff)
+
+        # 4. Kernel: K(eta) = eta * u_eff(|eta|)
+        u_eff_abs = pot_effective(
+            pot_morse(np.abs(x_full), alpha_m, beta_m, gamma_m),
+            a_eff, b_eff, c_eff,
+        )
+        K_x = x_full * u_eff_abs
+
+        _fig, ((_ax1, _ax2), (_ax3, _ax4)) = plt.subplots(
+            2, 2, figsize=(12, 10)
+        )
+
+        # --- Morse potential ---
+        _ax1.plot(r_pos, u_r, "b-")
+        _ax1.axhline(0, color="grey", linestyle="--", linewidth=0.8)
+        _ax1.axvline(beta_m, color="grey", linestyle="--", linewidth=0.8)
+        _ax1.set_xlabel(r"$r$")
+        _ax1.set_ylabel(r"$u(r)$")
+        _ax1.set_title("Morse Potential")
+        _ax1.set_box_aspect(1)
+
+        # --- Pair distribution ---
+        _ax2.plot(r_pos, g_r, "r-")
+        _ax2.axhline(1, color="grey", linestyle="--", linewidth=0.8)
+        _ax2.set_xlabel(r"$r$")
+        _ax2.set_ylabel(r"$g(r)$")
+        _ax2.set_title(r"Pair Distribution ($\varepsilon = %g$)" % eps)
+        _ax2.set_box_aspect(1)
+
+        # --- Effective potential ---
+        _ax3.plot(r_pos, u_eff_r, "g-")
+        _ax3.axhline(0, color="grey", linestyle="--", linewidth=0.8)
+        _ax3.axvline(beta_m, color="grey", linestyle="--", linewidth=0.8)
+        _ax3.set_xlabel(r"$r$")
+        _ax3.set_ylabel(r"$u_{\mathrm{eff}}(r)$")
+        _ax3.set_title("Effective Potential")
+        _ax3.set_box_aspect(1)
+
+        # --- Kernel ---
+        _ax4.plot(x_full, K_x, "m-")
+        _ax4.axhline(0, color="grey", linestyle="--", linewidth=0.8)
+        _ax4.axvline(0, color="grey", linestyle="--", linewidth=0.8)
+        _ax4.set_xlabel(r"$\eta$")
+        _ax4.set_ylabel(r"$K(\eta)$")
+        _ax4.set_title("Kernel")
+        _ax4.set_box_aspect(1)
+
+        _fig.tight_layout()
+        return _fig
+
+    return (plot_morse_analysis,)
+
+
+@app.cell
+def _(a_len, a_sol, b_len, b_test, c_sol, gamma_test, mo, plot_morse_analysis):
+    _fig = plot_morse_analysis(
+        alpha_m=a_len,
+        beta_m=b_len,
+        gamma_m=gamma_test,
+        a_eff=a_sol,
+        b_eff=b_test,
+        c_eff=c_sol,
+        eps=1.0,
+    )
+
+    mo.ui.matplotlib(_fig.gca())
+    return
 
 
 @app.cell(hide_code=True)
@@ -342,7 +669,7 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(SIGMA, U, latex_scientific, mo):
     mo.md(rf"""
-    the parameters have to be $U = {latex_scientific(U)} \text{{J}}$ and $\sigma = {latex_scientific(SIGMA)} \text{{m}}$. The relation between those parameters and our parameters are $a_\text{{LJ}} = U$ and $b_\text{{LJ}} = \sqrt[6]{2} \sigma$.
+    the parameters have to be $U = {latex_scientific(U)} \text{{J}}$ and $\sigma = {latex_scientific(SIGMA)} \text{{m}}$. The relation between those parameters and our parameters are $\alpha = U$ and $\beta = \sqrt[6]{2} \sigma$.
     """)
     return
 
@@ -350,7 +677,7 @@ def _(SIGMA, U, latex_scientific, mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    For the Morse-Potential we require that its minimum coincides with that of the Leannard-Jones Potential. This fixes $a_\text{Morse} = a_\text{LJ}$ and $c_\text{Morse} = b_\text{LJ}$ and leaves $b_\text{Morse}$ free.
+    For the Morse-Potential we require that its minimum coincides with that of the Leannard-Jones Potential. This fixes $\alpha_\text{Morse} = \alpha_\text{LJ}$ and $\beta_\text{Morse} = \beta_\text{LJ}$ and leaves $\gamma_\text{Morse}$ free.
     """)
     return
 
@@ -423,7 +750,7 @@ def _(MU, NU, a_len, b_len, cond, np, quad, solve):
                 return np.inf
             inv = 1.0 / y
             return inv**12 - 2.0 * inv**6
-        
+
         if y == 0:
             return 0.0
 
@@ -435,7 +762,7 @@ def _(MU, NU, a_len, b_len, cond, np, quad, solve):
             return np.exp(700)
 
         return np.exp(z)
-    
+
     def integrate_y(f, limit=500):
         y0 = 2 ** (-1 / 6)
 
@@ -481,7 +808,7 @@ def _(MU, NU, a_len, b_len, cond, np, quad, solve):
             [A_nu, D_nu],
             [A_mu, D_mu]
         ])
-    
+
     def initial_guess_from_beta(beta):
         M = moment_matrix(beta)
         rhs = np.array([NU, MU])
