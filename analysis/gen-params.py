@@ -10,7 +10,7 @@
 
 import marimo
 
-__generated_with = "0.23.9"
+__generated_with = "0.23.16"
 app = marimo.App(width="medium", sql_output="native")
 
 with app.setup:
@@ -125,9 +125,9 @@ def _():
 def _():
     initial_code = """phi = PhiSweep(
         psi_avg=[0.02],
-        phi_type=[PhiType.GAUSSIAN],
-        gaussian_mu=[1100.0],
-        gaussian_sigma=[4.0],
+        phi_type=[PhiType.HOMOGENEOUS],
+        N=[256],
+        wing=[32],
     )
 
     kernel = KernelSweep(
@@ -142,19 +142,21 @@ def _():
     mu_sweep = np.geomspace(mu * 0.01, mu * 100, num=5)
 
     tayl_sweep = TaylSweep(
-        T=[1800.0],
-        DT=[5.0e-04],
-        NO=[3000],
-        gradient=[Gradient.SIGMOID],
+        N=[256],
+        T=[1000.0],
+        DT=[1e-3],
+        storeTime=[1],
+        gradient=[Gradient.LINEAR],
         phi=phi,
         NU=nu_sweep,
         MU=mu_sweep,
     )
 
     conv_sweep = ConvSweep(
-        T=[1800.0],
-        DT=[5.0e-04],
-        NO=[3000],
+        N=[256],
+        T=[1000.0],
+        DT=[1e-3],
+        storeTime=[1],
         gradient=[Gradient.SIGMOID],
         phi=phi,
         kernel=kernel,

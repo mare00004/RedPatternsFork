@@ -197,9 +197,10 @@ class KernelSweep:
 
 @dataclass(frozen=True, kw_only=True)
 class SimulationSweep:
+    N: Sequence[int]
     T: Sequence[float]
     DT: Sequence[float]
-    NO: Sequence[int]
+    storeTime: Sequence[float]
     gradient: Sequence[Gradient | str]
     phi: PhiSweep
 
@@ -213,9 +214,10 @@ class SimulationSweep:
     def to_runs(self) -> list[RunPayload]:
         sim_rows = _dict_product(
             {
+                "N": self.N,
                 "T": self.T,
                 "DT": self.DT,
-                "NO": self.NO,
+                "storeTime": self.storeTime,
                 "gradient": self.gradient,
             }
         )
@@ -277,6 +279,7 @@ def normalize_runs(value: Any) -> list[RunPayload]:
     )
 
 
+# FIX: fix to match new params
 def validate_run_payload(run: RunPayload, *, line_number: int | None = None) -> None:
     prefix = "" if line_number is None else f"line {line_number}: "
     run_id = run.get("run_id")
@@ -287,11 +290,9 @@ def validate_run_payload(run: RunPayload, *, line_number: int | None = None) -> 
     if variant not in {Variant.TAYLOR.value, Variant.CONVOLUTION.value}:
         raise ValueError(f"{prefix}invalid `variant`: {variant!r}.")
 
-    for key in ("T", "DT"):
+    for key in ("T", "DT", "storeTime"):
         if not isinstance(run.get(key), (int, float)):
             raise ValueError(f"{prefix}`{key}` must be numeric.")
-    if not isinstance(run.get("NO"), int):
-        raise ValueError(f"{prefix}`NO` must be an integer.")
     if not isinstance(run.get("gradient"), str):
         raise ValueError(f"{prefix}`gradient` must be a string.")
 
