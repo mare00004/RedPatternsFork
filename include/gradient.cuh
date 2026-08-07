@@ -10,18 +10,28 @@
  * LINEAR *
  **********/
 
-constexpr double P = 18.0;
+// constexpr double P = 18.0;
+// constexpr double P = 30.1;
 constexpr double offset = 0.002;
 // FIX: that shouldn't be hardcoded
 constexpr double R_min = -30.0;
 constexpr double R_max = 30.0;
 
 __device__ __forceinline__ double p_func(double x) {
-    return (P / d_cfg.run.L) * (x - (d_cfg.run.L / 2.0));
+    // FIX: No magic numbers
+    const double DR = 30.0 / ((double)d_cfg.run.N);
+    const double L = d_cfg.run.L;
+    const double DZ = d_cfg.run.DZ;
+    const double P = (DR / DZ) * L;
+    return (P / L) * (x - (d_cfg.run.L / 2.0));
 }
 
 __device__ __forceinline__ double l_func(double x) {
+    // FIX: No magic numbers
+    const double DR = 30.0 / ((double)d_cfg.run.N);
     const double L = d_cfg.run.L;
+    const double DZ = d_cfg.run.DZ;
+    const double P = (DR / DZ) * L;
     const double wingL = d_cfg.run.wingL;
     const double t = offset - wingL;
     const double a = ((P / 2.0) + R_min - ((P / L) * t)) / (t * t);
