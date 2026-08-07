@@ -324,7 +324,12 @@ __global__ void CuKernelComputeFluxFVM(
 
     const double phi_up = (v_face > 0.0) ? phi_left : phi_right;
 
-    J[fidx] = v_face * phi_up;
+    // FIX: Diffusion Flux
+    // const double D_Z = 10e-10;
+    const double D_Z = 0.0;
+    const double diff_flux = -D_Z * (phi_right - phi_left) / d_cfg.run.DZ;
+
+    J[fidx] = v_face * phi_up + diff_flux;
 }
 
 __global__ void CuKernelUpdatePhiFVM(
