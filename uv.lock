@@ -1406,6 +1406,11 @@ dependencies = [
 dev = [
     { name = "mypy" },
 ]
+sweep = [
+    { name = "h5py" },
+    { name = "numpy" },
+    { name = "pydantic" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1421,6 +1426,11 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [{ name = "mypy", specifier = ">=2.1.0" }]
+sweep = [
+    { name = "h5py", specifier = ">=3.16.0" },
+    { name = "numpy", specifier = ">=2.4.5" },
+    { name = "pydantic", specifier = ">=2.0,<3" },
+]
 
 [[package]]
 name = "scipy"

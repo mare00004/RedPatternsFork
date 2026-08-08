@@ -77,16 +77,23 @@ FROM nvidia/cuda:${CUDA_VER}-runtime-ubuntu24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Minimal Python runtime for sweep orchestration inside the container.
+# uv-managed Python runtime for sweep orchestration inside the container.
+COPY --from=ghcr.io/astral-sh/uv:0.11.24 /uv /uvx /bin/
+
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get -o Acquire::Check-Date=false -o Acquire::Check-Valid-Until=false update \
  && apt-get install -y --no-install-recommends \
     python3 \
-    python3-h5py \
-    python3-numpy \
-    python3-pydantic \
  && rm -rf /var/lib/apt/lists/*
+
+ENV UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=0
+
+COPY pyproject.toml README.md uv.lock /opt/red-patterns/
+WORKDIR /opt/red-patterns
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --only-group sweep
 
 # Copy the executable
 COPY --from=build /opt/red-patterns/bin/red-patterns /bin/red-patterns
