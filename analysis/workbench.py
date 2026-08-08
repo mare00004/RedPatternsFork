@@ -4,6 +4,7 @@
 #     "marimo",
 #     "matplotlib==3.10.8",
 #     "numpy==2.4.3",
+#     "pydantic==2.13.4",
 #     "scipy==1.17.1",
 #     "wigglystuff==0.3.3",
 # ]

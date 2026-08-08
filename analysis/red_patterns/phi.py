@@ -29,7 +29,8 @@ For mathematical details see ``analysis/phi_init.py``.
 """
 
 from __future__ import annotations
-from typing import Any
+from abc import ABC, abstractmethod
+from typing import Any, ClassVar
 
 import argparse
 from dataclasses import dataclass
@@ -39,6 +40,7 @@ import h5py
 import numpy as np
 from numpy.typing import NDArray
 
+from .models import PHI_PARAMS_ADAPTER, PhiParams, PhiParamsBase
 from .types import PhiType
 
 Array1F = NDArray[np.float64]
@@ -90,6 +92,55 @@ class PhiConfig:
     gaussian_blob_mu_z: float | None = None
     gaussian_blob_sigma_z: float | None = None
     single_bin_idx: int | None = None
+
+    @classmethod
+    def from_params(
+        cls, params: PhiParams, output_path: str | Path = "initial_phi.h5"
+    ) -> PhiConfig:
+        """Build a config from a validated :data:`PhiParams` model.
+
+        ``params`` may also be a plain dict; it is run through
+        :data:`PHI_PARAMS_ADAPTER` first.  The single wire-level ``wing`` entry
+        is split into ``wing_z``/``wing_r`` for the compute path.
+        """
+        if not isinstance(params, PhiParamsBase):
+            params = PHI_PARAMS_ADAPTER.validate_python(params)  # type: ignore[redundant-cast]
+        gaussian_mu = getattr(params, "gaussian_mu", None)
+        gaussian_sigma = getattr(params, "gaussian_sigma", None)
+        gaussian_blob_mu_z = getattr(params, "gaussian_blob_mu_z", None)
+        gaussian_blob_sigma_z = getattr(params, "gaussian_blob_sigma_z", None)
+        single_bin_idx = getattr(params, "single_bin_idx", None)
+        return cls(
+            output_path=Path(output_path),
+            phi_type=PhiType(params.phi_type),
+            psi_avg=float(params.psi_avg),
+            N=int(params.N),
+            wing_z=int(params.wing),
+            wing_r=int(params.wing),
+            rho_center=float(params.rho_center),
+            rho_span=float(params.rho_span),
+            dz=float(params.dz),
+            rho_range=float(getattr(params, "rho_range", DEFAULT_RHO_RANGE)),
+            gaussian_mu=(
+                float(gaussian_mu) if gaussian_mu is not None else None
+            ),
+            gaussian_sigma=(
+                float(gaussian_sigma) if gaussian_sigma is not None else None
+            ),
+            gaussian_blob_mu_z=(
+                float(gaussian_blob_mu_z)
+                if gaussian_blob_mu_z is not None
+                else None
+            ),
+            gaussian_blob_sigma_z=(
+                float(gaussian_blob_sigma_z)
+                if gaussian_blob_sigma_z is not None
+                else None
+            ),
+            single_bin_idx=(
+                int(single_bin_idx) if single_bin_idx is not None else None
+            ),
+        )
 
 
 @dataclass
@@ -256,22 +307,77 @@ def build_phi_axes(
     return rho, z
 
 
-def compute_phi(cfg: PhiConfig) -> PhiResult:
-    """Build the wing-applied, renormalized initial phi field."""
-    rho, z = build_phi_axes(
-        N=cfg.N, rho_center=cfg.rho_center, rho_span=cfg.rho_span, dz=cfg.dz
-    )
+# --------------------------------------------------------------------------- #
+# Phi field hierarchy
+# --------------------------------------------------------------------------- #
 
-    if cfg.phi_type == PhiType.GAUSSIAN:
+
+class PhiField(ABC):
+    """Base class for initial phi field generators.
+
+    Each concrete subclass corresponds to one :class:`PhiType` member and owns
+    the math (``build``), parameter validation, and HDF5 metadata for that
+    distribution.  ``compute_phi``/``write_phi_h5`` dispatch to the subclass
+    through :data:`PHI_FIELD_TYPES` instead of a mutable ``if/elif`` chain.
+    """
+
+    phi_type: ClassVar[PhiType]
+
+    def __init__(self, cfg: PhiConfig) -> None:
+        self.cfg = cfg
+
+    @abstractmethod
+    def build(self, rho: Array1F, z: Array1F) -> Array2F:
+        """Return the raw field ``phi[rho_idx, z_idx]`` for this distribution.
+
+        Callers are responsible for applying wings and renormalization.
+        """
+
+    def validate(self) -> list[str]:
+        """Return human-readable configuration errors, empty if valid."""
+        return []
+
+    def write_metadata(self, group: h5py.Group) -> None:
+        """Write type-specific attributes to the ``phi`` HDF5 group."""
+
+
+class GaussianPhi(PhiField):
+    phi_type = PhiType.GAUSSIAN
+
+    def build(self, rho: Array1F, z: Array1F) -> Array2F:
+        cfg = self.cfg
         assert cfg.gaussian_mu is not None
         assert cfg.gaussian_sigma is not None
-        phi = phi_gaussian(rho, z, cfg.psi_avg, cfg.gaussian_mu, cfg.gaussian_sigma)
-    elif cfg.phi_type == PhiType.GAUSSIAN_BLOB:
+        return phi_gaussian(rho, z, cfg.psi_avg, cfg.gaussian_mu, cfg.gaussian_sigma)
+
+    def validate(self) -> list[str]:
+        errors: list[str] = []
+        cfg = self.cfg
+        if cfg.gaussian_mu is None:
+            errors.append("gaussian_mu is required for a Gaussian phi field.")
+        if cfg.gaussian_sigma is None:
+            errors.append("gaussian_sigma is required for a Gaussian phi field.")
+        elif cfg.gaussian_sigma <= 0.0:
+            errors.append("gaussian_sigma must be positive.")
+        return errors
+
+    def write_metadata(self, group: h5py.Group) -> None:
+        assert self.cfg.gaussian_mu is not None
+        assert self.cfg.gaussian_sigma is not None
+        group.attrs["gaussian_mu"] = float(self.cfg.gaussian_mu)
+        group.attrs["gaussian_sigma"] = float(self.cfg.gaussian_sigma)
+
+
+class GaussianBlobPhi(GaussianPhi):
+    phi_type = PhiType.GAUSSIAN_BLOB
+
+    def build(self, rho: Array1F, z: Array1F) -> Array2F:
+        cfg = self.cfg
         assert cfg.gaussian_mu is not None
         assert cfg.gaussian_sigma is not None
         assert cfg.gaussian_blob_mu_z is not None
         assert cfg.gaussian_blob_sigma_z is not None
-        phi = phi_gaussian_blob(
+        return phi_gaussian_blob(
             rho,
             z,
             cfg.psi_avg,
@@ -280,20 +386,108 @@ def compute_phi(cfg: PhiConfig) -> PhiResult:
             cfg.gaussian_blob_mu_z,
             cfg.gaussian_blob_sigma_z,
         )
-    elif cfg.phi_type == PhiType.SMOOTH_HOMOGENEOUS:
-        phi = phi_smooth_homogeneous(
-            rho,
-            z,
-            cfg.psi_avg,
-            cfg.rho_center,
-            cfg.rho_range,
-            cfg.wing_r,
+
+    def validate(self) -> list[str]:
+        errors = super().validate()
+        cfg = self.cfg
+        if cfg.gaussian_blob_mu_z is None:
+            errors.append("gaussian_blob_mu_z is required for a Gaussian Blob phi field.")
+        if cfg.gaussian_blob_sigma_z is None:
+            errors.append(
+                "gaussian_blob_sigma_z is required for a Gaussian Blob phi field."
+            )
+        elif cfg.gaussian_blob_sigma_z <= 0.0:
+            errors.append("gaussian_blob_sigma_z must be positive.")
+        return errors
+
+    def write_metadata(self, group: h5py.Group) -> None:
+        super().write_metadata(group)
+        assert self.cfg.gaussian_blob_mu_z is not None
+        assert self.cfg.gaussian_blob_sigma_z is not None
+        group.attrs["gaussian_blob_mu_z"] = float(self.cfg.gaussian_blob_mu_z)
+        group.attrs["gaussian_blob_sigma_z"] = float(self.cfg.gaussian_blob_sigma_z)
+
+
+class HomogeneousPhi(PhiField):
+    phi_type = PhiType.HOMOGENEOUS
+
+    def build(self, rho: Array1F, z: Array1F) -> Array2F:
+        return phi_homogeneous(rho, z, self.cfg.psi_avg)
+
+
+class SmoothHomogeneousPhi(PhiField):
+    phi_type = PhiType.SMOOTH_HOMOGENEOUS
+
+    def build(self, rho: Array1F, z: Array1F) -> Array2F:
+        cfg = self.cfg
+        return phi_smooth_homogeneous(
+            rho, z, cfg.psi_avg, cfg.rho_center, cfg.rho_range, cfg.wing_r
         )
-    elif cfg.phi_type == PhiType.SINGLE_BIN:
-        assert cfg.single_bin_idx is not None
-        phi = phi_single_bin(rho, z, cfg.psi_avg, cfg.single_bin_idx)
-    else:
-        phi = phi_homogeneous(rho, z, cfg.psi_avg)
+
+    def validate(self) -> list[str]:
+        errors: list[str] = []
+        if self.cfg.rho_range is None:
+            errors.append("rho_range is required for a smooth homogeneous phi field.")
+        elif self.cfg.rho_range <= 0.0:
+            errors.append("rho_range must be positive.")
+        return errors
+
+    def write_metadata(self, group: h5py.Group) -> None:
+        assert self.cfg.rho_range is not None
+        group.attrs["rho_range"] = float(self.cfg.rho_range)
+
+
+class SingleBinPhi(PhiField):
+    phi_type = PhiType.SINGLE_BIN
+
+    def build(self, rho: Array1F, z: Array1F) -> Array2F:
+        assert self.cfg.single_bin_idx is not None
+        return phi_single_bin(rho, z, self.cfg.psi_avg, self.cfg.single_bin_idx)
+
+    def validate(self) -> list[str]:
+        errors: list[str] = []
+        cfg = self.cfg
+        if cfg.single_bin_idx is None:
+            errors.append("single_bin_idx is required for a single-bin phi field.")
+        elif not (0 <= cfg.single_bin_idx < cfg.N):
+            errors.append(
+                f"single_bin_idx must be in [0, {cfg.N - 1}] for N={cfg.N}."
+            )
+        return errors
+
+    def write_metadata(self, group: h5py.Group) -> None:
+        assert self.cfg.single_bin_idx is not None
+        group.attrs["single_bin_idx"] = int(self.cfg.single_bin_idx)
+
+
+PHI_FIELD_TYPES: dict[PhiType, type[PhiField]] = {
+    PhiType.GAUSSIAN: GaussianPhi,
+    PhiType.GAUSSIAN_BLOB: GaussianBlobPhi,
+    PhiType.HOMOGENEOUS: HomogeneousPhi,
+    PhiType.SMOOTH_HOMOGENEOUS: SmoothHomogeneousPhi,
+    PhiType.SINGLE_BIN: SingleBinPhi,
+}
+
+
+def phi_field_for(cfg: PhiConfig) -> PhiField:
+    """Return the :class:`PhiField` subclass matching ``cfg.phi_type``."""
+    return PHI_FIELD_TYPES[cfg.phi_type](cfg)
+
+
+def compute_phi(cfg: PhiConfig) -> PhiResult:
+    """Build the wing-applied, renormalized initial phi field."""
+    rho, z = build_phi_axes(
+        N=cfg.N, rho_center=cfg.rho_center, rho_span=cfg.rho_span, dz=cfg.dz
+    )
+
+    field = PHI_FIELD_TYPES[cfg.phi_type](cfg)
+    errors = field.validate()
+    if errors:
+        raise ValueError(
+            f"invalid configuration for {cfg.phi_type.label} phi field: "
+            + "; ".join(errors)
+        )
+    phi = field.build(rho, z)
 
     phi_wing = renormalize_phi(
         phi_add_wing(phi, cfg.wing_z, cfg.wing_r), rho, z, cfg.psi_avg, cfg.wing_z
@@ -323,16 +517,7 @@ def write_phi_h5(output_path: str | Path, result: PhiResult, cfg: PhiConfig) -> 
         group.attrs["generated_by"] = "red_patterns/phi.py"
         group.attrs["normalization"] = "no runtime renormalization required"
 
-        if cfg.phi_type == PhiType.SMOOTH_HOMOGENEOUS:
-            group.attrs["rho_range"] = float(cfg.rho_range)
-        if cfg.phi_type in (PhiType.GAUSSIAN, PhiType.GAUSSIAN_BLOB):
-            group.attrs["gaussian_mu"] = float(cfg.gaussian_mu)  # type: ignore[arg-type]
-            group.attrs["gaussian_sigma"] = float(cfg.gaussian_sigma)  # type: ignore[arg-type]
-        if cfg.phi_type == PhiType.GAUSSIAN_BLOB:
-            group.attrs["gaussian_blob_mu_z"] = float(cfg.gaussian_blob_mu_z)  # type: ignore[arg-type]
-            group.attrs["gaussian_blob_sigma_z"] = float(cfg.gaussian_blob_sigma_z)  # type: ignore[arg-type]
-        if cfg.phi_type == PhiType.SINGLE_BIN:
-            group.attrs["single_bin_idx"] = int(cfg.single_bin_idx)  # type: ignore[arg-type]
+        PHI_FIELD_TYPES[cfg.phi_type](cfg).write_metadata(group)
 
     return output_path
 

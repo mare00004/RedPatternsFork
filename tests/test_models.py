@@ -32,7 +32,17 @@ def taylor_payload() -> dict:
         "gradient": "linear",
         "phi": {
             "mode": "generate",
-            "params": {"psi_avg": 0.02, "N": 256},
+            "params": {
+                "phi_type": "gaussian",
+                "psi_avg": 0.02,
+                "N": 256,
+                "wing": 30,
+                "rho_center": 1100.0,
+                "rho_span": 30.0,
+                "dz": 0.000267651,
+                "gaussian_mu": 1100.0,
+                "gaussian_sigma": 4.0,
+            },
         },
         "NU": -1e-30,
         "MU": -1e-37,

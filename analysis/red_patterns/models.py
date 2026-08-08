@@ -12,16 +12,95 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from .types import Gradient, Variant
+from .types import Gradient, PhiType, Variant
+
+_DEFAULT_N = 256
+_DEFAULT_WING = 30
+_DEFAULT_RHO_CENTER = 1100.0
+_DEFAULT_RHO_SPAN = 30.0
+_DEFAULT_DZ = 0.000267651
+_DEFAULT_PSI_AVG = 0.02
+
+
+class PhiParamsBase(BaseModel):
+    """Parameters shared by every phi-generation distribution.
+
+    These mirror the flat ``params`` dict emitted by :class:
+    `red_patterns.sweep_jobs.PhiSweep` so existing ``runs.jsonl`` payloads
+    still round-trip.  ``phi_type`` is the discriminated-union tag.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    phi_type: PhiType
+    psi_avg: float
+    N: int = _DEFAULT_N
+    wing: int = _DEFAULT_WING
+    rho_center: float = _DEFAULT_RHO_CENTER
+    rho_span: float = _DEFAULT_RHO_SPAN
+    dz: float = _DEFAULT_DZ
+
+
+class GaussianPhiParams(PhiParamsBase):
+    phi_type: Literal[PhiType.GAUSSIAN]
+    gaussian_mu: float
+    gaussian_sigma: float
+
+
+class GaussianBlobPhiParams(PhiParamsBase):
+    phi_type: Literal[PhiType.GAUSSIAN_BLOB]
+    gaussian_mu: float
+    gaussian_sigma: float
+    gaussian_blob_mu_z: float
+    gaussian_blob_sigma_z: float
+
+
+class HomogeneousPhiParams(PhiParamsBase):
+    phi_type: Literal[PhiType.HOMOGENEOUS]
+
+
+class SmoothHomogeneousPhiParams(PhiParamsBase):
+    phi_type: Literal[PhiType.SMOOTH_HOMOGENEOUS]
+    rho_range: float
+
+
+class SingleBinPhiParams(PhiParamsBase):
+    phi_type: Literal[PhiType.SINGLE_BIN]
+    single_bin_idx: int
+
+
+PhiParams = Annotated[
+    GaussianPhiParams
+    | GaussianBlobPhiParams
+    | HomogeneousPhiParams
+    | SmoothHomogeneousPhiParams
+    | SingleBinPhiParams,
+    Field(discriminator="phi_type"),
+]
+
+PHI_PARAMS_ADAPTER: TypeAdapter[PhiParams] = TypeAdapter(PhiParams)
 
 
 class GenerateParams(BaseModel):
-    """Nested ``{"mode": "generate", "params": {...}}`` block."""
+    """Nested ``{"mode": "generate", "params": {...}}`` block (kernel / generic)."""
 
     model_config = ConfigDict(extra="forbid")
 
     mode: Literal["generate"] = "generate"
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class PhiGenerateParams(BaseModel):
+    """Nested ``{"mode": "generate", "params": {...}}`` block for phi.
+
+    Unlike :class:`GenerateParams`, ``params`` is validated against the
+    :data:`PhiParams` discriminated union on ``phi_type``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["generate"] = "generate"
+    params: PhiParams
 
 
 class BaseRun(BaseModel):
@@ -36,7 +115,7 @@ class BaseRun(BaseModel):
     DT: float
     storeTime: float
     gradient: Gradient
-    phi: GenerateParams
+    phi: PhiGenerateParams
 
 
 class TaylorRun(BaseRun):

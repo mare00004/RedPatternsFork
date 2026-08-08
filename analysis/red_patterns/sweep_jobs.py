@@ -30,6 +30,10 @@ DEFAULT_DZ = 0.000267651
 DEFAULT_PSI_AVG = 0.02
 DEFAULT_GAUSSIAN_MU = 1100.0
 DEFAULT_GAUSSIAN_SIGMA = 4.0
+DEFAULT_GAUSSIAN_BLOB_MU_Z = 0.035
+DEFAULT_GAUSSIAN_BLOB_SIGMA_Z = 0.01
+DEFAULT_RHO_RANGE = 5.0
+DEFAULT_SINGLE_BIN_IDX = 256
 
 DEFAULT_SIGMA = 5.6e-6
 DEFAULT_G0 = 4.0e7
@@ -83,6 +87,10 @@ class PhiSweep:
     dz: Sequence[float] = (DEFAULT_DZ,)
     gaussian_mu: Sequence[float] = (DEFAULT_GAUSSIAN_MU,)
     gaussian_sigma: Sequence[float] = (DEFAULT_GAUSSIAN_SIGMA,)
+    gaussian_blob_mu_z: Sequence[float] = (DEFAULT_GAUSSIAN_BLOB_MU_Z,)
+    gaussian_blob_sigma_z: Sequence[float] = (DEFAULT_GAUSSIAN_BLOB_SIGMA_Z,)
+    rho_range: Sequence[float] = (DEFAULT_RHO_RANGE,)
+    single_bin_idx: Sequence[int] = (DEFAULT_SINGLE_BIN_IDX,)
 
     def rows(self) -> list[dict[str, Any]]:
         base_rows = dict_product(
@@ -101,6 +109,16 @@ class PhiSweep:
                 "gaussian_sigma": self.gaussian_sigma,
             }
         )
+        blob_rows = dict_product(
+            {
+                "gaussian_mu": self.gaussian_mu,
+                "gaussian_sigma": self.gaussian_sigma,
+                "gaussian_blob_mu_z": self.gaussian_blob_mu_z,
+                "gaussian_blob_sigma_z": self.gaussian_blob_sigma_z,
+            }
+        )
+        smooth_rows = dict_product({"rho_range": self.rho_range})
+        single_bin_rows = dict_product({"single_bin_idx": self.single_bin_idx})
         rows: list[dict[str, Any]] = []
         for phi_type in self.phi_type:
             phi_value = PhiType(json_scalar(phi_type)).value
@@ -108,6 +126,15 @@ class PhiSweep:
                 if phi_value == PhiType.GAUSSIAN.value:
                     for gaussian in gaussian_rows:
                         rows.append({**base, "phi_type": phi_value, **gaussian})
+                elif phi_value == PhiType.GAUSSIAN_BLOB.value:
+                    for blob in blob_rows:
+                        rows.append({**base, "phi_type": phi_value, **blob})
+                elif phi_value == PhiType.SMOOTH_HOMOGENEOUS.value:
+                    for smooth in smooth_rows:
+                        rows.append({**base, "phi_type": phi_value, **smooth})
+                elif phi_value == PhiType.SINGLE_BIN.value:
+                    for single in single_bin_rows:
+                        rows.append({**base, "phi_type": phi_value, **single})
                 else:
                     rows.append({**base, "phi_type": phi_value})
         return rows

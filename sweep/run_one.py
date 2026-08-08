@@ -20,30 +20,12 @@ from red_patterns.kernel import (
     write_kernel_h5,
 )
 from red_patterns.models import ConvRun, TaylorRun
-from red_patterns.phi import PhiConfig, PhiType, compute_phi, write_phi_h5
+from red_patterns.phi import PhiConfig, compute_phi, write_phi_h5
 from red_patterns.sim import build_cli_args, locate_binary
 from red_patterns.sweep_jobs import find_run_by_id, load_runs_jsonl
 
 
-def _phi_config_from_params(params: dict[str, Any], output_path: Path) -> PhiConfig:
-    return PhiConfig(
-        output_path=output_path,
-        phi_type=PhiType(str(params["phi_type"])),
-        psi_avg=float(params["psi_avg"]),
-        N=int(params["N"]),
-        wing_z=int(params["wing"]),
-        wing_r=int(params["wing"]),
-        rho_center=float(params["rho_center"]),
-        rho_span=float(params["rho_span"]),
-        dz=float(params["dz"]),
-        gaussian_mu=(float(params["gaussian_mu"]) if "gaussian_mu" in params else None),
-        gaussian_sigma=(
-            float(params["gaussian_sigma"]) if "gaussian_sigma" in params else None
-        ),
-    )
-
-
-def _kernel_config_from_params(
+def kernel_config_from_params(
     params: dict[str, Any], output_path: Path
 ) -> KernelConfig:
     return KernelConfig(
@@ -59,6 +41,41 @@ def _kernel_config_from_params(
         nn_d=float(params["nn_d"]) if "nn_d" in params else None,
         nn_sigma=float(params["nn_sigma"]) if "nn_sigma" in params else None,
         lambda_=float(params["lambda_"]) if "lambda_" in params else None,
+    )
+
+
+def cli_args_from_payload(
+    *,
+    run: TaylorRun | ConvRun,
+    binary_path: Path,
+    out_dir: Path,
+    phi_path: Path,
+    kernel_path: Path | None,
+) -> list[str]:
+    """Assemble the ``red-patterns`` CLI for a single parsed ``runs.jsonl`` payload."""
+    if isinstance(run, TaylorRun):
+        mode = "Taylor"
+        nu = float(run.NU)
+        mu = float(run.MU)
+    elif isinstance(run, ConvRun):
+        mode = "Convolution"
+        nu = 0.0
+        mu = 0.0
+    else:
+        raise AssertionError(f"unreachable run type: {type(run).__name__}")
+    return build_cli_args(
+        binary_path=binary_path,
+        mode=mode,
+        out_dir=out_dir,
+        phi_path=phi_path,
+        kernel_path=kernel_path,
+        gradient=run.gradient.value,
+        N=run.N,
+        t_final=run.T,
+        dt=run.DT,
+        storeTime=run.storeTime,
+        nu=nu,
+        mu=mu,
     )
 
 
@@ -94,42 +111,25 @@ def run_selected(
         run.model_dump_json(indent=2) + "\n", encoding="utf-8"
     )
 
-    phi_params = dict(run.phi.params)
-    phi_cfg = _phi_config_from_params(phi_params, phi_path)
+    phi_params = run.phi.params
+    phi_cfg = PhiConfig.from_params(phi_params, phi_path)
     phi_result = compute_phi(phi_cfg)
     write_phi_h5(phi_path, phi_result, phi_cfg)
 
     if isinstance(run, ConvRun):
         kernel_params = dict(run.kernel.params)
         kernel_path = work_dir / "kernel.h5"
-        kernel_cfg = _kernel_config_from_params(kernel_params, kernel_path)
+        kernel_cfg = kernel_config_from_params(kernel_params, kernel_path)
         kernel_result = compute_kernel(kernel_cfg)
         write_kernel_h5(kernel_path, kernel_result, kernel_cfg)
 
     binary_path = _resolve_binary(binary)
-    if isinstance(run, TaylorRun):
-        mode = "Taylor"
-        nu = float(run.NU)
-        mu = float(run.MU)
-    elif isinstance(run, ConvRun):
-        mode = "Convolution"
-        nu = 0.0
-        mu = 0.0
-    else:
-        raise AssertionError(f"unreachable run type: {type(run).__name__}")
-    args = build_cli_args(
+    args = cli_args_from_payload(
+        run=run,
         binary_path=binary_path,
-        mode=mode,
         out_dir=work_dir,
         phi_path=phi_path,
         kernel_path=kernel_path,
-        gradient=run.gradient.value,
-        N=run.N,
-        t_final=run.T,
-        dt=run.DT,
-        storeTime=run.storeTime,
-        nu=nu,
-        mu=mu,
     )
     command_path.write_text(shlex.join(args) + "\n", encoding="utf-8")
 
