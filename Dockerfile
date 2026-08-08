@@ -85,6 +85,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     python3 \
     python3-h5py \
     python3-numpy \
+    python3-pydantic \
  && rm -rf /var/lib/apt/lists/*
 
 # Copy the executable
