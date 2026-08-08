@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import shlex
 import subprocess
 import sys
@@ -20,6 +19,7 @@ from red_patterns.kernel import (
     compute_kernel,
     write_kernel_h5,
 )
+from red_patterns.models import ConvRun, TaylorRun
 from red_patterns.phi import PhiConfig, PhiType, compute_phi, write_phi_h5
 from red_patterns.sim import build_cli_args, locate_binary
 from red_patterns.sweep_jobs import find_run_by_id, load_runs_jsonl
@@ -31,7 +31,8 @@ def _phi_config_from_params(params: dict[str, Any], output_path: Path) -> PhiCon
         phi_type=PhiType(str(params["phi_type"])),
         psi_avg=float(params["psi_avg"]),
         N=int(params["N"]),
-        wing=int(params["wing"]),
+        wing_z=int(params["wing"]),
+        wing_r=int(params["wing"]),
         rho_center=float(params["rho_center"]),
         rho_span=float(params["rho_span"]),
         dz=float(params["dz"]),
@@ -90,34 +91,45 @@ def run_selected(
     kernel_path: Path | None = None
 
     run_spec_path.write_text(
-        json.dumps(run, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        run.model_dump_json(indent=2) + "\n", encoding="utf-8"
     )
 
-    phi_params = dict(run["phi"]["params"])
+    phi_params = dict(run.phi.params)
     phi_cfg = _phi_config_from_params(phi_params, phi_path)
     phi_result = compute_phi(phi_cfg)
     write_phi_h5(phi_path, phi_result, phi_cfg)
 
-    if run["variant"] == "convolution":
-        kernel_params = dict(run["kernel"]["params"])
+    if isinstance(run, ConvRun):
+        kernel_params = dict(run.kernel.params)
         kernel_path = work_dir / "kernel.h5"
         kernel_cfg = _kernel_config_from_params(kernel_params, kernel_path)
         kernel_result = compute_kernel(kernel_cfg)
         write_kernel_h5(kernel_path, kernel_result, kernel_cfg)
 
     binary_path = _resolve_binary(binary)
+    if isinstance(run, TaylorRun):
+        mode = "Taylor"
+        nu = float(run.NU)
+        mu = float(run.MU)
+    elif isinstance(run, ConvRun):
+        mode = "Convolution"
+        nu = 0.0
+        mu = 0.0
+    else:
+        raise AssertionError(f"unreachable run type: {type(run).__name__}")
     args = build_cli_args(
         binary_path=binary_path,
-        mode="Taylor" if run["variant"] == "taylor" else "Convolution",
+        mode=mode,
         out_dir=work_dir,
         phi_path=phi_path,
         kernel_path=kernel_path,
-        gradient=str(run["gradient"]),
-        t_final=float(run["T"]),
-        dt=float(run["DT"]),
-        save_every=int(run["NO"]),
-        nu=float(run.get("NU", 0.0)),
-        mu=float(run.get("MU", 0.0)),
+        gradient=run.gradient.value,
+        N=run.N,
+        t_final=run.T,
+        dt=run.DT,
+        storeTime=run.storeTime,
+        nu=nu,
+        mu=mu,
     )
     command_path.write_text(shlex.join(args) + "\n", encoding="utf-8")
 

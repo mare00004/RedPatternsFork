@@ -34,11 +34,12 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
-from enum import StrEnum
 
 import h5py
 import numpy as np
 from numpy.typing import NDArray
+
+from .types import ClosureType, PDFType
 
 Array1F = NDArray[np.float64]
 
@@ -54,38 +55,6 @@ V = 90e-18
 G0 = 4.0e7
 SIGMA_C = 0.5e-6
 EQ_DIST = 6.585467201064237091254725819933213415424688719213008880615234375e-06
-
-
-class PDFType(StrEnum):
-    MEAN_FIELD = "mean-field"
-    NEAREST_NEIGHBOR = "nearest-neighbor"
-    EXPONENTIAL = "exponential"
-
-    @property
-    def label(self) -> str:
-        return _PDF_DISPLAY[self]
-
-
-_PDF_DISPLAY = {
-    PDFType.MEAN_FIELD: "Mean Field",
-    PDFType.NEAREST_NEIGHBOR: "Nearest Neighbor",
-    PDFType.EXPONENTIAL: "Exponential",
-}
-
-
-class ClosureType(StrEnum):
-    FORCE = "force"
-    POTENTIAL = "potential"
-
-    @property
-    def label(self) -> str:
-        return _CLOSURE_DISPLAY[self]
-
-
-_CLOSURE_DISPLAY = {
-    ClosureType.FORCE: "Force closure",
-    ClosureType.POTENTIAL: "Potential closure",
-}
 
 
 def latex_scientific(value: float) -> str:

@@ -1,15 +1,26 @@
+"""Sweep generation and JSONL I/O for simulation run payloads.
+
+Sweep classes expand parameter ranges into Cartesian products and produce
+validated Pydantic models (:class:`red_patterns.models.TaylorRun` /
+:class:`red_patterns.models.ConvRun`) via the :data:`red_patterns.models.RunPayload`
+discriminated union.  ``runs.jsonl`` files round-trip through the same models.
+"""
+
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from enum import StrEnum
 from itertools import product
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Sequence, TypeVar
 
 import numpy as np
+from pydantic import ValidationError
 
-RunPayload = dict[str, Any]
+from .models import BaseRun, ConvRun, RunPayload, TaylorRun, run_payload_adapter
+from .types import ClosureType, Gradient, PDFType, PhiType, Variant
+
+RunModelT = TypeVar("RunModelT", bound=BaseRun)
 
 DEFAULT_N = 256
 DEFAULT_WING = 30
@@ -25,31 +36,7 @@ DEFAULT_G0 = 4.0e7
 DEFAULT_SIGMA_C = 0.5e-6
 DEFAULT_EQ_DIST = 6.585467201064237e-06
 
-
-class PhiMode(StrEnum):
-    GAUSSIAN = "gaussian"
-    HOMOGENEOUS = "homogeneous"
-
-
-class ClosureMode(StrEnum):
-    FORCE = "force"
-    POTENTIAL = "potential"
-
-
-class PairDistributionMode(StrEnum):
-    MEAN_FIELD = "mean-field"
-    NEAREST_NEIGHBOR = "nearest-neighbor"
-    EXPONENTIAL = "exponential"
-
-
-class Variant(StrEnum):
-    TAYLOR = "taylor"
-    CONVOLUTION = "convolution"
-
-
-class Gradient(StrEnum):
-    LINEAR = "linear"
-    SIGMOID = "sigmoid"
+GENERATE = "generate"
 
 
 @dataclass(frozen=True)
@@ -66,7 +53,8 @@ class Range:
         return values[values <= self.hi + eps]
 
 
-def _json_scalar(value: Any) -> Any:
+def json_scalar(value: Any) -> Any:
+    """Convert StrEnum members and numpy scalars to plain Python values."""
     if isinstance(value, StrEnum):
         return value.value
     if isinstance(value, np.generic):
@@ -74,26 +62,20 @@ def _json_scalar(value: Any) -> Any:
     return value
 
 
-def _dict_product(fields: dict[str, Sequence[Any]]) -> list[dict[str, Any]]:
+def dict_product(fields: dict[str, Sequence[Any]]) -> list[dict[str, Any]]:
+    """Cartesian product of field sequences into row dicts."""
     names = tuple(fields)
     combos = product(*(fields[name] for name in names))
     return [
-        {name: _json_scalar(value) for name, value in zip(names, combo, strict=True)}
+        {name: json_scalar(value) for name, value in zip(names, combo, strict=True)}
         for combo in combos
     ]
-
-
-def _assign_run_ids(runs: Iterable[RunPayload]) -> list[RunPayload]:
-    assigned: list[RunPayload] = []
-    for index, run in enumerate(runs, start=1):
-        assigned.append({"run_id": f"r{index:06d}", **run})
-    return assigned
 
 
 @dataclass(frozen=True, kw_only=True)
 class PhiSweep:
     psi_avg: Sequence[float] = (DEFAULT_PSI_AVG,)
-    phi_type: Sequence[str] = (PhiMode.GAUSSIAN.value,)
+    phi_type: Sequence[PhiType | str] = (PhiType.GAUSSIAN,)
     N: Sequence[int] = (DEFAULT_N,)
     wing: Sequence[int] = (DEFAULT_WING,)
     rho_center: Sequence[float] = (DEFAULT_RHO_CENTER,)
@@ -103,7 +85,7 @@ class PhiSweep:
     gaussian_sigma: Sequence[float] = (DEFAULT_GAUSSIAN_SIGMA,)
 
     def rows(self) -> list[dict[str, Any]]:
-        base_rows = _dict_product(
+        base_rows = dict_product(
             {
                 "psi_avg": self.psi_avg,
                 "N": self.N,
@@ -113,34 +95,28 @@ class PhiSweep:
                 "dz": self.dz,
             }
         )
-        rows: list[dict[str, Any]] = []
-        gaussian_rows = _dict_product(
+        gaussian_rows = dict_product(
             {
                 "gaussian_mu": self.gaussian_mu,
                 "gaussian_sigma": self.gaussian_sigma,
             }
         )
+        rows: list[dict[str, Any]] = []
         for phi_type in self.phi_type:
-            phi_type_value = PhiMode(str(_json_scalar(phi_type))).value
+            phi_value = PhiType(json_scalar(phi_type)).value
             for base in base_rows:
-                if phi_type_value == PhiMode.GAUSSIAN.value:
+                if phi_value == PhiType.GAUSSIAN.value:
                     for gaussian in gaussian_rows:
-                        rows.append(
-                            {
-                                **base,
-                                "phi_type": phi_type_value,
-                                **gaussian,
-                            }
-                        )
+                        rows.append({**base, "phi_type": phi_value, **gaussian})
                 else:
-                    rows.append({**base, "phi_type": phi_type_value})
+                    rows.append({**base, "phi_type": phi_value})
         return rows
 
 
 @dataclass(frozen=True, kw_only=True)
 class KernelSweep:
-    closure: Sequence[str] = (ClosureMode.FORCE.value,)
-    pair_distribution: Sequence[str] = (PairDistributionMode.NEAREST_NEIGHBOR.value,)
+    closure: Sequence[ClosureType | str] = (ClosureType.FORCE,)
+    pair_distribution: Sequence[PDFType | str] = (PDFType.NEAREST_NEIGHBOR,)
     U: Sequence[float] = (111.15e-18,)
     sigma: Sequence[float] = (DEFAULT_SIGMA,)
     kernel_n: Sequence[int] = (31,)
@@ -152,7 +128,7 @@ class KernelSweep:
     lambda_: Sequence[float] = (1.0,)
 
     def rows(self) -> list[dict[str, Any]]:
-        base_rows = _dict_product(
+        base_rows = dict_product(
             {
                 "U": self.U,
                 "sigma": self.sigma,
@@ -161,33 +137,28 @@ class KernelSweep:
                 "subdiv": self.subdiv,
             }
         )
-        nn_rows = _dict_product(
+        nn_rows = dict_product(
             {
                 "g0": self.g0,
                 "nn_d": self.nn_d,
                 "nn_sigma": self.nn_sigma,
             }
         )
-        lambda_rows = _dict_product({"lambda_": self.lambda_})
+        lambda_rows = dict_product({"lambda_": self.lambda_})
         rows: list[dict[str, Any]] = []
         for closure, pair_distribution in product(self.closure, self.pair_distribution):
-            closure_value = ClosureMode(str(_json_scalar(closure))).value
-            pair_distribution_value = PairDistributionMode(
-                str(_json_scalar(pair_distribution))
-            ).value
+            closure_value = ClosureType(json_scalar(closure)).value
+            pair_value = PDFType(json_scalar(pair_distribution)).value
             for base in base_rows:
                 common = {
                     **base,
                     "closure": closure_value,
-                    "pair_distribution": pair_distribution_value,
+                    "pair_distribution": pair_value,
                 }
-                if (
-                    pair_distribution_value
-                    == PairDistributionMode.NEAREST_NEIGHBOR.value
-                ):
+                if pair_value == PDFType.NEAREST_NEIGHBOR.value:
                     for nn in nn_rows:
                         rows.append({**common, **nn})
-                elif pair_distribution_value == PairDistributionMode.EXPONENTIAL.value:
+                elif pair_value == PDFType.EXPONENTIAL.value:
                     for lambda_row in lambda_rows:
                         rows.append({**common, **lambda_row})
                 else:
@@ -212,7 +183,7 @@ class SimulationSweep:
         raise NotImplementedError
 
     def to_runs(self) -> list[RunPayload]:
-        sim_rows = _dict_product(
+        sim_rows = dict_product(
             {
                 "N": self.N,
                 "T": self.T,
@@ -226,12 +197,16 @@ class SimulationSweep:
         for sim_row, model_row, phi_row in product(
             sim_rows, self.model_rows(), phi_rows
         ):
-            run: RunPayload = {
-                "variant": self.variant.value,
+            payload = {
                 **sim_row,
                 **model_row,
-                "phi": {"mode": "generate", "params": phi_row},
+                "phi": {"mode": GENERATE, "params": phi_row},
             }
+            run = (
+                TaylorRun(**payload)
+                if self.variant is Variant.TAYLOR
+                else ConvRun(**payload)
+            )
             runs.append(run)
         return runs
 
@@ -246,7 +221,7 @@ class TaylSweep(SimulationSweep):
         return Variant.TAYLOR
 
     def model_rows(self) -> list[dict[str, Any]]:
-        return _dict_product({"NU": self.NU, "MU": self.MU})
+        return dict_product({"NU": self.NU, "MU": self.MU})
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -259,78 +234,50 @@ class ConvSweep(SimulationSweep):
 
     def model_rows(self) -> list[dict[str, Any]]:
         return [
-            {"kernel": {"mode": "generate", "params": row}}
+            {"kernel": {"mode": GENERATE, "params": row}}
             for row in self.kernel.rows()
         ]
 
 
+def assign_run_ids(runs: Iterable[RunModelT]) -> list[RunModelT]:
+    return [
+        run.model_copy(update={"run_id": f"r{index:06d}"})
+        for index, run in enumerate(runs, start=1)
+    ]
+
+
 def combine_sweeps(*sweeps: SimulationSweep) -> list[RunPayload]:
-    return _assign_run_ids(run for sweep in sweeps for run in sweep.to_runs())
+    return assign_run_ids(run for sweep in sweeps for run in sweep.to_runs())
 
 
 def normalize_runs(value: Any) -> list[RunPayload]:
     if isinstance(value, SimulationSweep):
         return combine_sweeps(value)
     if isinstance(value, list):
-        validate_runs(value)
-        return value
+        runs: list[RunPayload] = []
+        for index, item in enumerate(value, start=1):
+            if isinstance(item, (TaylorRun, ConvRun)):
+                runs.append(item)
+            elif isinstance(item, BaseRun):
+                raise TypeError(
+                    f"line {index}: unsupported run model subclass "
+                    f"{type(item).__name__}."
+                )
+            elif isinstance(item, dict):
+                runs.append(run_payload_adapter.validate_python(item))
+            else:
+                raise TypeError(
+                    f"line {index}: expected a run dict or model, "
+                    f"got {type(item).__name__}."
+                )
+        return runs
     raise TypeError(
         "Expected `sweep` to be a SimulationSweep or a list of exported run dicts."
     )
 
 
-# FIX: fix to match new params
-def validate_run_payload(run: RunPayload, *, line_number: int | None = None) -> None:
-    prefix = "" if line_number is None else f"line {line_number}: "
-    run_id = run.get("run_id")
-    if not isinstance(run_id, str) or not run_id:
-        raise ValueError(f"{prefix}missing non-empty string `run_id`.")
-
-    variant = run.get("variant")
-    if variant not in {Variant.TAYLOR.value, Variant.CONVOLUTION.value}:
-        raise ValueError(f"{prefix}invalid `variant`: {variant!r}.")
-
-    for key in ("T", "DT", "storeTime"):
-        if not isinstance(run.get(key), (int, float)):
-            raise ValueError(f"{prefix}`{key}` must be numeric.")
-    if not isinstance(run.get("gradient"), str):
-        raise ValueError(f"{prefix}`gradient` must be a string.")
-
-    phi = run.get("phi")
-    if not isinstance(phi, dict) or phi.get("mode") != "generate":
-        raise ValueError(f"{prefix}`phi.mode` must be `generate`.")
-    if not isinstance(phi.get("params"), dict):
-        raise ValueError(f"{prefix}`phi.params` must be an object.")
-
-    if variant == Variant.TAYLOR.value:
-        for key in ("NU", "MU"):
-            if not isinstance(run.get(key), (int, float)):
-                raise ValueError(f"{prefix}`{key}` must be numeric for Taylor runs.")
-        if "kernel" in run:
-            raise ValueError(f"{prefix}Taylor runs must not define `kernel`.")
-    else:
-        kernel = run.get("kernel")
-        if not isinstance(kernel, dict) or kernel.get("mode") != "generate":
-            raise ValueError(f"{prefix}`kernel.mode` must be `generate`.")
-        if not isinstance(kernel.get("params"), dict):
-            raise ValueError(f"{prefix}`kernel.params` must be an object.")
-
-
-def validate_runs(runs: Sequence[RunPayload]) -> None:
-    seen: set[str] = set()
-    for line_number, run in enumerate(runs, start=1):
-        if not isinstance(run, dict):
-            raise ValueError(f"line {line_number}: expected a JSON object.")
-        validate_run_payload(run, line_number=line_number)
-        run_id = str(run["run_id"])
-        if run_id in seen:
-            raise ValueError(f"line {line_number}: duplicate run_id {run_id!r}.")
-        seen.add(run_id)
-
-
 def runs_to_jsonl(runs: Sequence[RunPayload]) -> str:
-    validate_runs(runs)
-    return "\n".join(json.dumps(run, separators=(",", ":")) for run in runs) + "\n"
+    return "\n".join(run.model_dump_json() for run in runs) + "\n"
 
 
 def write_runs_jsonl(path: str | Path, runs: Sequence[RunPayload]) -> Path:
@@ -349,24 +296,19 @@ def load_runs_jsonl(path: str | Path) -> list[RunPayload]:
             if not line:
                 continue
             try:
-                payload = json.loads(line)
-            except json.JSONDecodeError as exc:
+                runs.append(run_payload_adapter.validate_json(line))
+            except ValidationError as exc:
                 raise ValueError(
-                    f"line {line_number}: invalid JSON: {exc.msg}."
+                    f"line {line_number}: invalid run payload: {exc}."
                 ) from exc
-            if not isinstance(payload, dict):
-                raise ValueError(f"line {line_number}: expected a JSON object.")
-            runs.append(payload)
-    validate_runs(runs)
     return runs
 
 
-def run_ids_from_runs(runs: Sequence[RunPayload]) -> list[str]:
-    validate_runs(runs)
-    return [str(run["run_id"]) for run in runs]
+def run_ids_from_runs(runs: Sequence[BaseRun]) -> list[str]:
+    return [run.run_id for run in runs]
 
 
-def write_run_id_queue(path: str | Path, runs: Sequence[RunPayload]) -> Path:
+def write_run_id_queue(path: str | Path, runs: Sequence[BaseRun]) -> Path:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     run_ids = run_ids_from_runs(runs)
@@ -388,8 +330,8 @@ def write_sweep_export(
     return runs_path, run_ids_path
 
 
-def find_run_by_id(runs: Sequence[RunPayload], run_id: str) -> RunPayload:
+def find_run_by_id(runs: Sequence[BaseRun], run_id: str) -> BaseRun:
     for run in runs:
-        if run.get("run_id") == run_id:
+        if run.run_id == run_id:
             return run
     raise KeyError(f"run_id {run_id!r} not found in runs.jsonl")

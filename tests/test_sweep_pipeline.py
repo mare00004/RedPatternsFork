@@ -13,6 +13,7 @@ if str(ANALYSIS_DIR) not in sys.path:
     sys.path.insert(0, str(ANALYSIS_DIR))
 
 from red_patterns.kernel import ClosureType, PDFType
+from red_patterns.models import ConvRun, TaylorRun
 from red_patterns.phi import PhiType
 from red_patterns.sweep_jobs import (
     ConvSweep,
@@ -40,18 +41,20 @@ def build_sample_runs():
         U=[111.15e-18],
     )
     tayl = TaylSweep(
+        N=[256],
         T=[1.0],
         DT=[0.1],
-        NO=[2],
+        storeTime=[1.0],
         gradient=[Gradient.LINEAR],
         phi=phi,
         NU=[-1.0e-30],
         MU=[-1.0e-37],
     )
     conv = ConvSweep(
+        N=[256],
         T=[1.0],
         DT=[0.1],
-        NO=[2],
+        storeTime=[1.0],
         gradient=[Gradient.SIGMOID],
         phi=phi,
         kernel=kernel,
@@ -62,16 +65,15 @@ def build_sample_runs():
 class SweepPipelineTests(unittest.TestCase):
     def test_exported_runs_have_expected_shape(self):
         runs = build_sample_runs()
-        self.assertEqual([run["run_id"] for run in runs], ["r000001", "r000002"])
+        self.assertEqual([run.run_id for run in runs], ["r000001", "r000002"])
 
         tayl_run, conv_run = runs
-        self.assertEqual(tayl_run["variant"], "taylor")
-        self.assertIn("phi", tayl_run)
-        self.assertNotIn("kernel", tayl_run)
-
-        self.assertEqual(conv_run["variant"], "convolution")
-        self.assertIn("phi", conv_run)
-        self.assertIn("kernel", conv_run)
+        self.assertIsInstance(tayl_run, TaylorRun)
+        self.assertEqual(tayl_run.variant.value, "taylor")
+        self.assertIsNotNone(tayl_run.phi)
+        self.assertEqual(conv_run.variant.value, "convolution")
+        self.assertIsInstance(conv_run, ConvRun)
+        self.assertIsNotNone(conv_run.kernel)
 
         jsonl_lines = runs_to_jsonl(runs).strip().splitlines()
         self.assertEqual(len(jsonl_lines), 2)
@@ -85,7 +87,9 @@ class SweepPipelineTests(unittest.TestCase):
             runs_jsonl, queue_path = write_sweep_export(tmp_path, runs)
 
             loaded_runs = load_runs_jsonl(runs_jsonl)
-            self.assertEqual([run["run_id"] for run in loaded_runs], ["r000001", "r000002"])
+            self.assertEqual(
+                [run.run_id for run in loaded_runs], ["r000001", "r000002"]
+            )
             self.assertEqual(
                 queue_path.read_text(encoding="utf-8").splitlines(),
                 ["r000001", "r000002"],

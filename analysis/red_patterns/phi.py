@@ -33,12 +33,13 @@ from typing import Any
 
 import argparse
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 
 import h5py
 import numpy as np
 from numpy.typing import NDArray
+
+from .types import PhiType
 
 Array1F = NDArray[np.float64]
 Array2F = NDArray[np.float64]
@@ -61,27 +62,6 @@ DEFAULT_GAUSSIAN_BLOB_SIGMA_Z = 0.01
 DEFAULT_Z_SYSTEM_SIZE = 0.07
 DEFAULT_SINGLE_BIN_IDX = 256
 
-
-class PhiType(StrEnum):
-    GAUSSIAN = "gaussian"
-    GAUSSIAN_BLOB = "gaussian_blob"
-    HOMOGENEOUS = "homogeneous"
-    SMOOTH_HOMOGENEOUS = "smooth_homogeneous"
-    SINGLE_BIN = "single_bin"
-
-    @property
-    def label(self) -> str:
-        return _DISPLAY[self]
-
-
-# Display Names for UI
-_DISPLAY = {
-    PhiType.GAUSSIAN: "Gaussian",
-    PhiType.GAUSSIAN_BLOB: "Gaussian Blob",
-    PhiType.HOMOGENEOUS: "Homogeneous",
-    PhiType.SMOOTH_HOMOGENEOUS: "Smooth Homogeneous",
-    PhiType.SINGLE_BIN: "Single Bin",
-}
 
 LABEL_MAP = {t.label: t for t in PhiType}
 
@@ -547,9 +527,7 @@ def validate_export_namespace(
                 + "--phi-type=gaussian_blob."
             )
         if args.single_bin_idx is not None:
-            errors.append(
-                "--single-bin-idx is only valid with --phi-type=single_bin."
-            )
+            errors.append("--single-bin-idx is only valid with --phi-type=single_bin.")
 
     if errors:
         parser.error("\n".join(errors))

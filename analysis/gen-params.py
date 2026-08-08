@@ -5,6 +5,7 @@
 #     "marimo>=0.19.6",
 #     "numpy==2.4.1",
 #     "pandas==3.0.0",
+#     "pydantic==2.13.4",
 # ]
 # ///
 
@@ -85,9 +86,10 @@ def _():
     )
 
     tayl_sweep = TaylSweep(
+        N=[256],
         T=[1800.0],
         DT=[5.0e-04],
-        NO=[3000],
+        storeTime=[3000.0],
         gradient=[Gradient.SIGMOID],
         phi=phi,
         NU=nu_sweep,
@@ -95,9 +97,10 @@ def _():
     )
 
     conv_sweep = ConvSweep(
+        N=[256],
         T=[1800.0],
         DT=[5.0e-04],
-        NO=[3000],
+        storeTime=[3000.0],
         gradient=[Gradient.SIGMOID],
         phi=phi,
         kernel=kernel,
@@ -235,7 +238,7 @@ def _(editor):
         mo.md("*Waiting for user to run code...*")
     )
     mo.md(f"Prepared **{len(sweep_runs)}** runs for export.")
-    preview = pd.json_normalize(sweep_runs)
+    preview = pd.json_normalize([run.model_dump(mode="json") for run in sweep_runs])
     preview
     return error_msg, sweep_runs
 
@@ -297,8 +300,8 @@ def _(error_msg, export_form, sweep_runs, true):
     except Exception as exc:
         mo.stop(true, mo.md(rf"Export failed: `{exc}`"))
 
-    first_id = sweep_runs[0]["run_id"] if sweep_runs else "n/a"
-    last_id = sweep_runs[-1]["run_id"] if sweep_runs else "n/a"
+    first_id = sweep_runs[0].run_id if sweep_runs else "n/a"
+    last_id = sweep_runs[-1].run_id if sweep_runs else "n/a"
     mo.vstack(
         [
             mo.md(rf"Exported `{len(sweep_runs)}` runs to `{runs_path}`."),
