@@ -93,7 +93,8 @@ ENV UV_LINK_MODE=copy \
 COPY pyproject.toml README.md uv.lock /opt/red-patterns/
 WORKDIR /opt/red-patterns
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --only-group sweep
+    uv sync --locked --only-group sweep \
+ && /opt/red-patterns/.venv/bin/python -c "import h5py, numpy, pydantic; assert pydantic.VERSION.startswith('2'), pydantic.VERSION"
 
 # Copy the executable
 COPY --from=build /opt/red-patterns/bin/red-patterns /bin/red-patterns
