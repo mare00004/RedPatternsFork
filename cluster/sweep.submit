@@ -2,7 +2,7 @@
 # Override on submission with:
 #   condor_submit VAR1=VALUE1 VAR2=VALUE2 ... sweep.submit
 
-COMMIT_HASH = $(COMMIT_HASH:1935885)
+COMMIT_HASH = $(COMMIT_HASH:__REQUIRED_IMAGE_TAG__)
 RUN_DIR = $(RUN_DIR:$(SUBMIT_FILE_DIR))
 RUNS_JSONL = $(RUNS_JSONL:$(RUN_DIR)/runs.jsonl)
 RUN_IDS_FILE = $(RUN_IDS_FILE:$(RUN_DIR)/run_ids.txt)
@@ -39,14 +39,15 @@ preserve_relative_paths = True
 
 transfer_input_files = $(LAUNCH_SH),$(RUNS_JSONL)
 transfer_executable = True
-transfer_output_files = run.h5,command.txt,run_spec.json
-transfer_output_remaps = "run.h5 = results/$(run_id)/run.h5; command.txt = results/$(run_id)/command.txt; run_spec.json = results/$(run_id)/run_spec.json"
+transfer_output_files = run.h5,command.txt,run_spec.json,runtime-diagnostics.txt
+transfer_output_remaps = "run.h5 = results/$(run_id)/run.h5; command.txt = results/$(run_id)/command.txt; run_spec.json = results/$(run_id)/run_spec.json; runtime-diagnostics.txt = results/$(run_id)/runtime-diagnostics.txt"
 
 initialdir = $(RUN_DIR)
 batch_name = $(RUN_TAG)
 
 executable = $(LAUNCH_SH)
 arguments = $(run_id)
+environment = "IMAGE_TAG=$(COMMIT_HASH)"
 
 log = logs/$(run_id).log
 output = logs/$(run_id).out

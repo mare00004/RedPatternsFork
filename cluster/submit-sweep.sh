@@ -3,10 +3,10 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-USAGE="usage: submit-sweep.sh SWEEP_DIR [COMMIT_HASH]"
+USAGE="usage: submit-sweep.sh SWEEP_DIR IMAGE_TAG"
 
 RUN_DIR="${1:?$USAGE}"
-COMMIT_HASH="${2:-1935885}"
+COMMIT_HASH="${2:?$USAGE}"
 if [[ ! -d "${RUN_DIR}" ]]; then
 	echo "${RUN_DIR} does not exist!" >&2
 	exit 1

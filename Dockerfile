@@ -76,6 +76,7 @@ RUN --mount=type=cache,target=/workspace/build \
 FROM nvidia/cuda:${CUDA_VER}-runtime-ubuntu24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG IMAGE_REVISION=unknown
 
 # uv-managed Python runtime for sweep orchestration inside the container.
 COPY --from=ghcr.io/astral-sh/uv:0.11.24 /uv /uvx /bin/
@@ -94,7 +95,8 @@ COPY pyproject.toml README.md uv.lock /opt/red-patterns/
 WORKDIR /opt/red-patterns
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --only-group sweep \
- && /opt/red-patterns/.venv/bin/python -c "import h5py, numpy, pydantic; assert pydantic.VERSION.startswith('2'), pydantic.VERSION"
+ && /opt/red-patterns/.venv/bin/python -c "import h5py, numpy, pydantic; assert pydantic.VERSION.startswith('2'), pydantic.VERSION" \
+ && printf '%s\n' "$IMAGE_REVISION" > /opt/red-patterns/image-revision
 
 # Copy the executable
 COPY --from=build /opt/red-patterns/bin/red-patterns /bin/red-patterns
