@@ -121,16 +121,12 @@ class PhiConfig:
             rho_span=float(params.rho_span),
             dz=float(params.dz),
             rho_range=float(getattr(params, "rho_range", DEFAULT_RHO_RANGE)),
-            gaussian_mu=(
-                float(gaussian_mu) if gaussian_mu is not None else None
-            ),
+            gaussian_mu=(float(gaussian_mu) if gaussian_mu is not None else None),
             gaussian_sigma=(
                 float(gaussian_sigma) if gaussian_sigma is not None else None
             ),
             gaussian_blob_mu_z=(
-                float(gaussian_blob_mu_z)
-                if gaussian_blob_mu_z is not None
-                else None
+                float(gaussian_blob_mu_z) if gaussian_blob_mu_z is not None else None
             ),
             gaussian_blob_sigma_z=(
                 float(gaussian_blob_sigma_z)
@@ -391,7 +387,9 @@ class GaussianBlobPhi(GaussianPhi):
         errors = super().validate()
         cfg = self.cfg
         if cfg.gaussian_blob_mu_z is None:
-            errors.append("gaussian_blob_mu_z is required for a Gaussian Blob phi field.")
+            errors.append(
+                "gaussian_blob_mu_z is required for a Gaussian Blob phi field."
+            )
         if cfg.gaussian_blob_sigma_z is None:
             errors.append(
                 "gaussian_blob_sigma_z is required for a Gaussian Blob phi field."
@@ -450,9 +448,7 @@ class SingleBinPhi(PhiField):
         if cfg.single_bin_idx is None:
             errors.append("single_bin_idx is required for a single-bin phi field.")
         elif not (0 <= cfg.single_bin_idx < cfg.N):
-            errors.append(
-                f"single_bin_idx must be in [0, {cfg.N - 1}] for N={cfg.N}."
-            )
+            errors.append(f"single_bin_idx must be in [0, {cfg.N - 1}] for N={cfg.N}.")
         return errors
 
     def write_metadata(self, group: h5py.Group) -> None:
