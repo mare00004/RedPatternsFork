@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
-from .types import Gradient, PhiType, Variant
+from .types import ClosureType, Gradient, KernelType, PDFType, PhiType, Variant
 
 _DEFAULT_N = 256
 _DEFAULT_WING = 30
@@ -81,6 +81,63 @@ PhiParams = Annotated[
 PHI_PARAMS_ADAPTER: TypeAdapter[PhiParams] = TypeAdapter(PhiParams)
 
 
+class KernelParamsBase(BaseModel):
+    """Common, validated parameters for a generated convolution kernel."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kernel_type: KernelType
+    kernel_n: int
+    dz: float
+    subdiv: int
+
+
+class OriginalKernelParams(KernelParamsBase):
+    kernel_type: Literal[KernelType.ORIGINAL]
+    closure: ClosureType
+    pair_distribution: PDFType
+    U: float
+    sigma: float
+    g0: float | None = None
+    nn_d: float | None = None
+    nn_sigma: float | None = None
+    lambda_: float | None = None
+
+    @model_validator(mode="after")
+    def validate_distribution(self) -> "OriginalKernelParams":
+        if self.kernel_n < 3 or self.kernel_n % 2 == 0 or self.dz <= 0 or self.subdiv <= 0 or self.sigma <= 0:
+            raise ValueError("kernel_n must be odd >= 3; dz, subdiv, and sigma must be positive.")
+        if self.pair_distribution == PDFType.NEAREST_NEIGHBOR and None in (self.g0, self.nn_d, self.nn_sigma):
+            raise ValueError("nearest-neighbor distribution requires g0, nn_d, and nn_sigma.")
+        if self.pair_distribution == PDFType.EXPONENTIAL and (self.lambda_ is None or self.U == 0):
+            raise ValueError("exponential distribution requires lambda_ and nonzero U.")
+        return self
+
+
+class HNCKernelParams(KernelParamsBase):
+    kernel_type: Literal[KernelType.HNC]
+    a: float
+    b: float
+    c: float
+    alpha: float
+    beta: float
+    gamma: float
+
+    @model_validator(mode="after")
+    def validate_hnc(self) -> "HNCKernelParams":
+        if self.kernel_n < 3 or self.kernel_n % 2 == 0 or self.dz <= 0 or self.subdiv <= 0:
+            raise ValueError("kernel_n must be odd >= 3 and dz/subdiv must be positive.")
+        if self.b == 0 or self.alpha <= 0 or self.beta <= 0 or self.gamma <= 0:
+            raise ValueError("b must be nonzero and alpha, beta, gamma must be positive.")
+        return self
+
+
+KernelParams = Annotated[
+    OriginalKernelParams | HNCKernelParams, Field(discriminator="kernel_type")
+]
+KERNEL_PARAMS_ADAPTER: TypeAdapter[KernelParams] = TypeAdapter(KernelParams)
+
+
 class GenerateParams(BaseModel):
     """Nested ``{"mode": "generate", "params": {...}}`` block (kernel / generic)."""
 
@@ -88,6 +145,13 @@ class GenerateParams(BaseModel):
 
     mode: Literal["generate"] = "generate"
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class KernelGenerateParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["generate"] = "generate"
+    params: KernelParams
 
 
 class PhiGenerateParams(BaseModel):
@@ -130,7 +194,7 @@ class ConvRun(BaseRun):
     """A run payload for the ``--use-convolution`` variant."""
 
     variant: Literal[Variant.CONVOLUTION] = Variant.CONVOLUTION
-    kernel: GenerateParams
+    kernel: KernelGenerateParams
 
 
 RunPayload = Annotated[TaylorRun | ConvRun, Field(discriminator="variant")]

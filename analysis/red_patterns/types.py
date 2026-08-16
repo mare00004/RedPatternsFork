@@ -54,6 +54,15 @@ class PDFType(StrEnum):
         return _PDF_TYPE_LABELS[self]
 
 
+class KernelType(StrEnum):
+    ORIGINAL = "original"
+    HNC = "hnc"
+
+    @property
+    def label(self) -> str:
+        return _KERNEL_TYPE_LABELS[self]
+
+
 # Backwards-compatible aliases used by the sweep layer.
 PhiMode = PhiType
 ClosureMode = ClosureType
@@ -79,12 +88,18 @@ _PDF_TYPE_LABELS = {
     PDFType.EXPONENTIAL: "Exponential",
 }
 
+_KERNEL_TYPE_LABELS = {
+    KernelType.ORIGINAL: "Original (Lennard-Jones)",
+    KernelType.HNC: "HNC effective Morse",
+}
+
 __all__ = [
     "Variant",
     "Gradient",
     "PhiType",
     "ClosureType",
     "PDFType",
+    "KernelType",
     "PhiMode",
     "ClosureMode",
     "PairDistributionMode",
