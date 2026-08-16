@@ -77,7 +77,13 @@ int printConfig(SimConfig *c) {
     } else {
         printf("-> Using Taylor-Model:\n");
     }
-    printf("-> Using %s gradient", (c->model.gradientType == LINEAR) ? "linear" : "sigmoid");
+    const char *gradientName = "linear";
+    if (c->model.gradientType == SIGMOID) {
+        gradientName = "sigmoid";
+    } else if (c->model.gradientType == ZERO) {
+        gradientName = "zero";
+    }
+    printf("-> Using %s gradient", gradientName);
     if (strlen(c->model.initialPhiFile) > 0) {
         printf("\t-> initial phi file: %s\n", c->model.initialPhiFile);
     }
@@ -118,8 +124,8 @@ int deriveAndValidateOrDie(SimConfig *c) {
         fprintf(stderr, "%s is not a valid directory\n", c->run.outDir);
         return -1;
     }
-    if (!(c->model.gradientType == LINEAR || c->model.gradientType == SIGMOID)) {
-        fprintf(stderr, "gradient has to be one of: linear, sigmoid!\n");
+    if (!(c->model.gradientType == LINEAR || c->model.gradientType == SIGMOID || c->model.gradientType == ZERO)) {
+        fprintf(stderr, "gradient has to be one of: linear, sigmoid, zero!\n");
         return -1;
     }
     if (!(c->model.modelType == CONV || c->model.modelType == TAYL)) {
@@ -159,6 +165,8 @@ int deriveAndValidateOrDie(SimConfig *c) {
         c->model.alpha = 2.0e-05;
     } else if (c->model.gradientType == SIGMOID) {
         c->model.alpha = 2.0e-04;
+    } else if (c->model.gradientType == ZERO) {
+        c->model.alpha = 0.0;
     }
 
     return 0;

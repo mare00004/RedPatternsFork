@@ -11,6 +11,7 @@ typedef enum {
 typedef enum {
     LINEAR = 0,
     SIGMOID = 1,
+    ZERO = 2,
 } GradientType;
 
 typedef enum {

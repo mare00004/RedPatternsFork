@@ -67,6 +67,19 @@ __global__ void CuKernelGradLinear(double *percoll) {
     percoll[idx] = piecewise_func(z);
 }
 
+/*********
+ * ZERO   *
+ **********/
+
+__global__ void CuKernelGradZero(double *percoll) {
+    const std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= d_cfg.run.N) {
+        return;
+    }
+
+    percoll[idx] = 0.0;
+}
+
 /*********************************************************
  * SIGMOID                                               *
  *  - Equation (3) from supplementary material of paper. *

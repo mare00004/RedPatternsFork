@@ -215,6 +215,7 @@ def cell_sim_controls():
         {
             "sigmoid": mo.md("Sigmoid pressure gradient."),
             "linear": mo.md("Linear pressure gradient."),
+            "zero": mo.md("Zero pressure gradient (no driving term)."),
         },
         value="sigmoid",
     )

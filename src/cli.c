@@ -46,6 +46,8 @@ void setCommonArguments(CommonCLIArguments *args, SimConfig *cfg) {
             cfg->model.gradientType = LINEAR;
         } else if (strcmp(args->gradient->sval[0], "sigmoid") == 0) {
             cfg->model.gradientType = SIGMOID;
+        } else if (strcmp(args->gradient->sval[0], "zero") == 0) {
+            cfg->model.gradientType = ZERO;
         }
     }
     if (args->store->count > 0) {
@@ -84,7 +86,7 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
         "directory where simulation data is stored");
     struct arg_file *cli_phiFile =
         arg_file1(NULL, "phi-file", "<file>", "initial phi file");
-    struct arg_str *cli_gradient = arg_str0(NULL, "gradient", "linear|sigmoid", "Pressure gradient");
+    struct arg_str *cli_gradient = arg_str0(NULL, "gradient", "linear|sigmoid|zero", "Pressure gradient");
     struct arg_str *cli_store = arg_strn("s", "store", "phi|psi|percoll", 0, 3, "Arrays to store in HDF5 out file");
 
     CommonCLIArguments commonArgs = {

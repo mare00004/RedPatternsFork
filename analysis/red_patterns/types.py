@@ -21,6 +21,7 @@ class Variant(StrEnum):
 class Gradient(StrEnum):
     LINEAR = "linear"
     SIGMOID = "sigmoid"
+    ZERO = "zero"
 
 
 class PhiType(StrEnum):
