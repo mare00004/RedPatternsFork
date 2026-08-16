@@ -13,9 +13,7 @@ if str(ANALYSIS_DIR) not in sys.path:
     sys.path.insert(0, str(ANALYSIS_DIR))
 
 from red_patterns.kernel import (
-    ClosureType,
     KernelConfig,
-    PDFType,
     compute_kernel,
     write_kernel_h5,
 )
@@ -28,20 +26,7 @@ from red_patterns.sweep_jobs import find_run_by_id, load_runs_jsonl
 def kernel_config_from_params(
     params: dict[str, Any], output_path: Path
 ) -> KernelConfig:
-    return KernelConfig(
-        output_path=output_path,
-        closure=ClosureType(str(params["closure"])),
-        pair_distribution=PDFType(str(params["pair_distribution"])),
-        U=float(params["U"]),
-        sigma=float(params["sigma"]),
-        kernel_n=int(params["kernel_n"]),
-        dz=float(params["dz"]),
-        subdiv=int(params["subdiv"]),
-        g0=float(params["g0"]) if "g0" in params else None,
-        nn_d=float(params["nn_d"]) if "nn_d" in params else None,
-        nn_sigma=float(params["nn_sigma"]) if "nn_sigma" in params else None,
-        lambda_=float(params["lambda_"]) if "lambda_" in params else None,
-    )
+    return KernelConfig.from_params(params, output_path)
 
 
 def cli_args_from_payload(
