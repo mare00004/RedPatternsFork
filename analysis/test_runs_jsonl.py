@@ -60,7 +60,7 @@ with app.setup:
         if _sample_jsonl.exists()
         else '{"run_id":"r000001","variant":"taylor","N":256,"T":1000.0,'
         '"DT":0.001,"storeTime":1.0,"gradient":"linear",'
-        '"phi":{"mode":"generate","params":{"psi_avg":0.02,"N":256,"wing":32,'
+        '"phi":{"mode":"generate","params":{"psi_avg":0.02,"N":256,"wing_z":32,"wing_r":32,'
         '"rho_center":1100.0,"rho_span":30.0,"dz":0.000267651,'
         '"phi_type":"homogeneous"}},"NU":-2.832638e-32,'
         '"MU":-4.4684449999999995e-39}'

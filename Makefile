@@ -71,7 +71,8 @@ $(PHI_GAUSS):
 		--phi-type=gaussian \
 		--psi-avg=$(PSI) \
 		--N=$(PHI_N) \
-		--wing=$(PHI_WING) \
+		--wing-z=$(PHI_WING) \
+		--wing-r=$(PHI_WING) \
 		--rho-center=$(PHI_RHO_C) \
 		--rho-span=$(PHI_RHO_S) \
 		--dz=$(PHI_DZ) \
@@ -85,7 +86,8 @@ $(PHI_CONST):
 		--phi-type=homogeneous \
 		--psi-avg=$(PSI) \
 		--N=$(PHI_N) \
-		--wing=$(PHI_WING) \
+		--wing-z=$(PHI_WING) \
+		--wing-r=$(PHI_WING) \
 		--rho-center=$(PHI_RHO_C) \
 		--rho-span=$(PHI_RHO_S) \
 		--dz=$(PHI_DZ)

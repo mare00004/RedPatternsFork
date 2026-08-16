@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
 import tempfile
 import unittest
@@ -17,12 +19,17 @@ from red_patterns.models import (
     GaussianPhiParams,
     HomogeneousPhiParams,
     PHI_PARAMS_ADAPTER,
+    PerturbedSmoothHomogeneousPhiParams,
     PhiGenerateParams,
     SingleBinPhiParams,
 )
 from red_patterns.phi import (
     PHI_FIELD_TYPES,
+    build_export_parser,
     phi_field_from_params,
+    phi_field_from_ui,
+    make_phi_ui,
+    validate_export_namespace,
 )
 from red_patterns.sweep_jobs import PhiSweep
 from red_patterns.types import PhiType
@@ -31,7 +38,8 @@ N = 256
 BASE = {
     "psi_avg": 0.02,
     "N": N,
-    "wing": 30,
+    "wing_z": 30,
+    "wing_r": 30,
     "rho_center": 1100.0,
     "rho_span": 30.0,
     "dz": 0.000267651,
@@ -47,6 +55,11 @@ PER_TYPE_ARGS = {
     },
     PhiType.HOMOGENEOUS: {},
     PhiType.SMOOTH_HOMOGENEOUS: {"rho_range": 5.0},
+    PhiType.PERTURBED_SMOOTH_HOMOGENEOUS: {
+        "rho_range": 5.0,
+        "seed": 3,
+        "amplitude": 1e-3,
+    },
     PhiType.SINGLE_BIN: {"single_bin_idx": 100},
 }
 
@@ -86,6 +99,20 @@ class PhiParamsUnionTests(unittest.TestCase):
             PHI_PARAMS_ADAPTER.validate_python(params_for(PhiType.SINGLE_BIN)),
             SingleBinPhiParams,
         )
+        self.assertIsInstance(
+            PHI_PARAMS_ADAPTER.validate_python(
+                params_for(PhiType.PERTURBED_SMOOTH_HOMOGENEOUS)
+            ),
+            PerturbedSmoothHomogeneousPhiParams,
+        )
+
+    def test_concrete_model_supplies_its_discriminator_default(self):
+        params = GaussianPhiParams(
+            psi_avg=0.02,
+            gaussian_mu=1100.0,
+            gaussian_sigma=4.0,
+        )
+        self.assertEqual(params.phi_type, PhiType.GAUSSIAN)
 
     def test_rejects_param_mismatched_to_type(self):
         payload = params_for(PhiType.HOMOGENEOUS)
@@ -165,6 +192,49 @@ class PhiSweepRowsTests(unittest.TestCase):
         rows = sweep.rows()
         self.assertEqual(len(rows), 1)
         self.assertNotIn("gaussian_mu", rows[0])
+
+
+class PhiCliTests(unittest.TestCase):
+    def test_registry_builds_perturbed_cli(self):
+        parser = build_export_parser()
+        args = parser.parse_args(
+            [
+                "--output", "phi.h5",
+                "--phi-type", PhiType.PERTURBED_SMOOTH_HOMOGENEOUS.value,
+                "--psi-avg", "0.02",
+                "--rho-range", "5",
+                "--seed", "4",
+                "--amplitude", "0.001",
+            ]
+        )
+        field = validate_export_namespace(parser, args)
+        self.assertEqual(field.phi_type, PhiType.PERTURBED_SMOOTH_HOMOGENEOUS)
+        self.assertEqual(field.seed, 4)
+
+    def test_cli_rejects_an_option_from_another_type(self):
+        parser = build_export_parser()
+        args = parser.parse_args(
+            [
+                "--output", "phi.h5",
+                "--phi-type", PhiType.HOMOGENEOUS.value,
+                "--psi-avg", "0.02",
+                "--seed", "4",
+            ]
+        )
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                validate_export_namespace(parser, args)
+
+
+class PhiUiTests(unittest.TestCase):
+    def test_nested_ui_keeps_common_and_variant_values_separate(self):
+        ui = make_phi_ui()
+        self.assertEqual(set(ui.value), {"common", "phi_type", "variants"})
+        self.assertEqual(set(ui.value["common"]), {"psi_avg", "N", "wing_z", "wing_r"})
+        self.assertEqual(set(ui.value["variants"]), {phi_type.value for phi_type in PhiType})
+
+        field = phi_field_from_ui(ui.value)
+        self.assertEqual(field.phi_type, PhiType.GAUSSIAN)
 
 
 if __name__ == "__main__":

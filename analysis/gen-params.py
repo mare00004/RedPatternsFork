@@ -130,7 +130,8 @@ def _():
         psi_avg=[0.02],
         phi_type=[PhiType.HOMOGENEOUS],
         N=[256],
-        wing=[32],
+        wing_z=[32],
+        wing_r=[32],
     )
 
     kernel = KernelSweep(

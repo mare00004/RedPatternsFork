@@ -28,6 +28,7 @@ class PhiType(StrEnum):
     GAUSSIAN_BLOB = "gaussian_blob"
     HOMOGENEOUS = "homogeneous"
     SMOOTH_HOMOGENEOUS = "smooth_homogeneous"
+    PERTURBED_SMOOTH_HOMOGENEOUS = "perturbed_smooth_homogeneous"
     SINGLE_BIN = "single_bin"
 
     @property
@@ -74,6 +75,7 @@ _PHI_TYPE_LABELS = {
     PhiType.GAUSSIAN_BLOB: "Gaussian Blob",
     PhiType.HOMOGENEOUS: "Homogeneous",
     PhiType.SMOOTH_HOMOGENEOUS: "Smooth Homogeneous",
+    PhiType.PERTURBED_SMOOTH_HOMOGENEOUS: "Perturbed Smooth Homogeneous",
     PhiType.SINGLE_BIN: "Single Bin",
 }
 

@@ -34,6 +34,8 @@ DEFAULT_GAUSSIAN_BLOB_MU_Z = 0.035
 DEFAULT_GAUSSIAN_BLOB_SIGMA_Z = 0.01
 DEFAULT_RHO_RANGE = 5.0
 DEFAULT_SINGLE_BIN_IDX = 256
+DEFAULT_PERTURBATION_SEED = 0
+DEFAULT_PERTURBATION_AMPLITUDE = 1e-3
 
 DEFAULT_SIGMA = 5.6e-6
 DEFAULT_G0 = 4.0e7
@@ -81,7 +83,8 @@ class PhiSweep:
     psi_avg: Sequence[float] = (DEFAULT_PSI_AVG,)
     phi_type: Sequence[PhiType | str] = (PhiType.GAUSSIAN,)
     N: Sequence[int] = (DEFAULT_N,)
-    wing: Sequence[int] = (DEFAULT_WING,)
+    wing_z: Sequence[int] = (DEFAULT_WING,)
+    wing_r: Sequence[int] = (DEFAULT_WING,)
     rho_center: Sequence[float] = (DEFAULT_RHO_CENTER,)
     rho_span: Sequence[float] = (DEFAULT_RHO_SPAN,)
     dz: Sequence[float] = (DEFAULT_DZ,)
@@ -90,6 +93,8 @@ class PhiSweep:
     gaussian_blob_mu_z: Sequence[float] = (DEFAULT_GAUSSIAN_BLOB_MU_Z,)
     gaussian_blob_sigma_z: Sequence[float] = (DEFAULT_GAUSSIAN_BLOB_SIGMA_Z,)
     rho_range: Sequence[float] = (DEFAULT_RHO_RANGE,)
+    seed: Sequence[int] = (DEFAULT_PERTURBATION_SEED,)
+    amplitude: Sequence[float] = (DEFAULT_PERTURBATION_AMPLITUDE,)
     single_bin_idx: Sequence[int] = (DEFAULT_SINGLE_BIN_IDX,)
 
     def rows(self) -> list[dict[str, Any]]:
@@ -97,46 +102,31 @@ class PhiSweep:
             {
                 "psi_avg": self.psi_avg,
                 "N": self.N,
-                "wing": self.wing,
+                "wing_z": self.wing_z,
+                "wing_r": self.wing_r,
                 "rho_center": self.rho_center,
                 "rho_span": self.rho_span,
                 "dz": self.dz,
             }
         )
-        gaussian_rows = dict_product(
-            {
-                "gaussian_mu": self.gaussian_mu,
-                "gaussian_sigma": self.gaussian_sigma,
-            }
-        )
-        blob_rows = dict_product(
-            {
-                "gaussian_mu": self.gaussian_mu,
-                "gaussian_sigma": self.gaussian_sigma,
-                "gaussian_blob_mu_z": self.gaussian_blob_mu_z,
-                "gaussian_blob_sigma_z": self.gaussian_blob_sigma_z,
-            }
-        )
-        smooth_rows = dict_product({"rho_range": self.rho_range})
-        single_bin_rows = dict_product({"single_bin_idx": self.single_bin_idx})
+        # The field registry declares which sweep dimensions each distribution
+        # owns, avoiding a parallel type-switch here.
+        from .phi import PHI_FIELD_TYPES
+
         rows: list[dict[str, Any]] = []
         for phi_type in self.phi_type:
-            phi_value = PhiType(json_scalar(phi_type)).value
+            resolved_type = PhiType(json_scalar(phi_type))
+            phi_value = resolved_type.value
+            field_cls = PHI_FIELD_TYPES[resolved_type]
+            type_rows = dict_product(
+                {
+                    name: getattr(self, name)
+                    for name in field_cls.sweep_param_names()
+                }
+            )
             for base in base_rows:
-                if phi_value == PhiType.GAUSSIAN.value:
-                    for gaussian in gaussian_rows:
-                        rows.append({**base, "phi_type": phi_value, **gaussian})
-                elif phi_value == PhiType.GAUSSIAN_BLOB.value:
-                    for blob in blob_rows:
-                        rows.append({**base, "phi_type": phi_value, **blob})
-                elif phi_value == PhiType.SMOOTH_HOMOGENEOUS.value:
-                    for smooth in smooth_rows:
-                        rows.append({**base, "phi_type": phi_value, **smooth})
-                elif phi_value == PhiType.SINGLE_BIN.value:
-                    for single in single_bin_rows:
-                        rows.append({**base, "phi_type": phi_value, **single})
-                else:
-                    rows.append({**base, "phi_type": phi_value})
+                for type_values in type_rows:
+                    rows.append({**base, "phi_type": phi_value, **type_values})
         return rows
 
 

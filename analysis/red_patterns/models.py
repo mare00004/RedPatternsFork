@@ -27,45 +27,69 @@ class PhiParamsBase(BaseModel):
 
     These mirror the flat ``params`` dict emitted by :class:
     `red_patterns.sweep_jobs.PhiSweep` so existing ``runs.jsonl`` payloads
-    still round-trip.  ``phi_type`` is the discriminated-union tag.
+    still round-trip.  Concrete subclasses define the ``phi_type``
+    discriminated-union tag.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    phi_type: PhiType
-    psi_avg: float
-    N: int = _DEFAULT_N
-    wing: int = _DEFAULT_WING
+    psi_avg: Annotated[float, Field(ge=0)]
+    N: Annotated[int, Field(ge=3)] = _DEFAULT_N
+    wing_z: Annotated[int, Field(ge=0)] = _DEFAULT_WING
+    wing_r: Annotated[int, Field(ge=0)] = _DEFAULT_WING
     rho_center: float = _DEFAULT_RHO_CENTER
-    rho_span: float = _DEFAULT_RHO_SPAN
-    dz: float = _DEFAULT_DZ
+    rho_span: Annotated[float, Field(gt=0)] = _DEFAULT_RHO_SPAN
+    dz: Annotated[float, Field(gt=0)] = _DEFAULT_DZ
+
+    @model_validator(mode="after")
+    def validate_active_domain(self) -> "PhiParamsBase":
+        if self.N - 2 * self.wing_z <= 0:
+            raise ValueError(
+                "wing_z is too large for N: the active z domain would be empty."
+            )
+        if self.N - 2 * self.wing_r <= 0:
+            raise ValueError(
+                "wing_r is too large for N: the active rho domain would be empty."
+            )
+        return self
 
 
 class GaussianPhiParams(PhiParamsBase):
-    phi_type: Literal[PhiType.GAUSSIAN]
+    phi_type: Literal[PhiType.GAUSSIAN] = PhiType.GAUSSIAN
     gaussian_mu: float
-    gaussian_sigma: float
+    gaussian_sigma: Annotated[float, Field(gt=0)]
 
 
 class GaussianBlobPhiParams(PhiParamsBase):
-    phi_type: Literal[PhiType.GAUSSIAN_BLOB]
+    phi_type: Literal[PhiType.GAUSSIAN_BLOB] = PhiType.GAUSSIAN_BLOB
     gaussian_mu: float
-    gaussian_sigma: float
+    gaussian_sigma: Annotated[float, Field(gt=0)]
     gaussian_blob_mu_z: float
-    gaussian_blob_sigma_z: float
+    gaussian_blob_sigma_z: Annotated[float, Field(gt=0)]
 
 
 class HomogeneousPhiParams(PhiParamsBase):
-    phi_type: Literal[PhiType.HOMOGENEOUS]
+    phi_type: Literal[PhiType.HOMOGENEOUS] = PhiType.HOMOGENEOUS
 
 
-class SmoothHomogeneousPhiParams(PhiParamsBase):
-    phi_type: Literal[PhiType.SMOOTH_HOMOGENEOUS]
-    rho_range: float
+class SmoothRhoRangePhiParamsBase(PhiParamsBase):
+    rho_range: Annotated[float, Field(gt=0)]
+
+
+class SmoothHomogeneousPhiParams(SmoothRhoRangePhiParamsBase):
+    phi_type: Literal[PhiType.SMOOTH_HOMOGENEOUS] = PhiType.SMOOTH_HOMOGENEOUS
+
+
+class PerturbedSmoothHomogeneousPhiParams(SmoothRhoRangePhiParamsBase):
+    phi_type: Literal[PhiType.PERTURBED_SMOOTH_HOMOGENEOUS] = (
+        PhiType.PERTURBED_SMOOTH_HOMOGENEOUS
+    )
+    seed: Annotated[int, Field(ge=0)]
+    amplitude: Annotated[float, Field(ge=0)]
 
 
 class SingleBinPhiParams(PhiParamsBase):
-    phi_type: Literal[PhiType.SINGLE_BIN]
+    phi_type: Literal[PhiType.SINGLE_BIN] = PhiType.SINGLE_BIN
     single_bin_idx: int
 
 
@@ -74,6 +98,7 @@ PhiParams = Annotated[
     | GaussianBlobPhiParams
     | HomogeneousPhiParams
     | SmoothHomogeneousPhiParams
+    | PerturbedSmoothHomogeneousPhiParams
     | SingleBinPhiParams,
     Field(discriminator="phi_type"),
 ]

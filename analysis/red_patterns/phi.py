@@ -40,7 +40,16 @@ import h5py
 import numpy as np
 from numpy.typing import NDArray
 
-from .models import PHI_PARAMS_ADAPTER, PhiParams, PhiParamsBase
+from .models import (
+    PHI_PARAMS_ADAPTER,
+    GaussianBlobPhiParams,
+    GaussianPhiParams,
+    HomogeneousPhiParams,
+    PerturbedSmoothHomogeneousPhiParams,
+    PhiParamsBase,
+    SingleBinPhiParams,
+    SmoothHomogeneousPhiParams,
+)
 from .types import PhiType
 
 Array1F = NDArray[np.float64]
@@ -126,6 +135,39 @@ def phi_smooth_homogeneous(
         profile[idx_start : idx_start + n_right] = 0.5 * (1 + np.cos(np.pi * x))
 
     return (psi_avg * profile[:, np.newaxis] * np.ones(N_z)).astype(np.float64)
+
+
+def perturb_phi_z(
+    phi: Array2F,
+    z: Array1F,
+    wing_z: int,
+    *,
+    amplitude: float,
+    seed: int,
+    mode_min: int = 1,
+    mode_max: int = 32,
+) -> Array2F:
+    """Apply a mass-conserving random cosine perturbation along z."""
+    result = phi.copy()
+    active = slice(wing_z, phi.shape[1] - wing_z)
+    z_active = z[active]
+    phi_active = phi[:, active]
+    x = (z_active - z_active[0]) / (z_active[-1] - z_active[0])
+
+    rng = np.random.default_rng(seed)
+    modes = np.arange(mode_min, mode_max + 1)
+    coefficients = rng.normal(size=len(modes))
+    eta = np.sum(
+        coefficients[:, np.newaxis]
+        * np.cos(np.pi * modes[:, np.newaxis] * x[np.newaxis, :]),
+        axis=0,
+    )
+
+    psi = phi_active.sum(axis=0)
+    eta -= np.average(eta, weights=psi)
+    eta /= np.sqrt(np.mean(eta**2))
+    result[:, active] *= 1.0 + amplitude * eta[np.newaxis, :]
+    return result
 
 
 def phi_homogeneous(rho: Array1F, z: Array1F, psi_avg: float) -> Array2F:
@@ -253,6 +295,7 @@ class PhiField(ABC):
     """
 
     phi_type: ClassVar[PhiType]
+    params_model: ClassVar[type[PhiParamsBase]]
 
     def __init__(
         self,
@@ -278,25 +321,27 @@ class PhiField(ABC):
     # ------------------------------------------------------------------ #
 
     @classmethod
-    def from_params(cls, params: PhiParams) -> PhiField:
-        """Build a field from a validated :data:`PhiParams` union member.
+    def from_params(cls, params: PhiParamsBase | dict[str, Any]) -> PhiField:
+        """Build this field from its concrete model or a raw parameter payload.
 
-        ``params`` may also be a plain dict; it is run through
-        :data:`PHI_PARAMS_ADAPTER` first.  The single wire-level ``wing`` entry
-        is split into ``wing_z``/``wing_r`` for the grid.
+        A field only needs its own parameter model and does not need to inspect
+        the discriminated-union tag.  Registry selection remains the
+        responsibility of :func:`phi_field_from_params`.
         """
-        if not isinstance(params, PhiParamsBase):
-            params = PHI_PARAMS_ADAPTER.validate_python(params)  # type: ignore[redundant-cast]
-        values = params.model_dump()
-        wing = values.pop("wing")
-        values["wing_z"] = wing
-        values["wing_r"] = wing
-        return cls.from_values(values)
+        if isinstance(params, cls.params_model):
+            validated_params = params
+        else:
+            validated_params = cls.params_model.model_validate(params)
+        values = validated_params.model_dump()
+        return cls(
+            **cls._grid_from_values(values),
+            **cls._per_type_from_values(values),
+        )
 
     @classmethod
     def from_values(cls, values: dict[str, Any]) -> PhiField:
         """Build a field from a plain value dict (UI state or CLI args)."""
-        return cls(**cls._grid_from_values(values), **cls._per_type_from_values(values))
+        return cls.from_params(values)
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> PhiField:
@@ -304,20 +349,43 @@ class PhiField(ABC):
         return cls.from_values(vars(args))
 
     @classmethod
-    def _grid_from_values(cls, values: dict[str, Any]) -> dict[str, Any]:
-        """Extract the shared grid params, tolerating UI/CLI key naming."""
+    def add_parser_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        """Add this distribution's CLI options.
 
-        def pick(*keys: str) -> Any:
-            for key in keys:
-                if key in values:
-                    return values[key]
-            raise KeyError(f"missing grid parameter; expected one of {', '.join(keys)}")
+        The parser contains options for every registered type.  Pydantic's
+        discriminated union rejects options that do not belong to the selected
+        ``--phi-type``.
+        """
+
+    @classmethod
+    def make_ui_controls(cls) -> dict[str, Any]:
+        """Return this distribution's controls for a nested Marimo dictionary."""
+        return {}
+
+    @classmethod
+    def ui_layout(cls, controls: Any) -> Any:
+        """Render this distribution's controls."""
+        return controls
+
+    @classmethod
+    def sweep_param_names(cls) -> tuple[str, ...]:
+        """Names of ``PhiSweep`` attributes used only by this distribution."""
+        return ()
+
+    @classmethod
+    def type_description(cls) -> str:
+        """Short Markdown description used in the type picker."""
+        return ""
+
+    @classmethod
+    def _grid_from_values(cls, values: dict[str, Any]) -> dict[str, Any]:
+        """Extract the shared grid parameters from the canonical wire format."""
 
         return {
             "N": int(values["N"]),
             "psi_avg": float(values["psi_avg"]),
-            "wing_z": int(pick("wing_z", "wingz")),
-            "wing_r": int(pick("wing_r", "wingr")),
+            "wing_z": int(values["wing_z"]),
+            "wing_r": int(values["wing_r"]),
             "rho_center": float(values.get("rho_center", DEFAULT_RHO_CENTER)),
             "rho_span": float(values.get("rho_span", DEFAULT_RHO_SPAN)),
             "dz": float(values["dz"]),
@@ -408,6 +476,7 @@ class PhiField(ABC):
 
 class GaussianPhi(PhiField):
     phi_type = PhiType.GAUSSIAN
+    params_model = GaussianPhiParams
 
     def __init__(
         self,
@@ -445,9 +514,50 @@ class GaussianPhi(PhiField):
             f"gaussian_sigma={self.gaussian_sigma:.6e}",
         ]
 
+    @classmethod
+    def add_parser_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--gaussian-mu", type=float, default=argparse.SUPPRESS)
+        parser.add_argument("--gaussian-sigma", type=float, default=argparse.SUPPRESS)
+
+    @classmethod
+    def make_ui_controls(cls) -> dict[str, Any]:
+        import marimo as mo
+
+        return {
+            "gaussian_mu": mo.ui.number(
+                start=0.0,
+                stop=2000.0,
+                step=0.1,
+                value=DEFAULT_GAUSSIAN_MU,
+                label="$\\mu_\\rho \\; [\\frac{g}{L}]$",
+            ),
+            "gaussian_sigma": mo.ui.number(
+                start=0.1,
+                stop=15.0,
+                step=0.1,
+                value=DEFAULT_GAUSSIAN_SIGMA,
+                label="$\\sigma_\\rho \\; [\\frac{g}{L}]$",
+            ),
+        }
+
+    @classmethod
+    def ui_layout(cls, controls: Any) -> Any:
+        import marimo as mo
+
+        return mo.vstack([mo.md("### Gaussian parameters"), controls])
+
+    @classmethod
+    def sweep_param_names(cls) -> tuple[str, ...]:
+        return ("gaussian_mu", "gaussian_sigma")
+
+    @classmethod
+    def type_description(cls) -> str:
+        return r"$$\varphi(\rho, z) = \langle \psi \rangle\,\mathcal{N}(\rho;\mu_\rho,\sigma_\rho)$$"
+
 
 class GaussianBlobPhi(GaussianPhi):
     phi_type = PhiType.GAUSSIAN_BLOB
+    params_model = GaussianBlobPhiParams
 
     def __init__(
         self,
@@ -496,16 +606,70 @@ class GaussianBlobPhi(GaussianPhi):
             f"gaussian_blob_sigma_z={self.gaussian_blob_sigma_z:.6e}",
         ]
 
+    @classmethod
+    def add_parser_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--gaussian-blob-mu-z", type=float, default=argparse.SUPPRESS
+        )
+        parser.add_argument(
+            "--gaussian-blob-sigma-z", type=float, default=argparse.SUPPRESS
+        )
+
+    @classmethod
+    def make_ui_controls(cls) -> dict[str, Any]:
+        import marimo as mo
+
+        return {
+            **super().make_ui_controls(),
+            "gaussian_blob_mu_z": mo.ui.number(
+                start=0.0,
+                stop=1.0,
+                step=0.001,
+                value=DEFAULT_GAUSSIAN_BLOB_MU_Z,
+                label="$\\mu_z \\; [m]$",
+            ),
+            "gaussian_blob_sigma_z": mo.ui.number(
+                start=0.001,
+                stop=0.1,
+                step=0.001,
+                value=DEFAULT_GAUSSIAN_BLOB_SIGMA_Z,
+                label="$\\sigma_z \\; [m]$",
+            ),
+        }
+
+    @classmethod
+    def ui_layout(cls, controls: Any) -> Any:
+        import marimo as mo
+
+        return mo.vstack([mo.md("### Gaussian blob parameters"), controls])
+
+    @classmethod
+    def sweep_param_names(cls) -> tuple[str, ...]:
+        return super().sweep_param_names() + (
+            "gaussian_blob_mu_z",
+            "gaussian_blob_sigma_z",
+        )
+
+    @classmethod
+    def type_description(cls) -> str:
+        return r"$$\varphi(\rho,z)=\langle\psi\rangle\,\mathcal{N}(\rho,z;\mu_\rho,\sigma_\rho,\mu_z,\sigma_z)$$"
+
 
 class HomogeneousPhi(PhiField):
     phi_type = PhiType.HOMOGENEOUS
+    params_model = HomogeneousPhiParams
 
     def build(self, rho: Array1F, z: Array1F) -> Array2F:
         return phi_homogeneous(rho, z, self.psi_avg)
 
+    @classmethod
+    def type_description(cls) -> str:
+        return r"$\varphi(\rho,z)=\langle\psi\rangle/L_\rho$"
+
 
 class SmoothHomogeneousPhi(PhiField):
     phi_type = PhiType.SMOOTH_HOMOGENEOUS
+    params_model = SmoothHomogeneousPhiParams
 
     def __init__(self, *, rho_range: float, **grid: Any) -> None:
         super().__init__(**grid)
@@ -521,8 +685,10 @@ class SmoothHomogeneousPhi(PhiField):
         )
 
     def validate(self) -> list[str]:
-        if self.rho_range <= 0.0:
-            return ["rho_range must be positive."]
+        dr = self.rho_span / (self.N - 1)
+        max_allowed = self.rho_span / 2.0 - self.wing_r * dr
+        if self.rho_range > max_allowed:
+            return ["rho_range and wing_r exceed the rho domain."]
         return []
 
     def write_metadata(self, group: h5py.Group) -> None:
@@ -531,9 +697,115 @@ class SmoothHomogeneousPhi(PhiField):
     def summary(self) -> list[str]:
         return [f"rho_range={self.rho_range:.6e}"]
 
+    @classmethod
+    def add_parser_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--rho-range", type=float, default=argparse.SUPPRESS)
+
+    @classmethod
+    def make_ui_controls(cls) -> dict[str, Any]:
+        import marimo as mo
+
+        return {
+            "rho_range": mo.ui.number(
+                start=0.1,
+                stop=100.0,
+                step=0.1,
+                value=DEFAULT_RHO_RANGE,
+                label="ρ half-width (region)",
+            )
+        }
+
+    @classmethod
+    def ui_layout(cls, controls: Any) -> Any:
+        import marimo as mo
+
+        return mo.vstack([mo.md("### Smooth homogeneous parameters"), controls])
+
+    @classmethod
+    def sweep_param_names(cls) -> tuple[str, ...]:
+        return ("rho_range",)
+
+    @classmethod
+    def type_description(cls) -> str:
+        return (
+            r"$\varphi(\rho,z)=\langle\psi\rangle$ in a ρ block, cosine-tapered to zero"
+        )
+
+
+class PerturbedSmoothHomogeneousPhi(SmoothHomogeneousPhi):
+    phi_type = PhiType.PERTURBED_SMOOTH_HOMOGENEOUS
+    params_model = PerturbedSmoothHomogeneousPhiParams
+
+    def __init__(self, *, seed: int, amplitude: float, **grid: Any) -> None:
+        super().__init__(**grid)
+        self.seed = int(seed)
+        self.amplitude = float(amplitude)
+
+    @classmethod
+    def _per_type_from_values(cls, values: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **super()._per_type_from_values(values),
+            "seed": values["seed"],
+            "amplitude": values["amplitude"],
+        }
+
+    def build(self, rho: Array1F, z: Array1F) -> Array2F:
+        return perturb_phi_z(
+            super().build(rho, z),
+            z,
+            self.wing_z,
+            amplitude=self.amplitude,
+            seed=self.seed,
+        )
+
+    def write_metadata(self, group: h5py.Group) -> None:
+        super().write_metadata(group)
+        group.attrs["seed"] = self.seed
+        group.attrs["amplitude"] = self.amplitude
+
+    def summary(self) -> list[str]:
+        return super().summary() + [
+            f"seed={self.seed}",
+            f"amplitude={self.amplitude:.6e}",
+        ]
+
+    @classmethod
+    def add_parser_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--seed", type=int, default=argparse.SUPPRESS)
+        parser.add_argument("--amplitude", type=float, default=argparse.SUPPRESS)
+
+    @classmethod
+    def make_ui_controls(cls) -> dict[str, Any]:
+        import marimo as mo
+
+        return {
+            **super().make_ui_controls(),
+            "seed": mo.ui.number(start=0, stop=100, step=1, value=0, label="Seed"),
+            "amplitude": mo.ui.number(
+                start=0, stop=1, step=1e-6, value=1e-3, label="Amplitude"
+            ),
+        }
+
+    @classmethod
+    def ui_layout(cls, controls: Any) -> Any:
+        import marimo as mo
+
+        return mo.vstack(
+            [mo.md("### Perturbed smooth homogeneous parameters"), controls]
+        )
+
+    @classmethod
+    def sweep_param_names(cls) -> tuple[str, ...]:
+        return super().sweep_param_names() + ("seed", "amplitude")
+
+    @classmethod
+    def type_description(cls) -> str:
+        return r"$\varphi_{smooth}(\rho,z)[1 + A\eta(z)]$ with a seeded, mass-conserving perturbation"
+
 
 class SingleBinPhi(PhiField):
     phi_type = PhiType.SINGLE_BIN
+    params_model = SingleBinPhiParams
 
     def __init__(self, *, single_bin_idx: int, **grid: Any) -> None:
         super().__init__(**grid)
@@ -557,24 +829,57 @@ class SingleBinPhi(PhiField):
     def summary(self) -> list[str]:
         return [f"single_bin_idx={self.single_bin_idx}"]
 
+    @classmethod
+    def add_parser_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--single-bin-idx", type=int, default=argparse.SUPPRESS)
+
+    @classmethod
+    def make_ui_controls(cls) -> dict[str, Any]:
+        import marimo as mo
+
+        return {
+            "single_bin_idx": mo.ui.number(
+                start=0,
+                stop=1023,
+                step=1,
+                value=DEFAULT_SINGLE_BIN_IDX,
+                label="ρ bin index",
+            )
+        }
+
+    @classmethod
+    def ui_layout(cls, controls: Any) -> Any:
+        import marimo as mo
+
+        return mo.vstack([mo.md("### Single-bin parameters"), controls])
+
+    @classmethod
+    def sweep_param_names(cls) -> tuple[str, ...]:
+        return ("single_bin_idx",)
+
+    @classmethod
+    def type_description(cls) -> str:
+        return r"$\varphi(\rho_i,z)=\langle\psi\rangle$ for one ρ bin"
+
 
 PHI_FIELD_TYPES: dict[PhiType, type[PhiField]] = {
     PhiType.GAUSSIAN: GaussianPhi,
     PhiType.GAUSSIAN_BLOB: GaussianBlobPhi,
     PhiType.HOMOGENEOUS: HomogeneousPhi,
     PhiType.SMOOTH_HOMOGENEOUS: SmoothHomogeneousPhi,
+    PhiType.PERTURBED_SMOOTH_HOMOGENEOUS: PerturbedSmoothHomogeneousPhi,
     PhiType.SINGLE_BIN: SingleBinPhi,
 }
 
 
-def phi_field_from_params(params: PhiParams) -> PhiField:
+def phi_field_from_params(params: PhiParamsBase | dict[str, Any]) -> PhiField:
     """Return the :class:`PhiField` subclass matching a ``PhiParams`` payload.
 
     ``params`` may be a validated union member or a plain dict.
     """
-    if not isinstance(params, PhiParamsBase):
-        params = PHI_PARAMS_ADAPTER.validate_python(params)  # type: ignore[redundant-cast]
-    return PHI_FIELD_TYPES[PhiType(params.phi_type)].from_params(params)
+    payload = params.model_dump() if isinstance(params, PhiParamsBase) else params
+    validated_params = PHI_PARAMS_ADAPTER.validate_python(payload)
+    return PHI_FIELD_TYPES[validated_params.phi_type].from_params(validated_params)
 
 
 # --------------------------------------------------------------------------- #
@@ -583,196 +888,52 @@ def phi_field_from_params(params: PhiParams) -> PhiField:
 
 
 def build_export_parser(prog: str = "phi export") -> argparse.ArgumentParser:
+    """Build the flat export CLI from shared and per-type definitions."""
     parser = argparse.ArgumentParser(
         prog=prog,
         description="Export a CUDA-compatible initial phi field to HDF5.",
     )
-    _ = parser.add_argument(
-        "--output", required=True, help="Path to the output HDF5 file."
-    )
-    _ = parser.add_argument(
+    parser.add_argument("--output", required=True, help="Path to the output HDF5 file.")
+    parser.add_argument(
         "--phi-type",
         required=True,
         choices=sorted(t.value for t in PhiType),
         help="Initial phi distribution to use.",
     )
-    _ = parser.add_argument(
+    parser.add_argument(
         "--psi-avg", required=True, type=float, help="Average volume fraction."
     )
-    _ = parser.add_argument(
+    parser.add_argument(
         "--N", type=int, default=DEFAULT_N, help="Grid size in rho and z."
     )
-    _ = parser.add_argument(
-        "--wingz",
-        type=int,
-        default=DEFAULT_WING,
-        help="wing size in z direction",
+    parser.add_argument(
+        "--wing-z", type=int, default=DEFAULT_WING, help="Wing size in z direction."
     )
-    _ = parser.add_argument(
-        "--wingr",
-        type=int,
-        default=DEFAULT_WING,
-        help="wing size in z direction",
+    parser.add_argument(
+        "--wing-r", type=int, default=DEFAULT_WING, help="Wing size in rho direction."
     )
-    _ = parser.add_argument(
-        "--rho-center",
-        type=float,
-        default=DEFAULT_RHO_CENTER,
-        help="Center of the rho axis in g/L.",
-    )
-    _ = parser.add_argument(
-        "--rho-span",
-        type=float,
-        default=DEFAULT_RHO_SPAN,
-        help="Total rho-axis span in g/L.",
-    )
-    _ = parser.add_argument(
-        "--rho-range",
-        type=float,
-        default=DEFAULT_RHO_RANGE,
-        help="Half‑width of the constant block in the ρ direction.",
-    )
-    _ = parser.add_argument(
-        "--dz", type=float, default=DEFAULT_DZ, help="Z-axis spacing in meters."
-    )
-    _ = parser.add_argument(
-        "--gaussian-mu", type=float, help="Gaussian rho center in g/L."
-    )
-    _ = parser.add_argument(
-        "--gaussian-sigma", type=float, help="Gaussian rho width in g/L."
-    )
-    _ = parser.add_argument(
-        "--gaussian-blob-mu-z",
-        type=float,
-        help="Gaussian blob z center in meters.",
-    )
-    _ = parser.add_argument(
-        "--gaussian-blob-sigma-z",
-        type=float,
-        help="Gaussian blob z width in meters.",
-    )
-    _ = parser.add_argument(
-        "--single-bin-idx",
-        type=int,
-        help="Rho bin index for single-bin phi type.",
-    )
+    parser.add_argument("--rho-center", type=float, default=DEFAULT_RHO_CENTER)
+    parser.add_argument("--rho-span", type=float, default=DEFAULT_RHO_SPAN)
+    parser.add_argument("--dz", type=float, default=DEFAULT_DZ)
+    for field_cls in PHI_FIELD_TYPES.values():
+        field_cls.add_parser_arguments(parser)
     return parser
 
 
 def validate_export_namespace(
     parser: argparse.ArgumentParser, args: argparse.Namespace
 ) -> PhiField:
-    errors: list[str] = []
-
-    if args.N < 3:
-        errors.append("--N must be an integer >= 3.")
-    if args.wingz < 0:
-        errors.append("--wingz must be non-negative.")
-    if args.wingr < 0:
-        errors.append("--wingz must be non-negative.")
-    if args.psi_avg < 0.0:
-        errors.append("--psi-avg must be non-negative.")
-    if args.rho_span <= 0.0:
-        errors.append("--rho-span must be positive.")
-    if args.dz <= 0.0:
-        errors.append("--dz must be positive.")
-
-    active_z = args.N - 2 * args.wingz
-    active_rho = args.N - 2 * args.wingr
-    if active_z <= 0:
-        errors.append(
-            "--wingz is too large for --N: the active z region would be empty."
-        )
-    if active_rho <= 0:
-        errors.append(
-            "--wingr is too large for --N: the active rho region would be empty."
-        )
-
-    if args.phi_type == PhiType.GAUSSIAN:
-        if args.gaussian_mu is None:
-            errors.append("--gaussian-mu is required with --phi-type=gaussian.")
-        if args.gaussian_sigma is None:
-            errors.append("--gaussian-sigma is required with --phi-type=gaussian.")
-        elif args.gaussian_sigma <= 0.0:
-            errors.append("--gaussian-sigma must be positive.")
-        if (
-            args.gaussian_blob_mu_z is not None
-            or args.gaussian_blob_sigma_z is not None
-        ):
-            errors.append(
-                "--gaussian-blob-mu-z and --gaussian-blob-sigma-z are only valid with "
-                + "--phi-type=gaussian_blob."
-            )
-    elif args.phi_type == PhiType.GAUSSIAN_BLOB:
-        if args.gaussian_mu is None:
-            errors.append("--gaussian-mu is required with --phi-type=gaussian_blob.")
-        if args.gaussian_sigma is None:
-            errors.append("--gaussian-sigma is required with --phi-type=gaussian_blob.")
-        elif args.gaussian_sigma <= 0.0:
-            errors.append("--gaussian-sigma must be positive.")
-        if args.gaussian_blob_mu_z is None:
-            errors.append(
-                "--gaussian-blob-mu-z is required with --phi-type=gaussian_blob."
-            )
-        if args.gaussian_blob_sigma_z is None:
-            errors.append(
-                "--gaussian-blob-sigma-z is required with --phi-type=gaussian_blob."
-            )
-        elif args.gaussian_blob_sigma_z <= 0.0:
-            errors.append("--gaussian-blob-sigma-z must be positive.")
-    elif args.phi_type == PhiType.SMOOTH_HOMOGENEOUS:
-        if args.rho_range is None:
-            errors.append("--rho-range is required with --phi-type=smooth_homogeneous.")
-        elif args.rho_range <= 0.0:
-            errors.append("--rho-range must be positive.")
-        # Ensure the block edges are at least wing_r indices from each boundary
-        dr = args.rho_span / (args.N - 1)  # physical spacing per cell
-        max_allowed = args.rho_span / 2.0 - args.wingr * dr
-        if args.rho_range > max_allowed:
-            errors.append(
-                "--rho-range + wingr exceeds the rho domain for smooth_homogeneous."
-            )
-    elif args.phi_type == PhiType.SINGLE_BIN:
-        if args.single_bin_idx is None:
-            errors.append("--single-bin-idx is required with --phi-type=single_bin.")
-        elif args.single_bin_idx < 0 or args.single_bin_idx >= args.N:
-            errors.append(
-                f"--single-bin-idx must be in [0, {args.N - 1}] for N={args.N}."
-            )
-        if args.gaussian_mu is not None or args.gaussian_sigma is not None:
-            errors.append(
-                "--gaussian-mu and --gaussian-sigma are only valid with "
-                + "--phi-type=gaussian or --phi-type=gaussian_blob."
-            )
-        if (
-            args.gaussian_blob_mu_z is not None
-            or args.gaussian_blob_sigma_z is not None
-        ):
-            errors.append(
-                "--gaussian-blob-mu-z and --gaussian-blob-sigma-z are only valid with "
-                + "--phi-type=gaussian_blob."
-            )
-    else:
-        if args.gaussian_mu is not None or args.gaussian_sigma is not None:
-            errors.append(
-                "--gaussian-mu and --gaussian-sigma are only valid with "
-                + "--phi-type=gaussian or --phi-type=gaussian_blob."
-            )
-        if (
-            args.gaussian_blob_mu_z is not None
-            or args.gaussian_blob_sigma_z is not None
-        ):
-            errors.append(
-                "--gaussian-blob-mu-z and --gaussian-blob-sigma-z are only valid with "
-                + "--phi-type=gaussian_blob."
-            )
-        if args.single_bin_idx is not None:
-            errors.append("--single-bin-idx is only valid with --phi-type=single_bin.")
-
+    """Validate a CLI payload through the same Pydantic union as sweeps."""
+    payload = {key: value for key, value in vars(args).items() if key != "output"}
+    try:
+        params = PHI_PARAMS_ADAPTER.validate_python(payload)
+        field = phi_field_from_params(params)
+    except Exception as exc:
+        parser.error(str(exc))
+    errors = field.validate()
     if errors:
         parser.error("\n".join(errors))
-
-    return PHI_FIELD_TYPES[PhiType(args.phi_type)].from_args(args)
+    return field
 
 
 def run_export_cli(argv: list[str], prog: str = "phi export") -> int:
@@ -791,8 +952,8 @@ def run_export_cli(argv: list[str], prog: str = "phi export") -> int:
         f"phi_type={field.phi_type}",
         f"PSI={field.psi_avg:.6e}",
         f"N={field.N}",
-        f"wingz={field.wing_z}",
-        f"wingr={field.wing_r}",
+        f"wing_z={field.wing_z}",
+        f"wing_r={field.wing_r}",
         f"rho_center={field.rho_center:.6e}",
         f"rho_span={field.rho_span:.6e}",
         f"DZ={field.dz:.6e}",
@@ -807,179 +968,93 @@ def run_export_cli(argv: list[str], prog: str = "phi export") -> int:
 # --------------------------------------------------------------------------- #
 
 
-def make_phi_ui(
-    *,
-    psi_avg: float = DEFAULT_PSI_AVG,
-    phi_type: str = PhiType.GAUSSIAN.label,
-    gaussian_mu: float = DEFAULT_GAUSSIAN_MU,
-    gaussian_sigma: float = DEFAULT_GAUSSIAN_SIGMA,
-    gaussian_blob_mu_z: float = DEFAULT_GAUSSIAN_BLOB_MU_Z,
-    gaussian_blob_sigma_z: float = DEFAULT_GAUSSIAN_BLOB_SIGMA_Z,
-):
-    """Build every phi control as a single ``mo.ui.dictionary``.
+def _common_phi_ui_controls(*, psi_avg: float) -> dict[str, Any]:
+    import marimo as mo
 
-    Grid parameters (N, wing, rho_center, rho_span, dz) are kept at their
-    defaults — :func:`phi_field_from_ui` fills them in. Returning one registered
-    UI element keeps cross-cell ``.value`` reads reliable in marimo.
+    return {
+        "psi_avg": mo.ui.number(
+            start=0.0,
+            stop=1.0,
+            step=0.001,
+            value=psi_avg,
+            label="$\\langle \\psi \\rangle$",
+        ),
+        "N": mo.ui.dropdown(
+            options=[2**x for x in range(6, 12)], value=DEFAULT_N, label="N"
+        ),
+        "wing_z": mo.ui.number(
+            start=0, stop=1000, step=1, value=DEFAULT_WING, label="z wing size"
+        ),
+        "wing_r": mo.ui.number(
+            start=0, stop=1000, step=1, value=DEFAULT_WING, label="ρ wing size"
+        ),
+    }
+
+
+def make_phi_ui(*, psi_avg: float = DEFAULT_PSI_AVG):
+    """Build nested registered controls for common and per-type phi settings.
+
+    Variant dictionaries intentionally stay registered while hidden, so changing
+    the selected type does not discard a user's previous inputs.  Only the
+    active dictionary is included in the Pydantic payload.
     """
     import marimo as mo
 
+    variants = {
+        phi_type.value: mo.ui.dictionary(field_cls.make_ui_controls())
+        for phi_type, field_cls in PHI_FIELD_TYPES.items()
+    }
     return mo.ui.dictionary(
         {
-            "psi_avg": mo.ui.number(
-                start=0.0,
-                stop=1.0,
-                step=0.001,
-                value=psi_avg,
-                label="$\\langle \\psi \\rangle$",
-            ),
-            "N": mo.ui.dropdown(
-                options=[2**x for x in range(6, 12, 1)], value=2**10, label="N"
-            ),
+            "common": mo.ui.dictionary(_common_phi_ui_controls(psi_avg=psi_avg)),
             "phi_type": mo.ui.tabs(
                 {
-                    PhiType.GAUSSIAN.label: mo.md(
-                        r"$$\varphi(\rho, z) = \langle \psi \rangle \,"
-                        + r"\mathcal{N}(\rho;\mu_\rho,\sigma_\rho)$$"
-                    ),
-                    PhiType.GAUSSIAN_BLOB.label: mo.md(
-                        r"$$\varphi(\rho, z) = \langle \psi \rangle \,"
-                        + r"\mathcal{N}(\rho,z;\mu_\rho,\sigma_\rho,\mu_z,\sigma_z)$$"
-                    ),
-                    PhiType.HOMOGENEOUS.label: mo.md(
-                        r"$\varphi(\rho, z) = \langle \psi \rangle / L_\rho$"
-                    ),
-                    PhiType.SMOOTH_HOMOGENEOUS.label: mo.md(
-                        r"$\varphi(\rho, z) = \langle \psi \rangle$ in a rectangular block, "
-                        + r"cosine‑tapered to zero along $\rho$"
-                    ),
-                    PhiType.SINGLE_BIN.label: mo.md(
-                        r"$\varphi(\rho_i, z) = \langle \psi \rangle$ "
-                        + r"(single bin, zero elsewhere)"
-                    ),
+                    phi_type.label: mo.md(field_cls.type_description())
+                    for phi_type, field_cls in PHI_FIELD_TYPES.items()
                 },
-                value=phi_type,
+                value=PhiType.GAUSSIAN.label,
             ),
-            "gaussian_mu": mo.ui.number(
-                start=0.0,
-                stop=2000,
-                step=0.1,
-                value=gaussian_mu,
-                label="$\\mu_\\rho \\; [\\frac{g}{L}]$",
-            ),
-            "gaussian_sigma": mo.ui.number(
-                start=0.0,
-                stop=15,
-                step=0.1,
-                value=gaussian_sigma,
-                label="$\\sigma_\\rho \\; [\\frac{g}{L}]$",
-            ),
-            "gaussian_blob_mu_z": mo.ui.number(
-                start=0.0,
-                stop=1.0,
-                step=0.001,
-                value=gaussian_blob_mu_z,
-                label="$\\mu_z \\; [m]$",
-            ),
-            "gaussian_blob_sigma_z": mo.ui.number(
-                start=0.0,
-                stop=0.1,
-                step=0.001,
-                value=gaussian_blob_sigma_z,
-                label="$\\sigma_z \\; [m]$",
-            ),
-            "wingz": mo.ui.number(
-                start=0,
-                stop=1000,
-                step=1,
-                value=DEFAULT_WING,
-                label="z wing size",
-            ),
-            "wingr": mo.ui.number(
-                start=0,
-                stop=1000,
-                step=1,
-                value=DEFAULT_WING,
-                label="r wing size",
-            ),
-            "rho_range": mo.ui.number(
-                start=0.0,
-                stop=100.0,
-                step=0.1,
-                value=DEFAULT_RHO_RANGE,
-                label="ρ half‑width (region)",
-            ),
-            "single_bin_idx": mo.ui.number(
-                start=0,
-                stop=1023,
-                step=1,
-                value=DEFAULT_SINGLE_BIN_IDX,
-                label="ρ bin index",
-            ),
+            # Marimo dictionaries are UIElements at runtime, but its public
+            # type information does not model nested dictionaries as such.
+            "variants": mo.ui.dictionary(variants),  # pyright: ignore[reportArgumentType]
         }
     )
 
 
-def phi_ui_layout(phi_ui):
-    """Compose the phi controls into a readable panel (Gaussian params hidden
-    unless the Gaussian tab is active)."""
+def phi_ui_layout(phi_ui: Any) -> Any:
+    """Render common controls and only the currently selected type's controls."""
     import marimo as mo
 
-    items = [
-        mo.md("### Average volume fraction"),
-        phi_ui["psi_avg"],
-        mo.md("### Grid size"),
-        phi_ui["N"],
-        mo.md("### Distribution type"),
-        phi_ui["phi_type"],
-        mo.md("### Wing Settings"),
-        mo.hstack([phi_ui["wingz"], phi_ui["wingr"]], justify="start", align="center"),
-    ]
-    if str(phi_ui["phi_type"].value) == PhiType.SMOOTH_HOMOGENEOUS.label:
-        items.extend(
-            [
-                mo.md("### Smooth Homogeneous Parameters"),
-                phi_ui["rho_range"],
-            ]
-        )
-    if str(phi_ui["phi_type"].value) == PhiType.GAUSSIAN.label:
-        items.extend(
-            [
-                mo.md("### Gaussian Parameters"),
-                phi_ui["gaussian_mu"],
-                phi_ui["gaussian_sigma"],
-            ]
-        )
-    if str(phi_ui["phi_type"].value) == PhiType.GAUSSIAN_BLOB.label:
-        items.extend(
-            [
-                mo.md("### Gaussian Blob Parameters"),
-                phi_ui["gaussian_mu"],
-                phi_ui["gaussian_sigma"],
-                phi_ui["gaussian_blob_mu_z"],
-                phi_ui["gaussian_blob_sigma_z"],
-            ]
-        )
-    if str(phi_ui["phi_type"].value) == PhiType.SINGLE_BIN.label:
-        items.extend(
-            [
-                mo.md("### Single Bin Parameters"),
-                phi_ui["single_bin_idx"],
-            ]
-        )
-    return mo.vstack(items, gap=0.5)
+    phi_type = LABEL_MAP[str(phi_ui["phi_type"].value)]
+    common = phi_ui["common"]
+    controls = phi_ui["variants"][phi_type.value]
+    field_cls = PHI_FIELD_TYPES[phi_type]
+    return mo.vstack(
+        [
+            mo.md("### Average volume fraction"),
+            common["psi_avg"],
+            mo.md("### Grid size"),
+            common["N"],
+            mo.hstack([common["wing_z"], common["wing_r"]]),
+            mo.md("### Distribution type"),
+            phi_ui["phi_type"],
+            field_cls.ui_layout(controls),
+        ],
+        gap=0.5,
+    )
 
 
 def phi_field_from_ui(value: dict[str, Any]) -> PhiField:
-    """Map a ``make_phi_ui()`` value dict to a :class:`PhiField`.
-
-    The z-axis spacing is derived from the grid size so the system length stays
-    fixed; the distribution-specific params are picked out by the subclass.
-    """
+    """Validate the selected nested UI payload and construct its field."""
     phi_type = LABEL_MAP[str(value["phi_type"])]
-    values = dict(value)
-    values["dz"] = DEFAULT_Z_SYSTEM_SIZE / float(values["N"])
-    return PHI_FIELD_TYPES[phi_type].from_values(values)
+    payload = {
+        "phi_type": phi_type,
+        **value["common"],
+        **value["variants"][phi_type.value],
+    }
+    payload["dz"] = DEFAULT_Z_SYSTEM_SIZE / float(payload["N"])
+    params = PHI_PARAMS_ADAPTER.validate_python(payload)
+    return phi_field_from_params(params)
 
 
 def plot_phi(result: PhiResult):
