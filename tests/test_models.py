@@ -83,7 +83,7 @@ class DiscriminatedUnionTests(unittest.TestCase):
         del payload["MU"]
         payload["kernel"] = {
             "mode": "generate",
-            "params": {"U": 1.0e-16},
+            "params": {"kernel_type": "hnc", "kernel_n": 31, "dz": 1e-6, "subdiv": 1, "a": 1e-16, "b": 1e-16, "c": 1.0, "alpha": 1e-16, "beta": 6e-6, "gamma": 1e6},
         }
         run = run_payload_adapter.validate_python(payload)
         self.assertIsInstance(run, ConvRun)
@@ -121,7 +121,7 @@ class JsonRoundTripTests(unittest.TestCase):
         payload["variant"] = "convolution"
         del payload["NU"]
         del payload["MU"]
-        payload["kernel"] = {"mode": "generate", "params": {"U": 1.0e-16}}
+        payload["kernel"] = {"mode": "generate", "params": {"kernel_type": "hnc", "kernel_n": 31, "dz": 1e-6, "subdiv": 1, "a": 1e-16, "b": 1e-16, "c": 1.0, "alpha": 1e-16, "beta": 6e-6, "gamma": 1e6}}
         run = run_payload_adapter.validate_python(payload)
         loaded = run_payload_adapter.validate_json(run.model_dump_json())
         self.assertIsInstance(loaded, ConvRun)
