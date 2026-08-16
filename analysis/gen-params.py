@@ -230,13 +230,8 @@ def _(editor):
 @app.cell
 def _(editor):
     sweep_runs, error_msg = extract_user_code(editor.value, "sweep")
-    mo.stop(
-       error_msg is not None, mo.callout(error_msg, kind="danger")
-    )
-    mo.stop(
-        sweep_runs is None,
-        mo.md("*Waiting for user to run code...*")
-    )
+    mo.stop(error_msg is not None, mo.callout(error_msg, kind="danger"))
+    mo.stop(sweep_runs is None, mo.md("*Waiting for user to run code...*"))
     mo.md(f"Prepared **{len(sweep_runs)}** runs for export.")
     preview = pd.json_normalize([run.model_dump(mode="json") for run in sweep_runs])
     preview
@@ -282,17 +277,15 @@ def _():
 
 @app.cell
 def _(error_msg, export_form, sweep_runs, true):
+    mo.stop(export_form.value is None, mo.md("Submit the form to export your sweep."))
     mo.stop(
-        export_form.value is None, mo.md("Submit the form to export your sweep.")
+        error_msg is not None,
+        mo.md(f"Fix the sweep definition before exporting. ```{error_msg}```"),
     )
-    mo.stop(error_msg is not None, mo.md(f"Fix the sweep definition before exporting. ```{error_msg}```"))
 
     dir_entries = export_form.value.get("export_dir") or []
 
-    mo.stop(
-        not dir_entries,
-        mo.md("Please select an export directory.")
-    )
+    mo.stop(not dir_entries, mo.md("Please select an export directory."))
 
     output_dir = Path(dir_entries[0].path)
     try:
