@@ -59,7 +59,9 @@ COPY include ./include
 COPY src ./src
 COPY third_party ./third_party
 
-ARG CUDA_ARCH=80;86
+# Match the cluster's GPU requirement (compute capability >= 7.0): include
+# Volta for older workers as well as the existing Ampere targets.
+ARG CUDA_ARCH=70;80;86
 
 RUN --mount=type=cache,target=/workspace/build \
     cmake -S . -B build \
