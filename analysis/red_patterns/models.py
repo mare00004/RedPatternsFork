@@ -92,7 +92,7 @@ class SingleModeSmoothHomogeneousPhiParams(SmoothRhoRangePhiParamsBase):
     phi_type: Literal[PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS] = (
         PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS
     )
-    amplitude: Annotated[float, Field(ge=0)]
+    amplitude: float
     mode_number: Annotated[int, Field(ge=0)]
 
 
@@ -139,11 +139,27 @@ class OriginalKernelParams(KernelParamsBase):
 
     @model_validator(mode="after")
     def validate_distribution(self) -> "OriginalKernelParams":
-        if self.kernel_n < 3 or self.kernel_n % 2 == 0 or self.dz <= 0 or self.subdiv <= 0 or self.sigma <= 0:
-            raise ValueError("kernel_n must be odd >= 3; dz, subdiv, and sigma must be positive.")
-        if self.pair_distribution == PDFType.NEAREST_NEIGHBOR and None in (self.g0, self.nn_d, self.nn_sigma):
-            raise ValueError("nearest-neighbor distribution requires g0, nn_d, and nn_sigma.")
-        if self.pair_distribution == PDFType.EXPONENTIAL and (self.lambda_ is None or self.U == 0):
+        if (
+            self.kernel_n < 3
+            or self.kernel_n % 2 == 0
+            or self.dz <= 0
+            or self.subdiv <= 0
+            or self.sigma <= 0
+        ):
+            raise ValueError(
+                "kernel_n must be odd >= 3; dz, subdiv, and sigma must be positive."
+            )
+        if self.pair_distribution == PDFType.NEAREST_NEIGHBOR and None in (
+            self.g0,
+            self.nn_d,
+            self.nn_sigma,
+        ):
+            raise ValueError(
+                "nearest-neighbor distribution requires g0, nn_d, and nn_sigma."
+            )
+        if self.pair_distribution == PDFType.EXPONENTIAL and (
+            self.lambda_ is None or self.U == 0
+        ):
             raise ValueError("exponential distribution requires lambda_ and nonzero U.")
         return self
 
@@ -159,10 +175,19 @@ class HNCKernelParams(KernelParamsBase):
 
     @model_validator(mode="after")
     def validate_hnc(self) -> "HNCKernelParams":
-        if self.kernel_n < 3 or self.kernel_n % 2 == 0 or self.dz <= 0 or self.subdiv <= 0:
-            raise ValueError("kernel_n must be odd >= 3 and dz/subdiv must be positive.")
+        if (
+            self.kernel_n < 3
+            or self.kernel_n % 2 == 0
+            or self.dz <= 0
+            or self.subdiv <= 0
+        ):
+            raise ValueError(
+                "kernel_n must be odd >= 3 and dz/subdiv must be positive."
+            )
         if self.b == 0 or self.alpha <= 0 or self.beta <= 0 or self.gamma <= 0:
-            raise ValueError("b must be nonzero and alpha, beta, gamma must be positive.")
+            raise ValueError(
+                "b must be nonzero and alpha, beta, gamma must be positive."
+            )
         return self
 
 
