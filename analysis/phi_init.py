@@ -4,6 +4,7 @@
 #     "marimo",
 #     "matplotlib==3.10.8",
 #     "numpy==2.4.3",
+#     "pydantic==2.13.4",
 #     "wigglystuff==0.3.3",
 # ]
 # requires-python = ">=3.12"
@@ -16,7 +17,6 @@ app = marimo.App(width="medium")
 
 with app.setup:
     import sys
-    from dataclasses import replace
     from pathlib import Path
 
     import marimo as mo
@@ -31,13 +31,11 @@ with app.setup:
         sys.path.insert(0, str(ANALYSIS_DIR))
 
     from red_patterns.phi import (
-        compute_phi,
         make_phi_ui,
-        phi_config_from_ui,
+        phi_field_from_ui,
         phi_ui_layout,
         plot_phi,
         run_export_cli,
-        write_phi_h5,
     )
 
 
@@ -152,8 +150,8 @@ def cell_phi_ui_display(phi_ui):
 
 @app.cell
 def cell_phi_cfg(phi_ui):
-    phi_cfg = phi_config_from_ui(phi_ui.value)
-    phi_result = compute_phi(phi_cfg)
+    phi_cfg = phi_field_from_ui(phi_ui.value)
+    phi_result = phi_cfg.compute()
     return phi_cfg, phi_result
 
 
@@ -162,7 +160,7 @@ def _(phi_cfg):
     mo.md(rf"""
     ### Inspect your initial $\varphi$
 
-    A wing of size {phi_cfg.wing} is added in the $\rho$ and $z$ dimension.
+    A wing of size {phi_cfg.wing_z} (z) and {phi_cfg.wing_r} (ρ) is added.
     """)
     return
 
@@ -224,9 +222,7 @@ def _(export_form, phi_cfg, phi_result):
         else:
             _path = Path(_dir_entries[0].path) / _file_name
             try:
-                _written = write_phi_h5(
-                    _path, phi_result, replace(phi_cfg, output_path=_path)
-                )
+                _written = phi_cfg.write_phi_h5(_path, phi_result)
             except Exception as _exc:
                 _result = mo.md(rf"Export failed: `{_exc}`")
             else:

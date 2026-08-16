@@ -22,9 +22,7 @@ from red_patterns.models import (
 )
 from red_patterns.phi import (
     PHI_FIELD_TYPES,
-    PhiConfig,
-    compute_phi,
-    write_phi_h5,
+    phi_field_from_params,
 )
 from red_patterns.sweep_jobs import PhiSweep
 from red_patterns.types import PhiType
@@ -114,33 +112,33 @@ class PhiParamsUnionTests(unittest.TestCase):
             PHI_PARAMS_ADAPTER.validate_python(payload)
 
 
-class PhiConfigFromParamsTests(unittest.TestCase):
+class PhiFieldFromParamsTests(unittest.TestCase):
     def test_from_params_maps_wing_and_extras(self):
         for phi_type in PhiType:
             params = PHI_PARAMS_ADAPTER.validate_python(params_for(phi_type))
-            cfg = PhiConfig.from_params(params, output_path="out.h5")
-            self.assertEqual(cfg.phi_type, phi_type, msg=phi_type)
-            self.assertEqual(cfg.N, N)
-            self.assertEqual(cfg.wing_z, 30)
-            self.assertEqual(cfg.wing_r, 30)
-            self.assertEqual(cfg.psi_avg, BASE["psi_avg"])
+            field = phi_field_from_params(params)
+            self.assertEqual(field.phi_type, phi_type, msg=phi_type)
+            self.assertEqual(field.N, N)
+            self.assertEqual(field.wing_z, 30)
+            self.assertEqual(field.wing_r, 30)
+            self.assertEqual(field.psi_avg, BASE["psi_avg"])
             for key, value in PER_TYPE_ARGS[phi_type].items():
-                self.assertEqual(getattr(cfg, key), value, msg=f"{phi_type}.{key}")
+                self.assertEqual(getattr(field, key), value, msg=f"{phi_type}.{key}")
 
     def test_from_params_accepts_raw_dict(self):
-        cfg = PhiConfig.from_params(params_for(PhiType.GAUSSIAN), output_path="out.h5")
-        self.assertEqual(cfg.phi_type, PhiType.GAUSSIAN)
+        field = phi_field_from_params(params_for(PhiType.GAUSSIAN))
+        self.assertEqual(field.phi_type, PhiType.GAUSSIAN)
 
 
 class PhiComputeTests(unittest.TestCase):
     def test_compute_and_write_phi_shape_and_attrs_for_each_type(self):
         for phi_type in PhiType:
             params = PHI_PARAMS_ADAPTER.validate_python(params_for(phi_type))
-            cfg = PhiConfig.from_params(params, output_path="initial_phi.h5")
-            result = compute_phi(cfg)
+            field = phi_field_from_params(params)
+            result = field.compute()
             self.assertEqual(result.phi_values.shape, (N, N), msg=phi_type)
             with tempfile.TemporaryDirectory() as tmpdir:
-                out = write_phi_h5(Path(tmpdir) / "phi.h5", result, cfg)
+                out = field.write_phi_h5(Path(tmpdir) / "phi.h5", result)
                 with h5py.File(out, "r") as f:
                     self.assertEqual(f["phi/values"].shape, (N, N), msg=phi_type)
                     self.assertEqual(f["phi"].attrs["phi_type"], phi_type.label)

@@ -18,7 +18,7 @@ from red_patterns.kernel import (
     write_kernel_h5,
 )
 from red_patterns.models import ConvRun, TaylorRun
-from red_patterns.phi import PhiConfig, compute_phi, write_phi_h5
+from red_patterns.phi import phi_field_from_params
 from red_patterns.sim import build_cli_args, locate_binary
 from red_patterns.sweep_jobs import find_run_by_id, load_runs_jsonl
 
@@ -97,9 +97,9 @@ def run_selected(
     )
 
     phi_params = run.phi.params
-    phi_cfg = PhiConfig.from_params(phi_params, phi_path)
-    phi_result = compute_phi(phi_cfg)
-    write_phi_h5(phi_path, phi_result, phi_cfg)
+    phi_field = phi_field_from_params(phi_params)
+    phi_result = phi_field.compute()
+    phi_field.write_phi_h5(phi_path, phi_result)
 
     if isinstance(run, ConvRun):
         kernel_params = dict(run.kernel.params)

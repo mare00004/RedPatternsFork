@@ -17,9 +17,9 @@ Marimo notebook usage
 ---------------------
 >>> ui = make_phi_ui()                          # cell 1
 >>> phi_ui_layout(ui)                           # cell 2 — display
->>> cfg = phi_config_from_ui(ui.value, "out.h5") # cell 3
->>> result = compute_phi(cfg)                   # cell 4
->>> write_phi_h5(cfg.output_path, result, cfg)  # cell 5
+>>> field = phi_field_from_ui(ui.value)         # cell 3
+>>> result = field.compute()                    # cell 4
+>>> field.write_phi_h5("initial_phi.h5", result)  # cell 5
 >>> plot_phi(result)                            # optional cell
 
 As with :mod:`red_patterns.kernel`, the compute path imports
@@ -69,74 +69,8 @@ LABEL_MAP = {t.label: t for t in PhiType}
 
 
 # --------------------------------------------------------------------------- #
-# Config / result dataclasses
+# Result dataclass
 # --------------------------------------------------------------------------- #
-
-
-@dataclass(frozen=True)
-class PhiConfig:
-    """All parameters needed to build an initial phi field and export it."""
-
-    output_path: Path
-    phi_type: PhiType
-    psi_avg: float
-    N: int = DEFAULT_N
-    wing_z: int = DEFAULT_WING
-    wing_r: int = DEFAULT_WING
-    rho_center: float = DEFAULT_RHO_CENTER
-    rho_span: float = DEFAULT_RHO_SPAN
-    rho_range: float = DEFAULT_RHO_RANGE
-    dz: float = DEFAULT_DZ
-    gaussian_mu: float | None = None
-    gaussian_sigma: float | None = None
-    gaussian_blob_mu_z: float | None = None
-    gaussian_blob_sigma_z: float | None = None
-    single_bin_idx: int | None = None
-
-    @classmethod
-    def from_params(
-        cls, params: PhiParams, output_path: str | Path = "initial_phi.h5"
-    ) -> PhiConfig:
-        """Build a config from a validated :data:`PhiParams` model.
-
-        ``params`` may also be a plain dict; it is run through
-        :data:`PHI_PARAMS_ADAPTER` first.  The single wire-level ``wing`` entry
-        is split into ``wing_z``/``wing_r`` for the compute path.
-        """
-        if not isinstance(params, PhiParamsBase):
-            params = PHI_PARAMS_ADAPTER.validate_python(params)  # type: ignore[redundant-cast]
-        gaussian_mu = getattr(params, "gaussian_mu", None)
-        gaussian_sigma = getattr(params, "gaussian_sigma", None)
-        gaussian_blob_mu_z = getattr(params, "gaussian_blob_mu_z", None)
-        gaussian_blob_sigma_z = getattr(params, "gaussian_blob_sigma_z", None)
-        single_bin_idx = getattr(params, "single_bin_idx", None)
-        return cls(
-            output_path=Path(output_path),
-            phi_type=PhiType(params.phi_type),
-            psi_avg=float(params.psi_avg),
-            N=int(params.N),
-            wing_z=int(params.wing),
-            wing_r=int(params.wing),
-            rho_center=float(params.rho_center),
-            rho_span=float(params.rho_span),
-            dz=float(params.dz),
-            rho_range=float(getattr(params, "rho_range", DEFAULT_RHO_RANGE)),
-            gaussian_mu=(float(gaussian_mu) if gaussian_mu is not None else None),
-            gaussian_sigma=(
-                float(gaussian_sigma) if gaussian_sigma is not None else None
-            ),
-            gaussian_blob_mu_z=(
-                float(gaussian_blob_mu_z) if gaussian_blob_mu_z is not None else None
-            ),
-            gaussian_blob_sigma_z=(
-                float(gaussian_blob_sigma_z)
-                if gaussian_blob_sigma_z is not None
-                else None
-            ),
-            single_bin_idx=(
-                int(single_bin_idx) if single_bin_idx is not None else None
-            ),
-        )
 
 
 @dataclass
@@ -309,24 +243,155 @@ def build_phi_axes(
 
 
 class PhiField(ABC):
-    """Base class for initial phi field generators.
+    """Base class for initial phi-field generators.
 
-    Each concrete subclass corresponds to one :class:`PhiType` member and owns
-    the math (``build``), parameter validation, and HDF5 metadata for that
-    distribution.  ``compute_phi``/``write_phi_h5`` dispatch to the subclass
-    through :data:`PHI_FIELD_TYPES` instead of a mutable ``if/elif`` chain.
+    The base class owns the shared grid parameters every distribution needs
+    (``N``, ``psi_avg``, wing sizes, rho axis, ``dz``) and the compute/export
+    pipeline.  Each concrete subclass corresponds to one :class:`PhiType`
+    member and owns its distribution-specific parameters, the math
+    (``build``), parameter validation, HDF5 metadata, and a CLI summary.
     """
 
     phi_type: ClassVar[PhiType]
 
-    def __init__(self, cfg: PhiConfig) -> None:
-        self.cfg = cfg
+    def __init__(
+        self,
+        *,
+        N: int,
+        psi_avg: float,
+        wing_z: int,
+        wing_r: int,
+        rho_center: float,
+        rho_span: float,
+        dz: float,
+    ) -> None:
+        self.N = int(N)
+        self.psi_avg = float(psi_avg)
+        self.wing_z = int(wing_z)
+        self.wing_r = int(wing_r)
+        self.rho_center = float(rho_center)
+        self.rho_span = float(rho_span)
+        self.dz = float(dz)
+
+    # ------------------------------------------------------------------ #
+    # Construction
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def from_params(cls, params: PhiParams) -> PhiField:
+        """Build a field from a validated :data:`PhiParams` union member.
+
+        ``params`` may also be a plain dict; it is run through
+        :data:`PHI_PARAMS_ADAPTER` first.  The single wire-level ``wing`` entry
+        is split into ``wing_z``/``wing_r`` for the grid.
+        """
+        if not isinstance(params, PhiParamsBase):
+            params = PHI_PARAMS_ADAPTER.validate_python(params)  # type: ignore[redundant-cast]
+        values = params.model_dump()
+        wing = values.pop("wing")
+        values["wing_z"] = wing
+        values["wing_r"] = wing
+        return cls.from_values(values)
+
+    @classmethod
+    def from_values(cls, values: dict[str, Any]) -> PhiField:
+        """Build a field from a plain value dict (UI state or CLI args)."""
+        return cls(**cls._grid_from_values(values), **cls._per_type_from_values(values))
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> PhiField:
+        """Build a field from a parsed ``argparse`` namespace."""
+        return cls.from_values(vars(args))
+
+    @classmethod
+    def _grid_from_values(cls, values: dict[str, Any]) -> dict[str, Any]:
+        """Extract the shared grid params, tolerating UI/CLI key naming."""
+
+        def pick(*keys: str) -> Any:
+            for key in keys:
+                if key in values:
+                    return values[key]
+            raise KeyError(f"missing grid parameter; expected one of {', '.join(keys)}")
+
+        return {
+            "N": int(values["N"]),
+            "psi_avg": float(values["psi_avg"]),
+            "wing_z": int(pick("wing_z", "wingz")),
+            "wing_r": int(pick("wing_r", "wingr")),
+            "rho_center": float(values.get("rho_center", DEFAULT_RHO_CENTER)),
+            "rho_span": float(values.get("rho_span", DEFAULT_RHO_SPAN)),
+            "dz": float(values["dz"]),
+        }
+
+    @classmethod
+    def _per_type_from_values(cls, values: dict[str, Any]) -> dict[str, Any]:
+        """Extract this distribution's own parameters from a value dict."""
+        return {}
+
+    # ------------------------------------------------------------------ #
+    # Compute / export pipeline
+    # ------------------------------------------------------------------ #
+
+    def compute(self) -> PhiResult:
+        """Build the wing-applied, renormalized initial phi field."""
+        rho, z = build_phi_axes(
+            N=self.N, rho_center=self.rho_center, rho_span=self.rho_span, dz=self.dz
+        )
+        errors = self.validate()
+        if errors:
+            raise ValueError(
+                f"invalid configuration for {self.phi_type.label} phi field: "
+                + "; ".join(errors)
+            )
+        phi = self.build(rho, z)
+
+        phi_norm_with_wing = renormalize_phi(
+            phi_add_wing(phi, self.wing_z, self.wing_r),
+            rho,
+            z,
+            self.psi_avg,
+            self.wing_z,
+        )
+        return PhiResult(
+            rho=rho, z=z, phi_values=np.asarray(phi_norm_with_wing, dtype=np.float64)
+        )
+
+    def write_phi_h5(self, output_path: str | Path, result: PhiResult) -> Path:
+        """Export ``result`` to the HDF5 file at ``output_path``."""
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with h5py.File(str(output_path), "w") as f:
+            group = f.create_group("phi")
+            _ = group.create_dataset(
+                "values", data=np.asarray(result.phi_values, dtype=np.float64)
+            )
+            _ = group.create_dataset(
+                "rho", data=np.asarray(result.rho, dtype=np.float64)
+            )
+            _ = group.create_dataset("z", data=np.asarray(result.z, dtype=np.float64))
+            group.attrs["N"] = int(self.N)
+            group.attrs["PSI"] = float(self.psi_avg)
+            group.attrs["wing_z"] = int(self.wing_z)
+            group.attrs["wing_r"] = int(self.wing_r)
+            group.attrs["phi_type"] = self.phi_type.label
+            group.attrs["storage_order"] = "phi[rho_idx, z_idx]"
+            group.attrs["generated_by"] = "red_patterns/phi.py"
+            group.attrs["normalization"] = "no runtime renormalization required"
+
+            self.write_metadata(group)
+
+        return output_path
+
+    # ------------------------------------------------------------------ #
+    # Subclass hooks
+    # ------------------------------------------------------------------ #
 
     @abstractmethod
     def build(self, rho: Array1F, z: Array1F) -> Array2F:
         """Return the raw field ``phi[rho_idx, z_idx]`` for this distribution.
 
-        Callers are responsible for applying wings and renormalization.
+        ``compute`` applies wings and renormalization afterwards.
         """
 
     def validate(self) -> list[str]:
@@ -336,124 +401,161 @@ class PhiField(ABC):
     def write_metadata(self, group: h5py.Group) -> None:
         """Write type-specific attributes to the ``phi`` HDF5 group."""
 
+    def summary(self) -> list[str]:
+        """Per-type parameter lines for the export CLI summary."""
+        return []
+
 
 class GaussianPhi(PhiField):
     phi_type = PhiType.GAUSSIAN
 
+    def __init__(
+        self,
+        *,
+        gaussian_mu: float,
+        gaussian_sigma: float,
+        **grid: Any,
+    ) -> None:
+        super().__init__(**grid)
+        self.gaussian_mu = float(gaussian_mu)
+        self.gaussian_sigma = float(gaussian_sigma)
+
+    @classmethod
+    def _per_type_from_values(cls, values: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "gaussian_mu": values["gaussian_mu"],
+            "gaussian_sigma": values["gaussian_sigma"],
+        }
+
     def build(self, rho: Array1F, z: Array1F) -> Array2F:
-        cfg = self.cfg
-        assert cfg.gaussian_mu is not None
-        assert cfg.gaussian_sigma is not None
-        return phi_gaussian(rho, z, cfg.psi_avg, cfg.gaussian_mu, cfg.gaussian_sigma)
+        return phi_gaussian(rho, z, self.psi_avg, self.gaussian_mu, self.gaussian_sigma)
 
     def validate(self) -> list[str]:
-        errors: list[str] = []
-        cfg = self.cfg
-        if cfg.gaussian_mu is None:
-            errors.append("gaussian_mu is required for a Gaussian phi field.")
-        if cfg.gaussian_sigma is None:
-            errors.append("gaussian_sigma is required for a Gaussian phi field.")
-        elif cfg.gaussian_sigma <= 0.0:
-            errors.append("gaussian_sigma must be positive.")
-        return errors
+        if self.gaussian_sigma <= 0.0:
+            return ["gaussian_sigma must be positive."]
+        return []
 
     def write_metadata(self, group: h5py.Group) -> None:
-        assert self.cfg.gaussian_mu is not None
-        assert self.cfg.gaussian_sigma is not None
-        group.attrs["gaussian_mu"] = float(self.cfg.gaussian_mu)
-        group.attrs["gaussian_sigma"] = float(self.cfg.gaussian_sigma)
+        group.attrs["gaussian_mu"] = float(self.gaussian_mu)
+        group.attrs["gaussian_sigma"] = float(self.gaussian_sigma)
+
+    def summary(self) -> list[str]:
+        return [
+            f"gaussian_mu={self.gaussian_mu:.6e}",
+            f"gaussian_sigma={self.gaussian_sigma:.6e}",
+        ]
 
 
 class GaussianBlobPhi(GaussianPhi):
     phi_type = PhiType.GAUSSIAN_BLOB
 
+    def __init__(
+        self,
+        *,
+        gaussian_blob_mu_z: float,
+        gaussian_blob_sigma_z: float,
+        **grid: Any,
+    ) -> None:
+        super().__init__(**grid)
+        self.gaussian_blob_mu_z = float(gaussian_blob_mu_z)
+        self.gaussian_blob_sigma_z = float(gaussian_blob_sigma_z)
+
+    @classmethod
+    def _per_type_from_values(cls, values: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **super()._per_type_from_values(values),
+            "gaussian_blob_mu_z": values["gaussian_blob_mu_z"],
+            "gaussian_blob_sigma_z": values["gaussian_blob_sigma_z"],
+        }
+
     def build(self, rho: Array1F, z: Array1F) -> Array2F:
-        cfg = self.cfg
-        assert cfg.gaussian_mu is not None
-        assert cfg.gaussian_sigma is not None
-        assert cfg.gaussian_blob_mu_z is not None
-        assert cfg.gaussian_blob_sigma_z is not None
         return phi_gaussian_blob(
             rho,
             z,
-            cfg.psi_avg,
-            cfg.gaussian_mu,
-            cfg.gaussian_sigma,
-            cfg.gaussian_blob_mu_z,
-            cfg.gaussian_blob_sigma_z,
+            self.psi_avg,
+            self.gaussian_mu,
+            self.gaussian_sigma,
+            self.gaussian_blob_mu_z,
+            self.gaussian_blob_sigma_z,
         )
 
     def validate(self) -> list[str]:
         errors = super().validate()
-        cfg = self.cfg
-        if cfg.gaussian_blob_mu_z is None:
-            errors.append(
-                "gaussian_blob_mu_z is required for a Gaussian Blob phi field."
-            )
-        if cfg.gaussian_blob_sigma_z is None:
-            errors.append(
-                "gaussian_blob_sigma_z is required for a Gaussian Blob phi field."
-            )
-        elif cfg.gaussian_blob_sigma_z <= 0.0:
+        if self.gaussian_blob_sigma_z <= 0.0:
             errors.append("gaussian_blob_sigma_z must be positive.")
         return errors
 
     def write_metadata(self, group: h5py.Group) -> None:
         super().write_metadata(group)
-        assert self.cfg.gaussian_blob_mu_z is not None
-        assert self.cfg.gaussian_blob_sigma_z is not None
-        group.attrs["gaussian_blob_mu_z"] = float(self.cfg.gaussian_blob_mu_z)
-        group.attrs["gaussian_blob_sigma_z"] = float(self.cfg.gaussian_blob_sigma_z)
+        group.attrs["gaussian_blob_mu_z"] = float(self.gaussian_blob_mu_z)
+        group.attrs["gaussian_blob_sigma_z"] = float(self.gaussian_blob_sigma_z)
+
+    def summary(self) -> list[str]:
+        return super().summary() + [
+            f"gaussian_blob_mu_z={self.gaussian_blob_mu_z:.6e}",
+            f"gaussian_blob_sigma_z={self.gaussian_blob_sigma_z:.6e}",
+        ]
 
 
 class HomogeneousPhi(PhiField):
     phi_type = PhiType.HOMOGENEOUS
 
     def build(self, rho: Array1F, z: Array1F) -> Array2F:
-        return phi_homogeneous(rho, z, self.cfg.psi_avg)
+        return phi_homogeneous(rho, z, self.psi_avg)
 
 
 class SmoothHomogeneousPhi(PhiField):
     phi_type = PhiType.SMOOTH_HOMOGENEOUS
 
+    def __init__(self, *, rho_range: float, **grid: Any) -> None:
+        super().__init__(**grid)
+        self.rho_range = float(rho_range)
+
+    @classmethod
+    def _per_type_from_values(cls, values: dict[str, Any]) -> dict[str, Any]:
+        return {"rho_range": values["rho_range"]}
+
     def build(self, rho: Array1F, z: Array1F) -> Array2F:
-        cfg = self.cfg
         return phi_smooth_homogeneous(
-            rho, z, cfg.psi_avg, cfg.rho_center, cfg.rho_range, cfg.wing_r
+            rho, z, self.psi_avg, self.rho_center, self.rho_range, self.wing_r
         )
 
     def validate(self) -> list[str]:
-        errors: list[str] = []
-        if self.cfg.rho_range is None:
-            errors.append("rho_range is required for a smooth homogeneous phi field.")
-        elif self.cfg.rho_range <= 0.0:
-            errors.append("rho_range must be positive.")
-        return errors
+        if self.rho_range <= 0.0:
+            return ["rho_range must be positive."]
+        return []
 
     def write_metadata(self, group: h5py.Group) -> None:
-        assert self.cfg.rho_range is not None
-        group.attrs["rho_range"] = float(self.cfg.rho_range)
+        group.attrs["rho_range"] = float(self.rho_range)
+
+    def summary(self) -> list[str]:
+        return [f"rho_range={self.rho_range:.6e}"]
 
 
 class SingleBinPhi(PhiField):
     phi_type = PhiType.SINGLE_BIN
 
+    def __init__(self, *, single_bin_idx: int, **grid: Any) -> None:
+        super().__init__(**grid)
+        self.single_bin_idx = int(single_bin_idx)
+
+    @classmethod
+    def _per_type_from_values(cls, values: dict[str, Any]) -> dict[str, Any]:
+        return {"single_bin_idx": values["single_bin_idx"]}
+
     def build(self, rho: Array1F, z: Array1F) -> Array2F:
-        assert self.cfg.single_bin_idx is not None
-        return phi_single_bin(rho, z, self.cfg.psi_avg, self.cfg.single_bin_idx)
+        return phi_single_bin(rho, z, self.psi_avg, self.single_bin_idx)
 
     def validate(self) -> list[str]:
-        errors: list[str] = []
-        cfg = self.cfg
-        if cfg.single_bin_idx is None:
-            errors.append("single_bin_idx is required for a single-bin phi field.")
-        elif not (0 <= cfg.single_bin_idx < cfg.N):
-            errors.append(f"single_bin_idx must be in [0, {cfg.N - 1}] for N={cfg.N}.")
-        return errors
+        if not (0 <= self.single_bin_idx < self.N):
+            return [f"single_bin_idx must be in [0, {self.N - 1}] for N={self.N}."]
+        return []
 
     def write_metadata(self, group: h5py.Group) -> None:
-        assert self.cfg.single_bin_idx is not None
-        group.attrs["single_bin_idx"] = int(self.cfg.single_bin_idx)
+        group.attrs["single_bin_idx"] = int(self.single_bin_idx)
+
+    def summary(self) -> list[str]:
+        return [f"single_bin_idx={self.single_bin_idx}"]
 
 
 PHI_FIELD_TYPES: dict[PhiType, type[PhiField]] = {
@@ -465,57 +567,14 @@ PHI_FIELD_TYPES: dict[PhiType, type[PhiField]] = {
 }
 
 
-def phi_field_for(cfg: PhiConfig) -> PhiField:
-    """Return the :class:`PhiField` subclass matching ``cfg.phi_type``."""
-    return PHI_FIELD_TYPES[cfg.phi_type](cfg)
+def phi_field_from_params(params: PhiParams) -> PhiField:
+    """Return the :class:`PhiField` subclass matching a ``PhiParams`` payload.
 
-
-def compute_phi(cfg: PhiConfig) -> PhiResult:
-    """Build the wing-applied, renormalized initial phi field."""
-    rho, z = build_phi_axes(
-        N=cfg.N, rho_center=cfg.rho_center, rho_span=cfg.rho_span, dz=cfg.dz
-    )
-
-    field = PHI_FIELD_TYPES[cfg.phi_type](cfg)
-    errors = field.validate()
-    if errors:
-        raise ValueError(
-            f"invalid configuration for {cfg.phi_type.label} phi field: "
-            + "; ".join(errors)
-        )
-    phi = field.build(rho, z)
-
-    phi_wing = renormalize_phi(
-        phi_add_wing(phi, cfg.wing_z, cfg.wing_r), rho, z, cfg.psi_avg, cfg.wing_z
-    )
-    # FIX: Remove
-    print(phi_wing.sum(axis=0).sum() / (cfg.N - 2 * cfg.wing_z))
-    return PhiResult(rho=rho, z=z, phi_values=np.asarray(phi_wing, dtype=np.float64))
-
-
-def write_phi_h5(output_path: str | Path, result: PhiResult, cfg: PhiConfig) -> Path:
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with h5py.File(str(output_path), "w") as f:
-        group = f.create_group("phi")
-        _ = group.create_dataset(
-            "values", data=np.asarray(result.phi_values, dtype=np.float64)
-        )
-        _ = group.create_dataset("rho", data=np.asarray(result.rho, dtype=np.float64))
-        _ = group.create_dataset("z", data=np.asarray(result.z, dtype=np.float64))
-        group.attrs["N"] = int(cfg.N)
-        group.attrs["PSI"] = float(cfg.psi_avg)
-        group.attrs["wing_z"] = int(cfg.wing_z)
-        group.attrs["wing_r"] = int(cfg.wing_r)
-        group.attrs["phi_type"] = cfg.phi_type.label
-        group.attrs["storage_order"] = "phi[rho_idx, z_idx]"
-        group.attrs["generated_by"] = "red_patterns/phi.py"
-        group.attrs["normalization"] = "no runtime renormalization required"
-
-        PHI_FIELD_TYPES[cfg.phi_type](cfg).write_metadata(group)
-
-    return output_path
+    ``params`` may be a validated union member or a plain dict.
+    """
+    if not isinstance(params, PhiParamsBase):
+        params = PHI_PARAMS_ADAPTER.validate_python(params)  # type: ignore[redundant-cast]
+    return PHI_FIELD_TYPES[PhiType(params.phi_type)].from_params(params)
 
 
 # --------------------------------------------------------------------------- #
@@ -602,7 +661,7 @@ def build_export_parser(prog: str = "phi export") -> argparse.ArgumentParser:
 
 def validate_export_namespace(
     parser: argparse.ArgumentParser, args: argparse.Namespace
-) -> PhiConfig:
+) -> PhiField:
     errors: list[str] = []
 
     if args.N < 3:
@@ -713,31 +772,15 @@ def validate_export_namespace(
     if errors:
         parser.error("\n".join(errors))
 
-    return PhiConfig(
-        output_path=Path(args.output),
-        phi_type=PhiType(args.phi_type),
-        psi_avg=args.psi_avg,
-        N=args.N,
-        wing_z=args.wingz,
-        wing_r=args.wingr,
-        rho_center=args.rho_center,
-        rho_range=args.rho_range,
-        rho_span=args.rho_span,
-        dz=args.dz,
-        gaussian_mu=args.gaussian_mu,
-        gaussian_sigma=args.gaussian_sigma,
-        gaussian_blob_mu_z=args.gaussian_blob_mu_z,
-        gaussian_blob_sigma_z=args.gaussian_blob_sigma_z,
-        single_bin_idx=args.single_bin_idx,
-    )
+    return PHI_FIELD_TYPES[PhiType(args.phi_type)].from_args(args)
 
 
 def run_export_cli(argv: list[str], prog: str = "phi export") -> int:
     parser = build_export_parser(prog)
     args = parser.parse_args(argv)
-    cfg = validate_export_namespace(parser, args)
-    result = compute_phi(cfg)
-    output_path = write_phi_h5(cfg.output_path, result, cfg)
+    field = validate_export_namespace(parser, args)
+    result = field.compute()
+    output_path = field.write_phi_h5(args.output, result)
 
     print(f"Exported initial phi to {output_path}")
     print(
@@ -745,42 +788,16 @@ def run_export_cli(argv: list[str], prog: str = "phi export") -> int:
         + "phi[rho_idx, z_idx]"
     )
     summary = [
-        f"phi_type={cfg.phi_type}",
-        f"PSI={cfg.psi_avg:.6e}",
-        f"N={cfg.N}",
-        f"wingz={cfg.wing_z}",
-        f"wingr={cfg.wing_r}",
-        f"rho_center={cfg.rho_center:.6e}",
-        f"rho_span={cfg.rho_span:.6e}",
-        f"DZ={cfg.dz:.6e}",
+        f"phi_type={field.phi_type}",
+        f"PSI={field.psi_avg:.6e}",
+        f"N={field.N}",
+        f"wingz={field.wing_z}",
+        f"wingr={field.wing_r}",
+        f"rho_center={field.rho_center:.6e}",
+        f"rho_span={field.rho_span:.6e}",
+        f"DZ={field.dz:.6e}",
     ]
-    if cfg.phi_type == PhiType.GAUSSIAN:
-        assert cfg.gaussian_mu is not None
-        assert cfg.gaussian_sigma is not None
-        summary.extend(
-            [
-                f"gaussian_mu={cfg.gaussian_mu:.6e}",
-                f"gaussian_sigma={cfg.gaussian_sigma:.6e}",
-            ]
-        )
-    elif cfg.phi_type == PhiType.GAUSSIAN_BLOB:
-        assert cfg.gaussian_mu is not None
-        assert cfg.gaussian_sigma is not None
-        assert cfg.gaussian_blob_mu_z is not None
-        assert cfg.gaussian_blob_sigma_z is not None
-        summary.extend(
-            [
-                f"gaussian_mu={cfg.gaussian_mu:.6e}",
-                f"gaussian_sigma={cfg.gaussian_sigma:.6e}",
-                f"gaussian_blob_mu_z={cfg.gaussian_blob_mu_z:.6e}",
-                f"gaussian_blob_sigma_z={cfg.gaussian_blob_sigma_z:.6e}",
-            ]
-        )
-    elif cfg.phi_type == PhiType.SMOOTH_HOMOGENEOUS:
-        summary.append(f"rho_range={cfg.rho_range:.6e}")
-    elif cfg.phi_type == PhiType.SINGLE_BIN:
-        assert cfg.single_bin_idx is not None
-        summary.append(f"single_bin_idx={cfg.single_bin_idx}")
+    summary.extend(field.summary())
     print("Used parameters: " + ", ".join(summary))
     return 0
 
@@ -802,7 +819,7 @@ def make_phi_ui(
     """Build every phi control as a single ``mo.ui.dictionary``.
 
     Grid parameters (N, wing, rho_center, rho_span, dz) are kept at their
-    defaults — :func:`phi_config_from_ui` fills them in. Returning one registered
+    defaults — :func:`phi_field_from_ui` fills them in. Returning one registered
     UI element keeps cross-cell ``.value`` reads reliable in marimo.
     """
     import marimo as mo
@@ -953,33 +970,16 @@ def phi_ui_layout(phi_ui):
     return mo.vstack(items, gap=0.5)
 
 
-def phi_config_from_ui(
-    value: dict[str, Any], output_path: str | Path = "initial_phi.h5"
-) -> PhiConfig:
-    """Map a ``make_phi_ui()`` value dict to a :class:`PhiConfig`."""
+def phi_field_from_ui(value: dict[str, Any]) -> PhiField:
+    """Map a ``make_phi_ui()`` value dict to a :class:`PhiField`.
+
+    The z-axis spacing is derived from the grid size so the system length stays
+    fixed; the distribution-specific params are picked out by the subclass.
+    """
     phi_type = LABEL_MAP[str(value["phi_type"])]
-    is_gaussian = phi_type == PhiType.GAUSSIAN
-    is_blob = phi_type == PhiType.GAUSSIAN_BLOB
-    is_single_bin = phi_type == PhiType.SINGLE_BIN
-    return PhiConfig(
-        output_path=Path(output_path),
-        phi_type=phi_type,
-        N=int(value["N"]),
-        dz=(DEFAULT_Z_SYSTEM_SIZE / float(value["N"])),
-        wing_z=int(value["wingz"]),
-        wing_r=int(value["wingr"]),
-        psi_avg=float(value["psi_avg"]),
-        rho_range=float(value["rho_range"]),
-        gaussian_mu=float(value["gaussian_mu"]) if (is_gaussian or is_blob) else None,
-        gaussian_sigma=float(value["gaussian_sigma"])
-        if (is_gaussian or is_blob)
-        else None,
-        gaussian_blob_mu_z=float(value["gaussian_blob_mu_z"]) if is_blob else None,
-        gaussian_blob_sigma_z=float(value["gaussian_blob_sigma_z"])
-        if is_blob
-        else None,
-        single_bin_idx=int(value["single_bin_idx"]) if is_single_bin else None,
-    )
+    values = dict(value)
+    values["dz"] = DEFAULT_Z_SYSTEM_SIZE / float(values["N"])
+    return PHI_FIELD_TYPES[phi_type].from_values(values)
 
 
 def plot_phi(result: PhiResult):

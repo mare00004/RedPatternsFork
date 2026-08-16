@@ -55,12 +55,10 @@ with app.setup:
     )
     from red_patterns.phi import (
         PhiResult,
-        compute_phi,
         make_phi_ui,
-        phi_config_from_ui,
+        phi_field_from_ui,
         phi_ui_layout,
         plot_phi,
-        write_phi_h5,
     )
     from red_patterns.sim import (
         DEFAULT_POLL_SEC,
@@ -142,8 +140,8 @@ def _(phi_ui):
 
 @app.cell
 def cell_phi_cfg(phi_ui):
-    phi_cfg = phi_config_from_ui(phi_ui.value)
-    phi_result = compute_phi(phi_cfg)
+    phi_cfg = phi_field_from_ui(phi_ui.value)
+    phi_result = phi_cfg.compute()
     return phi_cfg, phi_result
 
 
@@ -275,7 +273,7 @@ def cell_run(
         # Write inputs directly via the library (no `uv run ... export` hops).
         from dataclasses import replace as _replace
 
-        write_phi_h5(_phi_path, phi_result, _replace(phi_cfg, output_path=_phi_path))
+        phi_cfg.write_phi_h5(_phi_path, phi_result)
         write_kernel_h5(
             _kernel_path, kernel_result, _replace(kernel_cfg, output_path=_kernel_path)
         )

@@ -41,7 +41,7 @@ with app.setup:
             sys.path.insert(0, _path)
 
     from red_patterns.models import ConvRun, TaylorRun, run_payload_adapter
-    from red_patterns.phi import PhiConfig, compute_phi, plot_phi, write_phi_h5
+    from red_patterns.phi import phi_field_from_params, plot_phi
     from red_patterns.sim import (
         DEFAULT_POLL_SEC,
         DEFAULT_STALE_SEC,
@@ -196,9 +196,9 @@ def cell_run(run_payload, ui_binary, ui_run_button):
             work_dir / "kernel.h5" if isinstance(run_payload, ConvRun) else None
         )
 
-        phi_config = PhiConfig.from_params(run_payload.phi.params, phi_path)
-        phi_result = compute_phi(phi_config)
-        write_phi_h5(phi_path, phi_result, phi_config)
+        phi_field = phi_field_from_params(run_payload.phi.params)
+        phi_result = phi_field.compute()
+        phi_field.write_phi_h5(phi_path, phi_result)
 
         if isinstance(run_payload, ConvRun):
             from red_patterns.kernel import compute_kernel, write_kernel_h5
