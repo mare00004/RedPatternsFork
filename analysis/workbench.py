@@ -147,7 +147,23 @@ def cell_phi_cfg(phi_ui):
 
 @app.cell
 def _(phi_result):
-    plot_phi(phi_result)
+    _phi_figure = plot_phi(phi_result)
+
+    _psi_initial = 100.0 * np.asarray(phi_result.phi_values, dtype=np.float64).sum(axis=0)
+    _z_cm = 100.0 * np.asarray(phi_result.z, dtype=np.float64)
+    _psi_fig, _psi_ax = plt.subplots(constrained_layout=True)
+    _psi_ax.plot(_z_cm, _psi_initial, color="#2563eb", linewidth=1.5)
+    _psi_ax.set_xlabel(r"$z$ [cm]")
+    _psi_ax.set_ylabel(r"$\psi$ [%]")
+    _psi_ax.set_title(r"Initial $\psi(z) = \int \varphi(\rho, z)\, d\rho$")
+    _psi_ax.grid(alpha=0.3)
+
+    mo.hstack(
+        [mo.as_html(_phi_figure), mo.ui.matplotlib(_psi_ax)],
+        align="start",
+        justify="start",
+        gap=1,
+    )
     return
 
 
@@ -216,6 +232,7 @@ def cell_sim_controls():
             "sigmoid": mo.md("Sigmoid pressure gradient."),
             "linear": mo.md("Linear pressure gradient."),
             "zero": mo.md("Zero pressure gradient (no driving term)."),
+            "linear-full": mo.md("Linear pressure gradient over the whole domain (no wings)."),
         },
         value="sigmoid",
     )
