@@ -18,7 +18,7 @@ import numpy as np
 from pydantic import ValidationError
 
 from .models import BaseRun, ConvRun, RunPayload, TaylorRun, run_payload_adapter
-from .types import ClosureType, Gradient, PDFType, PhiType, Variant
+from .types import ClosureType, Gradient, KernelType, PDFType, PhiType, Variant
 
 RunModelT = TypeVar("RunModelT", bound=BaseRun)
 
@@ -142,6 +142,7 @@ class PhiSweep:
 
 @dataclass(frozen=True, kw_only=True)
 class KernelSweep:
+    kernel_type: Sequence[KernelType | str] = (KernelType.ORIGINAL,)
     closure: Sequence[ClosureType | str] = (ClosureType.FORCE,)
     pair_distribution: Sequence[PDFType | str] = (PDFType.NEAREST_NEIGHBOR,)
     U: Sequence[float] = (111.15e-18,)
@@ -153,9 +154,15 @@ class KernelSweep:
     nn_d: Sequence[float] = (DEFAULT_EQ_DIST,)
     nn_sigma: Sequence[float] = (DEFAULT_SIGMA_C,)
     lambda_: Sequence[float] = (1.0,)
+    a: Sequence[float] = (1.0,)
+    b: Sequence[float] = (1.0e-16,)
+    c: Sequence[float] = (1.0,)
+    alpha: Sequence[float] = (1.0e-16,)
+    beta: Sequence[float] = (DEFAULT_EQ_DIST,)
+    gamma: Sequence[float] = (6.0 / DEFAULT_EQ_DIST,)
 
     def rows(self) -> list[dict[str, Any]]:
-        base_rows = dict_product(
+        original_base_rows = dict_product(
             {
                 "U": self.U,
                 "sigma": self.sigma,
@@ -164,6 +171,7 @@ class KernelSweep:
                 "subdiv": self.subdiv,
             }
         )
+        hnc_rows = dict_product({"a": self.a, "b": self.b, "c": self.c, "alpha": self.alpha, "beta": self.beta, "gamma": self.gamma, "kernel_n": self.kernel_n, "dz": self.dz, "subdiv": self.subdiv})
         nn_rows = dict_product(
             {
                 "g0": self.g0,
@@ -173,23 +181,28 @@ class KernelSweep:
         )
         lambda_rows = dict_product({"lambda_": self.lambda_})
         rows: list[dict[str, Any]] = []
-        for closure, pair_distribution in product(self.closure, self.pair_distribution):
-            closure_value = ClosureType(json_scalar(closure)).value
-            pair_value = PDFType(json_scalar(pair_distribution)).value
-            for base in base_rows:
-                common = {
-                    **base,
-                    "closure": closure_value,
-                    "pair_distribution": pair_value,
-                }
-                if pair_value == PDFType.NEAREST_NEIGHBOR.value:
-                    for nn in nn_rows:
-                        rows.append({**common, **nn})
-                elif pair_value == PDFType.EXPONENTIAL.value:
-                    for lambda_row in lambda_rows:
-                        rows.append({**common, **lambda_row})
-                else:
-                    rows.append(common)
+        for kernel_type in self.kernel_type:
+            if KernelType(json_scalar(kernel_type)) == KernelType.HNC:
+                rows.extend({"kernel_type": KernelType.HNC.value, **row} for row in hnc_rows)
+                continue
+            for closure, pair_distribution in product(self.closure, self.pair_distribution):
+                closure_value = ClosureType(json_scalar(closure)).value
+                pair_value = PDFType(json_scalar(pair_distribution)).value
+                for base in original_base_rows:
+                    common = {
+                        **base,
+                        "kernel_type": KernelType.ORIGINAL.value,
+                        "closure": closure_value,
+                        "pair_distribution": pair_value,
+                    }
+                    if pair_value == PDFType.NEAREST_NEIGHBOR.value:
+                        for nn in nn_rows:
+                            rows.append({**common, **nn})
+                    elif pair_value == PDFType.EXPONENTIAL.value:
+                        for lambda_row in lambda_rows:
+                            rows.append({**common, **lambda_row})
+                    else:
+                        rows.append(common)
         return rows
 
 
