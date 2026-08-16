@@ -13,6 +13,7 @@ if str(ANALYSIS_DIR) not in sys.path:
     sys.path.insert(0, str(ANALYSIS_DIR))
 
 import h5py
+import numpy as np
 from pydantic import ValidationError
 
 from red_patterns.models import (
@@ -22,6 +23,7 @@ from red_patterns.models import (
     PerturbedSmoothHomogeneousPhiParams,
     PhiGenerateParams,
     SingleBinPhiParams,
+    SingleModeSmoothHomogeneousPhiParams,
 )
 from red_patterns.phi import (
     PHI_FIELD_TYPES,
@@ -59,6 +61,11 @@ PER_TYPE_ARGS = {
         "rho_range": 5.0,
         "seed": 3,
         "amplitude": 1e-3,
+    },
+    PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS: {
+        "rho_range": 5.0,
+        "amplitude": 1e-3,
+        "mode_number": 7,
     },
     PhiType.SINGLE_BIN: {"single_bin_idx": 100},
 }
@@ -104,6 +111,12 @@ class PhiParamsUnionTests(unittest.TestCase):
                 params_for(PhiType.PERTURBED_SMOOTH_HOMOGENEOUS)
             ),
             PerturbedSmoothHomogeneousPhiParams,
+        )
+        self.assertIsInstance(
+            PHI_PARAMS_ADAPTER.validate_python(
+                params_for(PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS)
+            ),
+            SingleModeSmoothHomogeneousPhiParams,
         )
 
     def test_concrete_model_supplies_its_discriminator_default(self):
@@ -179,6 +192,40 @@ class PhiComputeTests(unittest.TestCase):
                             f["phi"].attrs["gaussian_sigma"],
                             PER_TYPE_ARGS[PhiType.GAUSSIAN]["gaussian_sigma"],
                         )
+                    if phi_type == PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS:
+                        self.assertEqual(
+                            f["phi"].attrs["mode_number"],
+                            PER_TYPE_ARGS[phi_type]["mode_number"],
+                        )
+
+    def test_single_mode_has_the_requested_active_domain_cosine(self):
+        base = phi_field_from_params(params_for(PhiType.SMOOTH_HOMOGENEOUS)).compute()
+        field = phi_field_from_params(
+            params_for(PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS)
+        )
+        result = field.compute()
+
+        active = slice(field.wing_z, field.N - field.wing_z)
+        z_active = result.z[active]
+        x = (z_active - z_active[0]) / (z_active[-1] - z_active[0])
+        raw_multiplier = 1.0 + field.amplitude * np.cos(
+            np.pi * field.mode_number * x
+        )
+        expected_multiplier = raw_multiplier / np.mean(raw_multiplier)
+        np.testing.assert_allclose(
+            result.phi_values[:, active],
+            base.phi_values[:, active] * expected_multiplier[np.newaxis, :],
+        )
+        np.testing.assert_allclose(result.phi_values[:, : field.wing_z], 0.0)
+        np.testing.assert_allclose(result.phi_values[:, field.N - field.wing_z :], 0.0)
+        self.assertAlmostEqual(
+            result.phi_values.sum(axis=0)[active].mean(), field.psi_avg
+        )
+
+    def test_single_mode_zero_is_accepted(self):
+        payload = params_for(PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS)
+        payload["mode_number"] = 0
+        self.assertEqual(PHI_PARAMS_ADAPTER.validate_python(payload).mode_number, 0)
 
 
 class PhiSweepRowsTests(unittest.TestCase):
@@ -195,6 +242,13 @@ class PhiSweepRowsTests(unittest.TestCase):
 
 
 class PhiCliTests(unittest.TestCase):
+    def test_shared_amplitude_option_is_registered_once(self):
+        parser = build_export_parser()
+        amplitude_actions = [
+            action for action in parser._actions if "--amplitude" in action.option_strings
+        ]
+        self.assertEqual(len(amplitude_actions), 1)
+
     def test_registry_builds_perturbed_cli(self):
         parser = build_export_parser()
         args = parser.parse_args(
@@ -210,6 +264,22 @@ class PhiCliTests(unittest.TestCase):
         field = validate_export_namespace(parser, args)
         self.assertEqual(field.phi_type, PhiType.PERTURBED_SMOOTH_HOMOGENEOUS)
         self.assertEqual(field.seed, 4)
+
+    def test_registry_builds_single_mode_cli(self):
+        parser = build_export_parser()
+        args = parser.parse_args(
+            [
+                "--output", "phi.h5",
+                "--phi-type", PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS.value,
+                "--psi-avg", "0.02",
+                "--rho-range", "5",
+                "--amplitude", "0.001",
+                "--mode-number", "7",
+            ]
+        )
+        field = validate_export_namespace(parser, args)
+        self.assertEqual(field.phi_type, PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS)
+        self.assertEqual(field.mode_number, 7)
 
     def test_cli_rejects_an_option_from_another_type(self):
         parser = build_export_parser()

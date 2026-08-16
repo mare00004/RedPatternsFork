@@ -36,6 +36,7 @@ DEFAULT_RHO_RANGE = 5.0
 DEFAULT_SINGLE_BIN_IDX = 256
 DEFAULT_PERTURBATION_SEED = 0
 DEFAULT_PERTURBATION_AMPLITUDE = 1e-3
+DEFAULT_SINGLE_MODE_NUMBER = 1
 
 DEFAULT_SIGMA = 5.6e-6
 DEFAULT_G0 = 4.0e7
@@ -95,6 +96,7 @@ class PhiSweep:
     rho_range: Sequence[float] = (DEFAULT_RHO_RANGE,)
     seed: Sequence[int] = (DEFAULT_PERTURBATION_SEED,)
     amplitude: Sequence[float] = (DEFAULT_PERTURBATION_AMPLITUDE,)
+    mode_number: Sequence[int] = (DEFAULT_SINGLE_MODE_NUMBER,)
     single_bin_idx: Sequence[int] = (DEFAULT_SINGLE_BIN_IDX,)
 
     def rows(self) -> list[dict[str, Any]]:

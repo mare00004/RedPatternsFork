@@ -48,6 +48,7 @@ from .models import (
     PerturbedSmoothHomogeneousPhiParams,
     PhiParamsBase,
     SingleBinPhiParams,
+    SingleModeSmoothHomogeneousPhiParams,
     SmoothHomogeneousPhiParams,
 )
 from .types import PhiType
@@ -75,6 +76,27 @@ DEFAULT_SINGLE_BIN_IDX = 256
 
 
 LABEL_MAP = {t.label: t for t in PhiType}
+
+
+def _add_argument_if_missing(
+    parser: argparse.ArgumentParser, *option_strings: str, **kwargs: Any
+) -> None:
+    """Add an option unless already registered for the flat all-phi-type CLI.
+
+    The export parser collects arguments from every phi type into one flat
+    command-line interface.  The selected Pydantic model later validates that
+    only arguments valid for that phi type were supplied.  Some types share an
+    option such as ``--amplitude``, so duplicate-safe registration avoids an
+    argparse conflict while preserving that later validation.
+    """
+    registered_options = {
+        option_string
+        for action in parser._actions
+        for option_string in action.option_strings
+    }
+    if any(option_string in registered_options for option_string in option_strings):
+        return
+    parser.add_argument(*option_strings, **kwargs)
 
 
 # --------------------------------------------------------------------------- #
@@ -167,6 +189,27 @@ def perturb_phi_z(
     eta -= np.average(eta, weights=psi)
     eta /= np.sqrt(np.mean(eta**2))
     result[:, active] *= 1.0 + amplitude * eta[np.newaxis, :]
+    return result
+
+
+def perturb_phi_single_cosine_z(
+    phi: Array2F,
+    z: Array1F,
+    wing_z: int,
+    *,
+    amplitude: float,
+    mode_number: int,
+) -> Array2F:
+    r"""Apply one DCT-style cosine perturbation along the active z domain."""
+    result = phi.copy()
+    active = slice(wing_z, phi.shape[1] - wing_z)
+    z_active = z[active]
+    if z_active.size == 1:
+        x = np.zeros_like(z_active)
+    else:
+        x = (z_active - z_active[0]) / (z_active[-1] - z_active[0])
+    multiplier = 1.0 + amplitude * np.cos(np.pi * mode_number * x)
+    result[:, active] *= multiplier[np.newaxis, :]
     return result
 
 
@@ -772,7 +815,9 @@ class PerturbedSmoothHomogeneousPhi(SmoothHomogeneousPhi):
     @classmethod
     def add_parser_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--seed", type=int, default=argparse.SUPPRESS)
-        parser.add_argument("--amplitude", type=float, default=argparse.SUPPRESS)
+        _add_argument_if_missing(
+            parser, "--amplitude", type=float, default=argparse.SUPPRESS
+        )
 
     @classmethod
     def make_ui_controls(cls) -> dict[str, Any]:
@@ -801,6 +846,81 @@ class PerturbedSmoothHomogeneousPhi(SmoothHomogeneousPhi):
     @classmethod
     def type_description(cls) -> str:
         return r"$\varphi_{smooth}(\rho,z)[1 + A\eta(z)]$ with a seeded, mass-conserving perturbation"
+
+
+class SingleModeSmoothHomogeneousPhi(SmoothHomogeneousPhi):
+    phi_type = PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS
+    params_model = SingleModeSmoothHomogeneousPhiParams
+
+    def __init__(self, *, amplitude: float, mode_number: int, **grid: Any) -> None:
+        super().__init__(**grid)
+        self.amplitude = float(amplitude)
+        self.mode_number = int(mode_number)
+
+    @classmethod
+    def _per_type_from_values(cls, values: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **super()._per_type_from_values(values),
+            "amplitude": values["amplitude"],
+            "mode_number": values["mode_number"],
+        }
+
+    def build(self, rho: Array1F, z: Array1F) -> Array2F:
+        return perturb_phi_single_cosine_z(
+            super().build(rho, z),
+            z,
+            self.wing_z,
+            amplitude=self.amplitude,
+            mode_number=self.mode_number,
+        )
+
+    def write_metadata(self, group: h5py.Group) -> None:
+        super().write_metadata(group)
+        group.attrs["amplitude"] = self.amplitude
+        group.attrs["mode_number"] = self.mode_number
+
+    def summary(self) -> list[str]:
+        return super().summary() + [
+            f"amplitude={self.amplitude:.6e}",
+            f"mode_number={self.mode_number}",
+        ]
+
+    @classmethod
+    def add_parser_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        _add_argument_if_missing(
+            parser, "--amplitude", type=float, default=argparse.SUPPRESS
+        )
+        parser.add_argument("--mode-number", type=int, default=argparse.SUPPRESS)
+
+    @classmethod
+    def make_ui_controls(cls) -> dict[str, Any]:
+        import marimo as mo
+
+        return {
+            **super().make_ui_controls(),
+            "amplitude": mo.ui.number(
+                start=0, stop=1, step=1e-6, value=1e-3, label="Amplitude"
+            ),
+            "mode_number": mo.ui.number(
+                start=0, stop=1023, step=1, value=1, label="Mode number"
+            ),
+        }
+
+    @classmethod
+    def ui_layout(cls, controls: Any) -> Any:
+        import marimo as mo
+
+        return mo.vstack(
+            [mo.md("### Single-mode smooth homogeneous parameters"), controls]
+        )
+
+    @classmethod
+    def sweep_param_names(cls) -> tuple[str, ...]:
+        return super().sweep_param_names() + ("amplitude", "mode_number")
+
+    @classmethod
+    def type_description(cls) -> str:
+        return r"$\varphi_{smooth}(\rho,z)[1 + A\cos(m\pi x)]$ on the active z domain"
 
 
 class SingleBinPhi(PhiField):
@@ -868,6 +988,7 @@ PHI_FIELD_TYPES: dict[PhiType, type[PhiField]] = {
     PhiType.HOMOGENEOUS: HomogeneousPhi,
     PhiType.SMOOTH_HOMOGENEOUS: SmoothHomogeneousPhi,
     PhiType.PERTURBED_SMOOTH_HOMOGENEOUS: PerturbedSmoothHomogeneousPhi,
+    PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS: SingleModeSmoothHomogeneousPhi,
     PhiType.SINGLE_BIN: SingleBinPhi,
 }
 

@@ -88,6 +88,14 @@ class PerturbedSmoothHomogeneousPhiParams(SmoothRhoRangePhiParamsBase):
     amplitude: Annotated[float, Field(ge=0)]
 
 
+class SingleModeSmoothHomogeneousPhiParams(SmoothRhoRangePhiParamsBase):
+    phi_type: Literal[PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS] = (
+        PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS
+    )
+    amplitude: Annotated[float, Field(ge=0)]
+    mode_number: Annotated[int, Field(ge=0)]
+
+
 class SingleBinPhiParams(PhiParamsBase):
     phi_type: Literal[PhiType.SINGLE_BIN] = PhiType.SINGLE_BIN
     single_bin_idx: int
@@ -99,6 +107,7 @@ PhiParams = Annotated[
     | HomogeneousPhiParams
     | SmoothHomogeneousPhiParams
     | PerturbedSmoothHomogeneousPhiParams
+    | SingleModeSmoothHomogeneousPhiParams
     | SingleBinPhiParams,
     Field(discriminator="phi_type"),
 ]

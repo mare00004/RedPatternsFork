@@ -30,6 +30,7 @@ class PhiType(StrEnum):
     HOMOGENEOUS = "homogeneous"
     SMOOTH_HOMOGENEOUS = "smooth_homogeneous"
     PERTURBED_SMOOTH_HOMOGENEOUS = "perturbed_smooth_homogeneous"
+    SINGLE_MODE_SMOOTH_HOMOGENEOUS = "single_mode_smooth_homogeneous"
     SINGLE_BIN = "single_bin"
 
     @property
@@ -77,6 +78,7 @@ _PHI_TYPE_LABELS = {
     PhiType.HOMOGENEOUS: "Homogeneous",
     PhiType.SMOOTH_HOMOGENEOUS: "Smooth Homogeneous",
     PhiType.PERTURBED_SMOOTH_HOMOGENEOUS: "Perturbed Smooth Homogeneous",
+    PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS: "Single-mode Smooth Homogeneous",
     PhiType.SINGLE_BIN: "Single Bin",
 }
 

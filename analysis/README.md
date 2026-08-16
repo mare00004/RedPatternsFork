@@ -127,3 +127,28 @@ Those sequences form the type-specific Cartesian product and are merged with
 each common row.  The resulting dictionaries can be passed directly to
 `PHI_PARAMS_ADAPTER.validate_python()` and produce
 `PerturbedSmoothHomogeneousPhiParams` instances.
+
+## Single-mode smooth homogeneous phi
+
+`single_mode_smooth_homogeneous` uses the same cosine-tapered radial profile
+as `smooth_homogeneous`, with one longitudinal active-domain cosine mode:
+
+\[
+\varphi(\rho,z)=\varphi_{\rm smooth}(\rho,z)
+\left[1+\epsilon\cos(m\pi x)\right],
+\qquad x=\frac{z-z_{\rm active,0}}{z_{\rm active,end}-z_{\rm active,0}}.
+\]
+
+Its additional parameters are `amplitude` (`\epsilon`) and `mode_number`
+(`m`); it accepts nonnegative mode numbers. The normal wing and normalization
+pipeline remains in effect.
+
+```bash
+uv run analysis/phi_init.py export \
+  --output initial_phi.h5 \
+  --phi-type single_mode_smooth_homogeneous \
+  --psi-avg 0.02 \
+  --rho-range 5 \
+  --amplitude 0.001 \
+  --mode-number 7
+```
