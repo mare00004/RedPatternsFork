@@ -162,7 +162,7 @@ class ModelParamsData:
     """
 
     modelType: Literal["CONV", "TAYL"]
-    gradientType: Literal["LINEAR", "SIGMOID", "ZERO"]
+    gradientType: Literal["LINEAR", "SIGMOID", "ZERO", "LINEAR_FULL"]
     alpha: float
     beta: float
     variant: ConvVariant | TaylVariant  # Tagged-union payload selected by `modelType`.
@@ -272,6 +272,8 @@ class RunData:
                     if model_attrs["gradientType"] == "SIGMOID"
                     else "ZERO"
                     if model_attrs["gradientType"] == "ZERO"
+                    else "LINEAR_FULL"
+                    if model_attrs["gradientType"] == "LINEAR_FULL"
                     else (_ for _ in ()).throw(
                         ValueError(
                             f"Unknown gradientType attr: {model_attrs['gradientType']!r}"
@@ -581,6 +583,8 @@ def cli_args_from_run_h5(
             args.append("--gradient=sigmoid")
         elif grad == "ZERO":
             args.append("--gradient=zero")
+        elif grad == "LINEAR_FULL":
+            args.append("--gradient=linear-full")
         else:
             raise ValueError(f"Unknown gradientType in {run_h5}: {grad!r}")
 

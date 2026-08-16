@@ -22,6 +22,7 @@ class Gradient(StrEnum):
     LINEAR = "linear"
     SIGMOID = "sigmoid"
     ZERO = "zero"
+    LINEAR_FULL = "linear-full"
 
 
 class PhiType(StrEnum):

@@ -385,6 +385,8 @@ int runSim(SimConfig &cfg) {
             CuKernelGradSigmoid<<<cell_grid_dim, cell_block_dim>>>(d_percoll, t);
         } else if (cfg.model.gradientType == ZERO) {
             CuKernelGradZero<<<cell_grid_dim, cell_block_dim>>>(d_percoll);
+        } else if (cfg.model.gradientType == LINEAR_FULL) {
+            CuKernelGradLinearFull<<<cell_grid_dim, cell_block_dim>>>(d_percoll);
         } else {
             printf("This branch should never be reached!");
         }

@@ -67,6 +67,21 @@ __global__ void CuKernelGradLinear(double *percoll) {
     percoll[idx] = piecewise_func(z);
 }
 
+/*****************
+ * LINEAR (FULL) *
+ *****************/
+
+__global__ void CuKernelGradLinearFull(double *percoll) {
+    const std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= d_cfg.run.N) {
+        return;
+    }
+
+    const double dz = d_cfg.run.DZ;
+    const double z = ((double)idx + 0.5) * dz;
+    percoll[idx] = p_func(z - d_cfg.run.wingL);
+}
+
 /*********
  * ZERO   *
  **********/

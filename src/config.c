@@ -82,6 +82,8 @@ int printConfig(SimConfig *c) {
         gradientName = "sigmoid";
     } else if (c->model.gradientType == ZERO) {
         gradientName = "zero";
+    } else if (c->model.gradientType == LINEAR_FULL) {
+        gradientName = "linear-full";
     }
     printf("-> Using %s gradient", gradientName);
     if (strlen(c->model.initialPhiFile) > 0) {
@@ -124,8 +126,8 @@ int deriveAndValidateOrDie(SimConfig *c) {
         fprintf(stderr, "%s is not a valid directory\n", c->run.outDir);
         return -1;
     }
-    if (!(c->model.gradientType == LINEAR || c->model.gradientType == SIGMOID || c->model.gradientType == ZERO)) {
-        fprintf(stderr, "gradient has to be one of: linear, sigmoid, zero!\n");
+    if (!(c->model.gradientType == LINEAR || c->model.gradientType == SIGMOID || c->model.gradientType == ZERO || c->model.gradientType == LINEAR_FULL)) {
+        fprintf(stderr, "gradient has to be one of: linear, sigmoid, zero, linear-full!\n");
         return -1;
     }
     if (!(c->model.modelType == CONV || c->model.modelType == TAYL)) {
@@ -167,6 +169,8 @@ int deriveAndValidateOrDie(SimConfig *c) {
         c->model.alpha = 2.0e-04;
     } else if (c->model.gradientType == ZERO) {
         c->model.alpha = 0.0;
+    } else if (c->model.gradientType == LINEAR_FULL) {
+        c->model.alpha = 2.0e-05;
     }
 
     return 0;

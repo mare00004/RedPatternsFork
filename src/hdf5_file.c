@@ -129,6 +129,8 @@ void writeConfig(hid_t file, const SimConfig *cfg) {
         writeFixedStrAttr(g_model, "gradientType", "LINEAR", 6);
     } else if (cfg->model.gradientType == SIGMOID) {
         writeFixedStrAttr(g_model, "gradientType", "SIGMOID", 7);
+    } else if (cfg->model.gradientType == LINEAR_FULL) {
+        writeFixedStrAttr(g_model, "gradientType", "LINEAR_FULL", 11);
     } else {
         writeFixedStrAttr(g_model, "gradientType", "ZERO", 4);
     }
