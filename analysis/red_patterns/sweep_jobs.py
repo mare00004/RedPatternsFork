@@ -205,7 +205,7 @@ class SimulationSweep:
     DT: Sequence[float]
     storeTime: Sequence[float]
     gradient: Sequence[Gradient | str]
-    phi: PhiSweep
+    phi: PhiSweep | Sequence[PhiSweep]
 
     @property
     def variant(self) -> Variant:
@@ -213,6 +213,16 @@ class SimulationSweep:
 
     def model_rows(self) -> list[dict[str, Any]]:
         raise NotImplementedError
+
+    def phi_sweeps(self) -> list[PhiSweep]:
+        """Expand the ``phi`` field into a list of independent sweeps.
+
+        Each sweep keeps its own grid and per-distribution parameters, so
+        separate ``PhiSweep`` objects do not cross-product against each other.
+        """
+        if isinstance(self.phi, PhiSweep):
+            return [self.phi]
+        return list(self.phi)
 
     def to_runs(self) -> list[RunPayload]:
         sim_rows = dict_product(
@@ -224,7 +234,9 @@ class SimulationSweep:
                 "gradient": self.gradient,
             }
         )
-        phi_rows = self.phi.rows()
+        phi_rows = [
+            row for phi_sweep in self.phi_sweeps() for row in phi_sweep.rows()
+        ]
         runs: list[RunPayload] = []
         for sim_row, model_row, phi_row in product(
             sim_rows, self.model_rows(), phi_rows

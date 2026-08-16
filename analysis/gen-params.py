@@ -134,6 +134,13 @@ def _():
         wing_r=[32],
     )
 
+    gauss_phi = PhiSweep(
+        psi_avg=[0.02],
+        phi_type=[PhiType.GAUSSIAN],
+        gaussian_mu=[1100.0],
+        gaussian_sigma=[4.0],
+    )
+
     kernel = KernelSweep(
         closure=[ClosureType.FORCE],
         pair_distribution=[PDFType.NEAREST_NEIGHBOR],
@@ -151,7 +158,7 @@ def _():
         DT=[1e-3],
         storeTime=[1],
         gradient=[Gradient.LINEAR],
-        phi=phi,
+        phi=[phi, gauss_phi],
         NU=nu_sweep,
         MU=mu_sweep,
     )

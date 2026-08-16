@@ -23,6 +23,7 @@ from red_patterns.sweep_jobs import (
     TaylSweep,
     combine_sweeps,
     load_runs_jsonl,
+    normalize_runs,
     runs_to_jsonl,
     write_sweep_export,
 )
@@ -179,6 +180,75 @@ touch "${out_dir}/run.h5"
                 else:
                     self.assertFalse(kernel_path.exists())
                     self.assertFalse("--kernel-file=" in command_text)
+
+    def test_taylor_sweep_accepts_multiple_phi_sweeps(self):
+        phi_a = PhiSweep(
+            psi_avg=[0.01],
+            phi_type=[PhiType.GAUSSIAN],
+            gaussian_mu=[1100.0],
+            gaussian_sigma=[4.0],
+        )
+        phi_b = PhiSweep(
+            psi_avg=[0.02],
+            phi_type=[PhiType.HOMOGENEOUS],
+            rho_range=[5.0],
+        )
+        tayl = TaylSweep(
+            N=[256],
+            T=[1.0],
+            DT=[0.1],
+            storeTime=[1.0],
+            gradient=[Gradient.LINEAR],
+            phi=[phi_a, phi_b],
+            NU=[-1.0e-30],
+            MU=[-1.0e-37],
+        )
+        runs = normalize_runs(tayl)
+
+        self.assertEqual([run.run_id for run in runs], ["r000001", "r000002"])
+        self.assertIsInstance(runs[0], TaylorRun)
+        self.assertIsInstance(runs[1], TaylorRun)
+
+        phi_params = [run.phi.params for run in runs]
+        self.assertEqual(phi_params[0].phi_type, PhiType.GAUSSIAN)
+        self.assertEqual(phi_params[0].psi_avg, 0.01)
+        self.assertEqual(phi_params[1].phi_type, PhiType.HOMOGENEOUS)
+        self.assertEqual(phi_params[1].psi_avg, 0.02)
+
+    def test_conv_sweep_accepts_multiple_phi_sweeps(self):
+        phi_a = PhiSweep(
+            psi_avg=[0.01],
+            phi_type=[PhiType.GAUSSIAN],
+            gaussian_mu=[1100.0],
+            gaussian_sigma=[4.0],
+        )
+        phi_b = PhiSweep(
+            psi_avg=[0.02],
+            phi_type=[PhiType.GAUSSIAN],
+            gaussian_mu=[1200.0],
+            gaussian_sigma=[8.0],
+        )
+        kernel = KernelSweep(
+            closure=[ClosureType.FORCE],
+            pair_distribution=[PDFType.NEAREST_NEIGHBOR],
+            U=[111.15e-18],
+        )
+        conv = ConvSweep(
+            N=[256],
+            T=[1.0],
+            DT=[0.1],
+            storeTime=[1.0],
+            gradient=[Gradient.SIGMOID],
+            phi=[phi_a, phi_b],
+            kernel=kernel,
+        )
+        runs = normalize_runs(conv)
+
+        self.assertEqual([run.run_id for run in runs], ["r000001", "r000002"])
+        self.assertTrue(all(isinstance(run, ConvRun) for run in runs))
+        phi_params = [run.phi.params for run in runs]
+        self.assertEqual([p.gaussian_sigma for p in phi_params], [4.0, 8.0])
+        self.assertEqual([p.psi_avg for p in phi_params], [0.01, 0.02])
 
     def test_submit_file_queues_run_ids_and_keys_logs_by_run_id(self):
         submit_text = (REPO_ROOT / "cluster" / "sweep.submit").read_text(
