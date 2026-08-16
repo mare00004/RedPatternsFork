@@ -39,7 +39,13 @@ import h5py
 import numpy as np
 from numpy.typing import NDArray
 
-from .types import ClosureType, PDFType
+from .models import (
+    HNCKernelParams,
+    KERNEL_PARAMS_ADAPTER,
+    KernelParams,
+    OriginalKernelParams,
+)
+from .types import ClosureType, KernelType, PDFType
 
 Array1F = NDArray[np.float64]
 
@@ -75,17 +81,34 @@ class KernelConfig:
     """All parameters needed to build a kernel stencil and export it."""
 
     output_path: Path
-    closure: ClosureType
-    pair_distribution: PDFType
-    U: float
-    sigma: float
     kernel_n: int
     dz: float
     subdiv: int
+    kernel_type: KernelType = KernelType.ORIGINAL
+    closure: ClosureType | None = None
+    pair_distribution: PDFType | None = None
+    U: float | None = None
+    sigma: float | None = None
     g0: float | None = None
     nn_d: float | None = None
     nn_sigma: float | None = None
     lambda_: float | None = None
+    a: float | None = None
+    b: float | None = None
+    c: float | None = None
+    alpha: float | None = None
+    beta: float | None = None
+    gamma: float | None = None
+
+    @classmethod
+    def from_params(
+        cls, params: KernelParams | dict, output_path: str | Path = "kernel.h5"
+    ) -> "KernelConfig":
+        if not isinstance(params, (OriginalKernelParams, HNCKernelParams)):
+            params = KERNEL_PARAMS_ADAPTER.validate_python(params)
+        values = params.model_dump()
+        values["output_path"] = Path(output_path)
+        return cls(**values)
 
 
 @dataclass
@@ -116,6 +139,28 @@ def lj_derivative(r: Array1F, U: np.floating, sigma: np.floating) -> Array1F:
     sr6 = (sigma / r) ** 6
     sr12 = sr6**2
     return (4 * U / r) * (-12 * sr12 + 6 * sr6)
+
+
+def morse_potential(r: Array1F, alpha: float, beta: float, gamma: float) -> Array1F:
+    r"""Morse pair potential ``alpha*(1-exp(-gamma*(r-beta)))**2-alpha``."""
+    return alpha * np.square(1.0 - np.exp(-gamma * (r - beta))) - alpha
+
+
+def effective_morse_kernel(
+    x: Array1F, a: float, b: float, c: float, alpha: float, beta: float, gamma: float
+) -> Array1F:
+    r"""HNC kernel ``x * [a*(exp(-u_M(|x|)/b)-1) - c*u_M(|x|)]``."""
+    x = np.asarray(x, dtype=np.float64)
+    u = morse_potential(np.abs(x), alpha, beta, gamma)
+    return x * (a * np.expm1(-u / b) - c * u)
+
+
+def effective_morse_potential(
+    r: Array1F, a: float, b: float, c: float, alpha: float, beta: float, gamma: float
+) -> Array1F:
+    """Effective HNC potential built from the Morse pair potential."""
+    u = morse_potential(np.asarray(r, dtype=np.float64), alpha, beta, gamma)
+    return a * np.expm1(-u / b) - c * u
 
 
 def pdf_mean_field(x: Array1F):
@@ -356,16 +401,33 @@ def compute_kernel(cfg: KernelConfig) -> KernelResult:
         raise ValueError("dz must be positive.")
 
     fine_dz = cfg.dz / cfg.subdiv
-    kernel_func = build_kernel_function(
-        cfg.closure,
-        cfg.pair_distribution,
-        U=cfg.U,
-        sigma=cfg.sigma,
-        g0=cfg.g0,
-        nn_d=cfg.nn_d,
-        nn_sigma=cfg.nn_sigma,
-        lambda_=cfg.lambda_,
-    )
+    if cfg.kernel_type == KernelType.HNC:
+        hnc = (cfg.a, cfg.b, cfg.c, cfg.alpha, cfg.beta, cfg.gamma)
+        if any(value is None for value in hnc) or cfg.b == 0:
+            raise ValueError(
+                "HNC kernel requires a, b, c, alpha, beta, gamma and b != 0."
+            )
+        kernel_func = lambda x: effective_morse_kernel(x, *hnc)  # type: ignore[arg-type]
+    else:
+        if (
+            cfg.closure is None
+            or cfg.pair_distribution is None
+            or cfg.U is None
+            or cfg.sigma is None
+        ):
+            raise ValueError(
+                "Original kernel requires closure, pair_distribution, U, and sigma."
+            )
+        kernel_func = build_kernel_function(
+            cfg.closure,
+            cfg.pair_distribution,
+            U=cfg.U,
+            sigma=cfg.sigma,
+            g0=cfg.g0,
+            nn_d=cfg.nn_d,
+            nn_sigma=cfg.nn_sigma,
+            lambda_=cfg.lambda_,
+        )
     x_sample, K_sample = generate_kernel_stencil(
         kernel_func=kernel_func,
         kernel_n=cfg.kernel_n,
@@ -407,9 +469,14 @@ def write_kernel_h5(
         kernel_group.attrs["spacing"] = float(result.fine_dz)
         kernel_group.attrs["DZ"] = float(cfg.dz)
         kernel_group.attrs["subDiv"] = int(cfg.subdiv)
-        kernel_group.attrs["closure"] = cfg.closure.label
-        kernel_group.attrs["pair_distribution"] = cfg.pair_distribution.label
-        kernel_group.attrs["U"] = float(cfg.U)
+        kernel_group.attrs["kernel_type"] = cfg.kernel_type.value
+        if cfg.kernel_type == KernelType.ORIGINAL:
+            kernel_group.attrs["closure"] = cfg.closure.label  # type: ignore[union-attr]
+            kernel_group.attrs["pair_distribution"] = cfg.pair_distribution.label  # type: ignore[union-attr]
+            kernel_group.attrs["U"] = float(cfg.U)  # type: ignore[arg-type]
+        else:
+            for name in ("a", "b", "c", "alpha", "beta", "gamma"):
+                kernel_group.attrs[name] = float(getattr(cfg, name))
         kernel_group.attrs["cuda_compatible"] = 1
         kernel_group.attrs["generated_by"] = "red_patterns/kernel.py"
 
@@ -430,23 +497,20 @@ def build_export_parser(prog: str = "kernel export") -> argparse.ArgumentParser:
         "--output", required=True, help="Path to the output HDF5 file."
     )
     _ = parser.add_argument(
+        "--kernel-type", required=True, choices=sorted(t.value for t in KernelType)
+    )
+    _ = parser.add_argument(
         "--closure",
-        required=True,
         choices=sorted(t.value for t in ClosureType),
         help="Kernel closure to use.",
     )
     _ = parser.add_argument(
         "--pair-distribution",
-        required=True,
         choices=sorted(t.value for t in PDFType),
         help="Pair distribution model.",
     )
-    _ = parser.add_argument(
-        "--U", required=True, type=float, help="Interaction energy in Joules."
-    )
-    _ = parser.add_argument(
-        "--sigma", required=True, type=float, help="LJ sigma in meters."
-    )
+    _ = parser.add_argument("--U", type=float, help="Interaction energy in Joules.")
+    _ = parser.add_argument("--sigma", type=float, help="LJ sigma in meters.")
     _ = parser.add_argument(
         "--kernel-n", required=True, type=int, help="Odd stencil size."
     )
@@ -469,6 +533,10 @@ def build_export_parser(prog: str = "kernel export") -> argparse.ArgumentParser:
         type=float,
         help="Exponential pair-distribution lambda.",
     )
+    for name in ("a", "b", "c", "alpha", "beta", "gamma"):
+        _ = parser.add_argument(
+            f"--{name}", type=float, help=f"HNC parameter {name} (SI units)."
+        )
     return parser
 
 
@@ -483,10 +551,43 @@ def validate_export_namespace(
         errors.append("--dz must be positive.")
     if args.subdiv <= 0:
         errors.append("--subdiv must be positive.")
-    if args.sigma <= 0.0:
-        errors.append("--sigma must be positive.")
+    if args.kernel_type == KernelType.HNC.value:
+        for name in ("a", "b", "c", "alpha", "beta", "gamma"):
+            if getattr(args, name) is None:
+                errors.append(f"--{name} is required with --kernel-type=hnc.")
+        if args.b == 0:
+            errors.append("--b must be nonzero with --kernel-type=hnc.")
+        for name in ("alpha", "beta", "gamma"):
+            value = getattr(args, name)
+            if value is not None and value <= 0:
+                errors.append(f"--{name} must be positive with --kernel-type=hnc.")
+        if any(
+            getattr(args, name) is not None
+            for name in (
+                "closure",
+                "pair_distribution",
+                "U",
+                "sigma",
+                "g0",
+                "nn_d",
+                "nn_sigma",
+                "lambda_",
+            )
+        ):
+            errors.append("LJ options are not valid with --kernel-type=hnc.")
+    else:
+        for name in ("closure", "pair_distribution", "U", "sigma"):
+            if getattr(args, name) is None:
+                errors.append(
+                    f"--{name.replace('_', '-')} is required with --kernel-type=original."
+                )
+        if args.sigma is not None and args.sigma <= 0:
+            errors.append("--sigma must be positive.")
 
-    if args.pair_distribution == PDFType.NEAREST_NEIGHBOR:
+    if (
+        args.kernel_type == KernelType.ORIGINAL.value
+        and args.pair_distribution == PDFType.NEAREST_NEIGHBOR
+    ):
         if args.g0 is None:
             errors.append("--g0 is required with --pair-distribution=nearest-neighbor.")
         if args.nn_d is None:
@@ -501,7 +602,10 @@ def validate_export_namespace(
             errors.append(
                 "--lambda is only valid with --pair-distribution=exponential."
             )
-    elif args.pair_distribution == PDFType.EXPONENTIAL:
+    elif (
+        args.kernel_type == KernelType.ORIGINAL.value
+        and args.pair_distribution == PDFType.EXPONENTIAL
+    ):
         if args.lambda_ is None:
             errors.append("--lambda is required with --pair-distribution=exponential.")
         if args.U == 0.0:
@@ -511,7 +615,7 @@ def validate_export_namespace(
                 "--g0, --nn-d, and --nn-sigma are only valid with "
                 "--pair-distribution=nearest-neighbor."
             )
-    else:
+    elif args.kernel_type == KernelType.ORIGINAL.value:
         if args.g0 is not None or args.nn_d is not None or args.nn_sigma is not None:
             errors.append(
                 "--g0, --nn-d, and --nn-sigma are only valid with "
@@ -525,20 +629,12 @@ def validate_export_namespace(
     if errors:
         parser.error("\n".join(errors))
 
-    return KernelConfig(
-        output_path=Path(args.output),
-        closure=ClosureType(args.closure),
-        pair_distribution=PDFType(args.pair_distribution),
-        U=args.U,
-        sigma=args.sigma,
-        kernel_n=args.kernel_n,
-        dz=args.dz,
-        subdiv=args.subdiv,
-        g0=args.g0,
-        nn_d=args.nn_d,
-        nn_sigma=args.nn_sigma,
-        lambda_=args.lambda_,
-    )
+    params = {
+        key: value
+        for key, value in vars(args).items()
+        if key != "output" and value is not None
+    }
+    return KernelConfig.from_params(params, args.output)
 
 
 def run_export_cli(argv: list[str], prog: str = "kernel export") -> int:
@@ -594,6 +690,15 @@ def make_kernel_ui(
 
     return mo.ui.dictionary(
         {
+            "kernel_type": mo.ui.tabs(
+                {
+                    KernelType.ORIGINAL.label: mo.md("Lennard-Jones closure kernel"),
+                    KernelType.HNC.label: mo.md(
+                        r"$K(x)=x u_{\mathrm{eff}}(|x|)$ from a Morse potential"
+                    ),
+                },
+                value=KernelType.ORIGINAL.label,
+            ),
             "U": mo.ui.number(
                 start=0.0, stop=1000, step=0.05, value=U, label="$U \\; [10^{-18} J]$"
             ),
@@ -655,6 +760,12 @@ def make_kernel_ui(
                 start=1e-12, step=1e-9, value=dz, label="(coarse) $\\Delta z$"
             ),
             "subdiv": mo.ui.number(start=1, step=1, value=subdiv, label="subDiv"),
+            "a": mo.ui.number(value=1.0, label=r"$a\;[10^{-10}J]$"),
+            "b": mo.ui.number(value=100.0, label=r"$b\;[10^{-18}J]$"),
+            "c": mo.ui.number(value=1.0, label="$c$"),
+            "alpha": mo.ui.number(value=100.0, label=r"$\alpha\;[10^{-18}J]$"),
+            "beta": mo.ui.number(value=6.585467, label=r"$\beta\;[\mu m]$"),
+            "gamma": mo.ui.number(value=1.0, label=r"$\gamma\;[\mu m^{-1}]$"),
         }
     )
 
@@ -675,8 +786,31 @@ def kernel_ui_layout(kernel_ui):
         PDFType.EXPONENTIAL.label: kernel_ui["lambda"],
     }
     active_pdf = kernel_ui["pdf_type"].value
+    type_selector = [mo.md("### Kernel type"), kernel_ui["kernel_type"]]
+    grid = [
+        mo.md("### Stencil grid"),
+        kernel_ui["kernel_n"],
+        kernel_ui["dz"],
+        kernel_ui["subdiv"],
+    ]
+    if kernel_ui["kernel_type"].value == KernelType.HNC.label:
+        return mo.vstack(
+            [
+                *type_selector,
+                mo.md(
+                    r"### HNC effective-Morse parameters\n\n$u_M(r)=\alpha(1-e^{-\gamma(r-\beta)})^2-\alpha$, $u_{\rm eff}=a(e^{-u_M/b}-1)-c u_M$"
+                ),
+                *[
+                    kernel_ui[name]
+                    for name in ("a", "b", "c", "alpha", "beta", "gamma")
+                ],
+                *grid,
+            ],
+            gap=0.5,
+        )
     return mo.vstack(
         [
+            *type_selector,
             mo.md("### Pair potential"),
             kernel_ui["U"],
             kernel_ui["sigma"],
@@ -685,10 +819,7 @@ def kernel_ui_layout(kernel_ui):
             mo.md("### Pair distribution"),
             kernel_ui["pdf_type"],
             pdf_params.get(active_pdf, mo.md("")),
-            mo.md("### Stencil grid"),
-            kernel_ui["kernel_n"],
-            kernel_ui["dz"],
-            kernel_ui["subdiv"],
+            *grid,
         ],
         gap=0.5,
     )
@@ -696,6 +827,7 @@ def kernel_ui_layout(kernel_ui):
 
 _PDF_LABEL_MAP = {t.label: t for t in PDFType}
 _CLOSURE_LABEL_MAP = {t.label: t for t in ClosureType}
+_KERNEL_TYPE_LABEL_MAP = {t.label: t for t in KernelType}
 
 
 def kernel_config_from_ui(
@@ -707,20 +839,36 @@ def kernel_config_from_ui(
     passed through; :func:`build_pair_distribution_function` ignores the inactive
     ones.
     """
-    return KernelConfig(
-        output_path=Path(output_path),
-        closure=_CLOSURE_LABEL_MAP[str(value["closure"])],
-        pair_distribution=_PDF_LABEL_MAP[str(value["pdf_type"])],
-        U=float(value["U"]) * 1e-18,
-        sigma=float(value["sigma"]) * 1e-6,
-        kernel_n=int(value["kernel_n"]),
-        dz=float(value["dz"]),
-        subdiv=int(value["subdiv"]),
-        g0=float(value["g0"]) * 1e7,
-        nn_d=float(value["nn_d"]) * 1e-6,
-        nn_sigma=float(value["nn_sigma"]) * 1e-6,
-        lambda_=float(value["lambda"]),
-    )
+    kernel_type = _KERNEL_TYPE_LABEL_MAP[str(value["kernel_type"])]
+    shared = {
+        "kernel_type": kernel_type.value,
+        "kernel_n": int(value["kernel_n"]),
+        "dz": float(value["dz"]),
+        "subdiv": int(value["subdiv"]),
+    }
+    if kernel_type == KernelType.HNC:
+        params = {
+            **shared,
+            "a": float(value["a"]) * 1e-10,
+            "b": float(value["b"]) * 1e-18,
+            "c": float(value["c"]),
+            "alpha": float(value["alpha"]) * 1e-18,
+            "beta": float(value["beta"]) * 1e-6,
+            "gamma": float(value["gamma"]) * 1e6,
+        }
+    else:
+        params = {
+            **shared,
+            "closure": _CLOSURE_LABEL_MAP[str(value["closure"])].value,
+            "pair_distribution": _PDF_LABEL_MAP[str(value["pdf_type"])].value,
+            "U": float(value["U"]) * 1e-18,
+            "sigma": float(value["sigma"]) * 1e-6,
+            "g0": float(value["g0"]) * 1e7,
+            "nn_d": float(value["nn_d"]) * 1e-6,
+            "nn_sigma": float(value["nn_sigma"]) * 1e-6,
+            "lambda_": float(value["lambda"]),
+        }
+    return KernelConfig.from_params(params, output_path)
 
 
 def plot_kernel(result: KernelResult, cfg: KernelConfig | None = None):
@@ -748,7 +896,9 @@ def plot_kernel(result: KernelResult, cfg: KernelConfig | None = None):
     ax.set_ylabel(r"Kernel $K(x)$", fontsize=12)
     if cfg is not None:
         ax.set_title(
-            f"{cfg.closure.label} ({cfg.pair_distribution.label})",
+            cfg.kernel_type.label
+            if cfg.kernel_type == KernelType.HNC
+            else f"{cfg.closure.label} ({cfg.pair_distribution.label})",  # type: ignore[union-attr]
             fontsize=14,
         )
     ax.grid(True, linestyle=":", alpha=0.7)

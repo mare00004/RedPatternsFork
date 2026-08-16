@@ -4,6 +4,7 @@
 #     "marimo",
 #     "matplotlib==3.10.8",
 #     "numpy==2.4.3",
+#     "pydantic==2.13.4",
 #     "scipy==1.17.1",
 #     "wigglystuff==0.3.3",
 # ]
@@ -38,7 +39,9 @@ with app.setup:
         kernel_config_from_ui,
         kernel_ui_layout,
         latex_scientific,
+        effective_morse_potential,
         lj_potential,
+        morse_potential,
         make_kernel_ui,
         plot_kernel,
         plot_pair_distribution,
@@ -148,8 +151,10 @@ def _():
     ## 1. Configure the kernel
 
     All kernel controls live in a single `mo.ui.dictionary` built by
-    `make_kernel_ui()`. Adjust the pair potential, closure, pair distribution,
-    and stencil grid below.
+    `make_kernel_ui()`. Choose **Original** for the Lennard-Jones closure/PDF
+    construction, or **HNC effective Morse** for the direct kernel
+
+    $$K(x)=x\left[a\left(e^{-u_M(|x|)/b}-1\right)-c\,u_M(|x|)\right].$$
     """)
     return
 
@@ -176,28 +181,36 @@ def cell_kernel_cfg(kernel_ui):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    ## 2. Inspect the pair potential, pair distribution and kernel
+    ## 2. Inspect the source potential, effective potential, and kernel
     """)
     return
 
 
 @app.cell
 def _(kernel_cfg):
-    _r = np.linspace(0.95 * kernel_cfg.sigma, 3 * kernel_cfg.sigma, 500)
-    _u = lj_potential(_r, kernel_cfg.U, kernel_cfg.sigma)
+    if kernel_cfg.kernel_type.value == "hnc":
+        _r = np.linspace(0.01 * kernel_cfg.beta, 3 * kernel_cfg.beta, 500)
+        _u = morse_potential(_r, kernel_cfg.alpha, kernel_cfg.beta, kernel_cfg.gamma)
+        _label = "Morse"
+        _minimum = kernel_cfg.beta
+    else:
+        _r = np.linspace(0.95 * kernel_cfg.sigma, 3 * kernel_cfg.sigma, 500)
+        _u = lj_potential(_r, kernel_cfg.U, kernel_cfg.sigma)
+        _label = "Lennard-Jones"
+        _minimum = kernel_cfg.sigma
 
     _fig, _ax = plt.subplots(figsize=(8, 6))
-    _ax.plot(_r * 1e6, _u * 1e18, color="blue", linewidth=2, label="Lennard-Jones")
+    _ax.plot(_r * 1e6, _u * 1e18, color="blue", linewidth=2, label=_label)
     _ax.axhline(0, color="black", linewidth=1)
     _ax.axvline(
-        kernel_cfg.sigma * 1e6,
+        _minimum * 1e6,
         color="red",
         linestyle="--",
-        label=rf"$\sigma = {kernel_cfg.sigma * 1e6:.3g}\,\mu m$",
+        label=rf"$r_{{min}} = {_minimum * 1e6:.3g}\,\mu m$",
     )
     _ax.set_xlabel(r"Distance $r$ ($\mu$m)", fontsize=12)
     _ax.set_ylabel(r"Potential $u(r)$ ($10^{-18}$ J)", fontsize=12)
-    _ax.set_title("Lennard-Jones potential", fontsize=14)
+    _ax.set_title(f"{_label} potential", fontsize=14)
     _ax.set_ylim(-150, 100)
     _ax.grid(True, linestyle=":", alpha=0.7)
     _ax.legend()
@@ -207,7 +220,30 @@ def _(kernel_cfg):
 
 @app.cell
 def _(kernel_cfg):
-    plot_pair_distribution(kernel_cfg)
+    if kernel_cfg.kernel_type.value == "hnc":
+        _r = np.linspace(0.01 * kernel_cfg.beta, 3 * kernel_cfg.beta, 500)
+        _u_eff = effective_morse_potential(
+            _r,
+            kernel_cfg.a,
+            kernel_cfg.b,
+            kernel_cfg.c,
+            kernel_cfg.alpha,
+            kernel_cfg.beta,
+            kernel_cfg.gamma,
+        )
+        _fig, _ax = plt.subplots(figsize=(8, 6))
+        _ax.plot(_r * 1e6, _u_eff * 1e18, color="green", linewidth=2)
+        _ax.axhline(0, color="black", linewidth=1)
+        _ax.set(xlabel=r"Distance $r$ ($\mu$m)", ylabel=r"$u_{\mathrm{eff}}(r)$ ($10^{-18}$ J)", title="HNC effective potential")
+        _ax.grid(True, linestyle=":", alpha=0.7)
+        _fig
+    return
+
+
+@app.cell
+def _(kernel_cfg):
+    if kernel_cfg.kernel_type.value == "original":
+        plot_pair_distribution(kernel_cfg)
     return
 
 
