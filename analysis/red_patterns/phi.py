@@ -1260,12 +1260,10 @@ def make_phi_ui(*, psi_avg: float = DEFAULT_PSI_AVG):
     return mo.ui.dictionary(
         {
             "common": mo.ui.dictionary(_common_phi_ui_controls(psi_avg=psi_avg)),
-            "phi_type": mo.ui.tabs(
-                {
-                    phi_type.label: mo.md(field_cls.type_description())
-                    for phi_type, field_cls in PHI_FIELD_TYPES.items()
-                },
+            "phi_type": mo.ui.dropdown(
+                options=[phi_type.label for phi_type in PHI_FIELD_TYPES],
                 value=PhiType.GAUSSIAN.label,
+                label="Initial phi type",
             ),
             # Marimo dictionaries are UIElements at runtime, but its public
             # type information does not model nested dictionaries as such.

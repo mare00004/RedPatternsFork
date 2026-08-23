@@ -97,7 +97,7 @@ For this command, the resulting object is a
 ```python
 {
     "common": mo.ui.dictionary(...),
-    "phi_type": mo.ui.tabs(...),
+    "phi_type": mo.ui.dropdown(...),
     "variants": mo.ui.dictionary(...),
 }
 ```
