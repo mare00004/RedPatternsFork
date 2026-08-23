@@ -50,6 +50,7 @@ from .models import (
     PhiParamsBase,
     SingleBinPhiParams,
     SingleModeSmoothHomogeneousPhiParams,
+    SingleModeLinearFullRidgePhiParams,
     SmoothHomogeneousPhiParams,
 )
 from .types import PhiType
@@ -1035,6 +1036,82 @@ class LinearFullRidgePhi(PhiField):
         )
 
 
+class SingleModeLinearFullRidgePhi(LinearFullRidgePhi):
+    phi_type = PhiType.SINGLE_MODE_LINEAR_FULL_RIDGE
+    params_model = SingleModeLinearFullRidgePhiParams
+
+    def __init__(self, *, amplitude: float, mode_number: int, **grid: Any) -> None:
+        super().__init__(**grid)
+        self.amplitude = float(amplitude)
+        self.mode_number = int(mode_number)
+
+    @classmethod
+    def _per_type_from_values(cls, values: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "amplitude": values["amplitude"],
+            "mode_number": values["mode_number"],
+        }
+
+    def build(self, rho: Array1F, z: Array1F) -> Array2F:
+        return perturb_phi_single_cosine_z(
+            super().build(rho, z),
+            z,
+            self.wing_z,
+            amplitude=self.amplitude,
+            mode_number=self.mode_number,
+        )
+
+    def write_metadata(self, group: h5py.Group) -> None:
+        group.attrs["amplitude"] = self.amplitude
+        group.attrs["mode_number"] = self.mode_number
+
+    def summary(self) -> list[str]:
+        return [
+            f"amplitude={self.amplitude:.6e}",
+            f"mode_number={self.mode_number}",
+        ]
+
+    @classmethod
+    def add_parser_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        _add_argument_if_missing(
+            parser, "--amplitude", type=float, default=argparse.SUPPRESS
+        )
+        _add_argument_if_missing(
+            parser, "--mode-number", type=int, default=argparse.SUPPRESS
+        )
+
+    @classmethod
+    def make_ui_controls(cls) -> dict[str, Any]:
+        import marimo as mo
+
+        return {
+            "amplitude": mo.ui.number(
+                start=0, stop=1, step=1e-6, value=1e-3, label="Amplitude"
+            ),
+            "mode_number": mo.ui.number(
+                start=0, stop=1023, step=1, value=1, label="Mode number"
+            ),
+        }
+
+    @classmethod
+    def ui_layout(cls, controls: Any) -> Any:
+        import marimo as mo
+
+        return mo.vstack(
+            [mo.md("### Single-mode linear gradient diagonal parameters"), controls]
+        )
+
+    @classmethod
+    def sweep_param_names(cls) -> tuple[str, ...]:
+        return ("amplitude", "mode_number")
+
+    @classmethod
+    def type_description(cls) -> str:
+        return (
+            r"$\varphi_{ridge}(\rho,z)[1 + A\cos(m\pi x)]$ on the active z domain"
+        )
+
+
 PHI_FIELD_TYPES: dict[PhiType, type[PhiField]] = {
     PhiType.GAUSSIAN: GaussianPhi,
     PhiType.GAUSSIAN_BLOB: GaussianBlobPhi,
@@ -1044,6 +1121,7 @@ PHI_FIELD_TYPES: dict[PhiType, type[PhiField]] = {
     PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS: SingleModeSmoothHomogeneousPhi,
     PhiType.SINGLE_BIN: SingleBinPhi,
     PhiType.LINEAR_FULL_RIDGE: LinearFullRidgePhi,
+    PhiType.SINGLE_MODE_LINEAR_FULL_RIDGE: SingleModeLinearFullRidgePhi,
 }
 
 

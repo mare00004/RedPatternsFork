@@ -105,6 +105,14 @@ class LinearFullRidgePhiParams(PhiParamsBase):
     phi_type: Literal[PhiType.LINEAR_FULL_RIDGE] = PhiType.LINEAR_FULL_RIDGE
 
 
+class SingleModeLinearFullRidgePhiParams(PhiParamsBase):
+    phi_type: Literal[PhiType.SINGLE_MODE_LINEAR_FULL_RIDGE] = (
+        PhiType.SINGLE_MODE_LINEAR_FULL_RIDGE
+    )
+    amplitude: float
+    mode_number: Annotated[int, Field(ge=0)]
+
+
 PhiParams = Annotated[
     GaussianPhiParams
     | GaussianBlobPhiParams
@@ -113,7 +121,8 @@ PhiParams = Annotated[
     | PerturbedSmoothHomogeneousPhiParams
     | SingleModeSmoothHomogeneousPhiParams
     | SingleBinPhiParams
-    | LinearFullRidgePhiParams,
+    | LinearFullRidgePhiParams
+    | SingleModeLinearFullRidgePhiParams,
     Field(discriminator="phi_type"),
 ]
 

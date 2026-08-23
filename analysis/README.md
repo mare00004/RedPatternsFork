@@ -168,3 +168,26 @@ uv run analysis/phi_init.py export \
   --phi-type linear_full_ridge \
   --psi-avg 0.02
 ```
+
+## Single-mode Linear Gradient Diagonal phi
+
+`single_mode_linear_full_ridge` starts from `linear_full_ridge` and applies
+the same active-domain longitudinal cosine perturbation as
+`single_mode_smooth_homogeneous`:
+
+\[
+\varphi(\rho,z)=\varphi_{\rm ridge}(\rho,z)
+\left[1+\epsilon\cos(m\pi x)\right].
+\]
+
+It accepts `amplitude` (`\epsilon`) and nonnegative `mode_number` (`m`), then
+uses the standard wing masking and `psi_avg` normalization pipeline.
+
+```bash
+uv run analysis/phi_init.py export \
+  --output initial_phi.h5 \
+  --phi-type single_mode_linear_full_ridge \
+  --psi-avg 0.02 \
+  --amplitude 0.001 \
+  --mode-number 7
+```
