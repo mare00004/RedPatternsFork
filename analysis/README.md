@@ -152,3 +152,19 @@ uv run analysis/phi_init.py export \
   --amplitude 0.001 \
   --mode-number 7
 ```
+
+## Linear Gradient Diagonal phi
+
+`linear_full_ridge` (displayed as **Linear Gradient Diagonal**) is the
+equilibrium state of the CUDA `LINEAR_FULL` gradient. It places one nonzero
+rho bin in every z column along the mirrored cell-center line, so rho decreases
+as z increases. It shifts the line by the configured `rho_center` and selects
+the nearest rho bin. The usual wing masking and `psi_avg` normalization still
+apply.
+
+```bash
+uv run analysis/phi_init.py export \
+  --output initial_phi.h5 \
+  --phi-type linear_full_ridge \
+  --psi-avg 0.02
+```

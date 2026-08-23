@@ -33,6 +33,7 @@ class PhiType(StrEnum):
     PERTURBED_SMOOTH_HOMOGENEOUS = "perturbed_smooth_homogeneous"
     SINGLE_MODE_SMOOTH_HOMOGENEOUS = "single_mode_smooth_homogeneous"
     SINGLE_BIN = "single_bin"
+    LINEAR_FULL_RIDGE = "linear_full_ridge"
 
     @property
     def label(self) -> str:
@@ -81,6 +82,7 @@ _PHI_TYPE_LABELS = {
     PhiType.PERTURBED_SMOOTH_HOMOGENEOUS: "Perturbed Smooth Homogeneous",
     PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS: "Single-mode Smooth Homogeneous",
     PhiType.SINGLE_BIN: "Single Bin",
+    PhiType.LINEAR_FULL_RIDGE: "Linear Gradient Diagonal",
 }
 
 _CLOSURE_TYPE_LABELS = {

@@ -101,6 +101,10 @@ class SingleBinPhiParams(PhiParamsBase):
     single_bin_idx: int
 
 
+class LinearFullRidgePhiParams(PhiParamsBase):
+    phi_type: Literal[PhiType.LINEAR_FULL_RIDGE] = PhiType.LINEAR_FULL_RIDGE
+
+
 PhiParams = Annotated[
     GaussianPhiParams
     | GaussianBlobPhiParams
@@ -108,7 +112,8 @@ PhiParams = Annotated[
     | SmoothHomogeneousPhiParams
     | PerturbedSmoothHomogeneousPhiParams
     | SingleModeSmoothHomogeneousPhiParams
-    | SingleBinPhiParams,
+    | SingleBinPhiParams
+    | LinearFullRidgePhiParams,
     Field(discriminator="phi_type"),
 ]
 

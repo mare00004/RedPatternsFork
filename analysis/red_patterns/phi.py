@@ -45,6 +45,7 @@ from .models import (
     GaussianBlobPhiParams,
     GaussianPhiParams,
     HomogeneousPhiParams,
+    LinearFullRidgePhiParams,
     PerturbedSmoothHomogeneousPhiParams,
     PhiParamsBase,
     SingleBinPhiParams,
@@ -264,6 +265,43 @@ def phi_single_bin(
     N_rho, N_z = rho.shape[0], z.shape[0]
     phi = np.zeros((N_rho, N_z), dtype=np.float64)
     phi[bin_idx, :] = psi_avg
+    return phi
+
+
+def phi_linear_full_ridge(
+    rho: Array1F,
+    z: Array1F,
+    psi_avg: float,
+    rho_center: float,
+) -> Array2F:
+    r"""One-bin ridge following CUDA's ``LINEAR_FULL`` gradient.
+
+    This initial phi should be the equilibrium state of the ``LINEAR_FULL`` gradient
+
+    The CUDA implementation uses cell centers and maps its full gradient from
+    ``-15`` to ``+15`` g/L relative to the central density. This generator
+    evaluates those same centers, shifts them by ``rho_center``, and places
+    each column in the nearest exported rho bin.
+    """
+    N_rho, N_z = rho.shape[0], z.shape[0]
+    if N_z == 0:
+        return np.zeros((N_rho, 0), dtype=np.float64)
+
+    # In ``p_func``: DR = 30 / N and z is the cell center.  Substituting the
+    # simulator's full-domain geometry yields this density for each z index.
+    z_indices = np.arange(N_z, dtype=np.float64)
+    gradient_rho = rho_center + 15.0 - 30.0 * (z_indices + 0.5) / N_z
+    insertion = np.searchsorted(rho, gradient_rho, side="left")
+    upper = np.clip(insertion, 0, N_rho - 1)
+    lower = np.clip(insertion - 1, 0, N_rho - 1)
+    rho_indices = np.where(
+        np.abs(rho[lower] - gradient_rho) <= np.abs(rho[upper] - gradient_rho),
+        lower,
+        upper,
+    )
+
+    phi = np.zeros((N_rho, N_z), dtype=np.float64)
+    phi[rho_indices, np.arange(N_z)] = psi_avg
     return phi
 
 
@@ -982,6 +1020,21 @@ class SingleBinPhi(PhiField):
         return r"$\varphi(\rho_i,z)=\langle\psi\rangle$ for one ρ bin"
 
 
+class LinearFullRidgePhi(PhiField):
+    phi_type = PhiType.LINEAR_FULL_RIDGE
+    params_model = LinearFullRidgePhiParams
+
+    def build(self, rho: Array1F, z: Array1F) -> Array2F:
+        return phi_linear_full_ridge(rho, z, self.psi_avg, self.rho_center)
+
+    @classmethod
+    def type_description(cls) -> str:
+        return (
+            r"$\varphi(\rho,z)$ on the one-bin diagonal: equilibrium state "
+            r"of the LINEAR-FULL gradient"
+        )
+
+
 PHI_FIELD_TYPES: dict[PhiType, type[PhiField]] = {
     PhiType.GAUSSIAN: GaussianPhi,
     PhiType.GAUSSIAN_BLOB: GaussianBlobPhi,
@@ -990,6 +1043,7 @@ PHI_FIELD_TYPES: dict[PhiType, type[PhiField]] = {
     PhiType.PERTURBED_SMOOTH_HOMOGENEOUS: PerturbedSmoothHomogeneousPhi,
     PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS: SingleModeSmoothHomogeneousPhi,
     PhiType.SINGLE_BIN: SingleBinPhi,
+    PhiType.LINEAR_FULL_RIDGE: LinearFullRidgePhi,
 }
 
 

@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from red_patterns.models import (
     GaussianPhiParams,
     HomogeneousPhiParams,
+    LinearFullRidgePhiParams,
     PHI_PARAMS_ADAPTER,
     PerturbedSmoothHomogeneousPhiParams,
     PhiGenerateParams,
@@ -68,6 +69,7 @@ PER_TYPE_ARGS = {
         "mode_number": 7,
     },
     PhiType.SINGLE_BIN: {"single_bin_idx": 100},
+    PhiType.LINEAR_FULL_RIDGE: {},
 }
 
 
@@ -105,6 +107,10 @@ class PhiParamsUnionTests(unittest.TestCase):
         self.assertIsInstance(
             PHI_PARAMS_ADAPTER.validate_python(params_for(PhiType.SINGLE_BIN)),
             SingleBinPhiParams,
+        )
+        self.assertIsInstance(
+            PHI_PARAMS_ADAPTER.validate_python(params_for(PhiType.LINEAR_FULL_RIDGE)),
+            LinearFullRidgePhiParams,
         )
         self.assertIsInstance(
             PHI_PARAMS_ADAPTER.validate_python(
@@ -227,6 +233,21 @@ class PhiComputeTests(unittest.TestCase):
         payload["mode_number"] = 0
         self.assertEqual(PHI_PARAMS_ADAPTER.validate_python(payload).mode_number, 0)
 
+    def test_linear_full_ridge_tracks_the_simulator_gradient(self):
+        field = phi_field_from_params(params_for(PhiType.LINEAR_FULL_RIDGE))
+        result = field.compute()
+        active = slice(field.wing_z, field.N - field.wing_z)
+
+        active_phi = result.phi_values[:, active]
+        self.assertTrue(np.all(np.count_nonzero(active_phi, axis=0) == 1))
+        expected_indices = np.arange(
+            field.N - field.wing_z - 1, field.wing_z - 1, -1
+        )
+        np.testing.assert_array_equal(np.argmax(active_phi, axis=0), expected_indices)
+        np.testing.assert_allclose(result.phi_values[:, : field.wing_z], 0.0)
+        np.testing.assert_allclose(result.phi_values[:, field.N - field.wing_z :], 0.0)
+        self.assertAlmostEqual(result.phi_values.sum(axis=0)[active].mean(), field.psi_avg)
+
 
 class PhiSweepRowsTests(unittest.TestCase):
     def test_all_phi_types_sweep_to_valid_params(self):
@@ -280,6 +301,18 @@ class PhiCliTests(unittest.TestCase):
         field = validate_export_namespace(parser, args)
         self.assertEqual(field.phi_type, PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS)
         self.assertEqual(field.mode_number, 7)
+
+    def test_registry_builds_linear_full_ridge_cli(self):
+        parser = build_export_parser()
+        args = parser.parse_args(
+            [
+                "--output", "phi.h5",
+                "--phi-type", PhiType.LINEAR_FULL_RIDGE.value,
+                "--psi-avg", "0.02",
+            ]
+        )
+        field = validate_export_namespace(parser, args)
+        self.assertEqual(field.phi_type, PhiType.LINEAR_FULL_RIDGE)
 
     def test_cli_rejects_an_option_from_another_type(self):
         parser = build_export_parser()
