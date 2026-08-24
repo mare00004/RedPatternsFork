@@ -607,11 +607,7 @@ def _(dct_amplitudes, dct_mode_selector, plt, selected_n, time):
 
 
 @app.cell
-def _(analysis_mode, dct_amplitudes, dct_mode_selector, fit_linear_plateau, mo, plt, relative_log_amplitude, selected_n, time):
-    mo.stop(
-        analysis_mode != "one_sided",
-        mo.md(r"$R_{m,n}(t)$ is shown only for one-sided analysis."),
-    )
+def _(dct_amplitudes, dct_mode_selector, fit_linear_plateau, plt, relative_log_amplitude, selected_n, time):
     _mode = int(dct_mode_selector.value)
     _amplitudes = dct_amplitudes[:, _mode]
     _relative_log_amplitude, _error = relative_log_amplitude(_amplitudes)
