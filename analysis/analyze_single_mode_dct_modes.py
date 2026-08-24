@@ -50,10 +50,11 @@ def _():
     mo.md(r"""
     # Single-mode DCT-II growth analysis
 
-    Select a Taylor sweep containing one `smooth_homogeneous` reference and
-    `single_mode_smooth_homogeneous` runs. The notebook subtracts the reference
-    from the selected injected mode $n$, computes signed spatial DCT-II
-    coefficients $A_{m,n}(t)$, and fits every coefficient to
+    Select a Taylor sweep containing either a `smooth_homogeneous` reference
+    with `single_mode_smooth_homogeneous` runs, or a `linear_full_ridge`
+    reference with `single_mode_linear_full_ridge` runs. The notebook subtracts
+    the matching reference from the selected injected mode $n$, computes signed
+    spatial DCT-II coefficients $A_{m,n}(t)$, and fits every coefficient to
     $C + A_0 e^{\gamma t}$.
     """)
     return
@@ -99,7 +100,13 @@ def _(Path):
 @app.cell
 def _(Path, TaylorRun, load_runs_jsonl, np, pd):
     def scan_sweep(sweep_dir: Path) -> pd.DataFrame:
-        """Return smooth-reference and single-mode Taylor runs from a sweep."""
+        """Return compatible base and single-mode Taylor runs from a sweep."""
+        compatible_phi_types = {
+            PhiType.SMOOTH_HOMOGENEOUS.value,
+            PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS.value,
+            PhiType.LINEAR_FULL_RIDGE.value,
+            PhiType.SINGLE_MODE_LINEAR_FULL_RIDGE.value,
+        }
         rows: list[dict[str, object]] = []
         for run in load_runs_jsonl(sweep_dir / "runs.jsonl"):
             if not isinstance(run, TaylorRun):
@@ -107,10 +114,7 @@ def _(Path, TaylorRun, load_runs_jsonl, np, pd):
 
             phi_params = run.phi.params.model_dump(mode="json")
             phi_type = str(phi_params.pop("phi_type"))
-            if phi_type not in {
-                PhiType.SMOOTH_HOMOGENEOUS.value,
-                PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS.value,
-            }:
+            if phi_type not in compatible_phi_types:
                 continue
 
             amplitude = phi_params.pop("amplitude", None)
@@ -142,98 +146,113 @@ def _(Path, TaylorRun, load_runs_jsonl, np, pd):
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         candidate_columns = [
             "NU", "MU", "N", "T", "DT", "storeTime", "gradient", "shared_phi",
-            "base_id", "mode_numbers", "mode_ids", "negative_mode_ids", "amplitudes",
+            "base_phi_type", "mode_phi_type", "base_id", "mode_numbers", "mode_ids",
+            "negative_mode_ids", "amplitudes",
         ]
         diagnostic_columns = ["NU", "MU", "status", "details"]
         if sweep_df.empty:
             return pd.DataFrame(columns=candidate_columns), pd.DataFrame(columns=diagnostic_columns)
 
         setup_columns = ["NU", "MU", "N", "T", "DT", "storeTime", "gradient", "shared_phi"]
+        phi_families = (
+            (
+                PhiType.SMOOTH_HOMOGENEOUS.value,
+                PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS.value,
+            ),
+            (
+                PhiType.LINEAR_FULL_RIDGE.value,
+                PhiType.SINGLE_MODE_LINEAR_FULL_RIDGE.value,
+            ),
+        )
         candidates: list[dict[str, object]] = []
         diagnostics: list[dict[str, object]] = []
         for setup, group in sweep_df.groupby(setup_columns, sort=True, dropna=False):
             setup_values = dict(zip(setup_columns, setup, strict=True))
-            base = group[group["phi_type"] == PhiType.SMOOTH_HOMOGENEOUS.value]
-            modes = group[group["phi_type"] == PhiType.SINGLE_MODE_SMOOTH_HOMOGENEOUS.value]
             prefix = {"NU": float(setup_values["NU"]), "MU": float(setup_values["MU"])}
+            for base_phi_type, mode_phi_type in phi_families:
+                family_group = group[group["phi_type"].isin((base_phi_type, mode_phi_type))]
+                base = family_group[family_group["phi_type"] == base_phi_type]
+                modes = family_group[family_group["phi_type"] == mode_phi_type]
+                family_prefix = f"{base_phi_type} / {mode_phi_type}"
 
-            if modes.empty:
-                diagnostics.append({**prefix, "status": "invalid", "details": "No single-mode runs found."})
-                continue
-            missing = group.loc[~group["h5_exists"], "run_id"].tolist()
-            if missing:
-                diagnostics.append({**prefix, "status": "incomplete", "details": "Missing run.h5 for: " + ", ".join(missing)})
-                continue
+                if modes.empty:
+                    continue
+                missing = family_group.loc[~family_group["h5_exists"], "run_id"].tolist()
+                if missing:
+                    diagnostics.append({**prefix, "status": "incomplete", "details": f"{family_prefix}: missing run.h5 for " + ", ".join(missing)})
+                    continue
 
-            if modes["mode_number"].isna().any() or modes["amplitude"].isna().any():
-                diagnostics.append({**prefix, "status": "invalid", "details": "Every single-mode run needs a mode number and amplitude."})
-                continue
+                if modes["mode_number"].isna().any() or modes["amplitude"].isna().any():
+                    diagnostics.append({**prefix, "status": "invalid", "details": f"{family_prefix}: every single-mode run needs a mode number and amplitude."})
+                    continue
 
-            if analysis_mode == "one_sided":
-                if len(base) != 1:
-                    diagnostics.append({**prefix, "status": "invalid", "details": f"Expected one smooth reference; found {len(base)}."})
-                    continue
-                if (modes["amplitude"] <= 0.0).any():
-                    diagnostics.append({**prefix, "status": "invalid", "details": "One-sided analysis requires exactly positive single-mode amplitudes."})
-                    continue
-                if modes["mode_number"].duplicated().any():
-                    diagnostics.append({**prefix, "status": "invalid", "details": "Mode numbers must be unique."})
-                    continue
-                positive_modes = modes.sort_values("mode_number", kind="stable")
-                base_id: str | None = str(base.iloc[0]["run_id"])
-                negative_ids = tuple(None for _ in range(len(positive_modes)))
-            elif analysis_mode == "paired":
-                if (modes["amplitude"] == 0.0).any():
-                    diagnostics.append({**prefix, "status": "invalid", "details": "Paired analysis does not allow zero amplitudes."})
-                    continue
-                positive_rows: list[pd.Series] = []
-                negative_rows: list[pd.Series] = []
-                pairing_error: str | None = None
-                for mode_number, mode_group in modes.groupby("mode_number", sort=True):
-                    positive = mode_group[mode_group["amplitude"] > 0.0]
-                    negative = mode_group[mode_group["amplitude"] < 0.0]
-                    if len(positive) != 1 or len(negative) != 1:
-                        pairing_error = (
-                            f"Mode n={int(mode_number)} needs exactly one positive and one negative run; "
-                            f"found {len(positive)} positive and {len(negative)} negative."
-                        )
-                        break
-                    positive_amplitude = float(positive.iloc[0]["amplitude"])
-                    negative_amplitude = float(negative.iloc[0]["amplitude"])
-                    if not np.isclose(positive_amplitude, -negative_amplitude, rtol=1e-12, atol=0.0):
-                        pairing_error = (
-                            f"Mode n={int(mode_number)} amplitudes must have equal magnitude; "
-                            f"found {positive_amplitude:.6g} and {negative_amplitude:.6g}."
-                        )
-                        break
-                    positive_rows.append(positive.iloc[0])
-                    negative_rows.append(negative.iloc[0])
-                if pairing_error is not None:
-                    diagnostics.append({**prefix, "status": "invalid", "details": pairing_error})
-                    continue
-                positive_modes = pd.DataFrame(positive_rows).sort_values("mode_number", kind="stable")
-                negative_modes = pd.DataFrame(negative_rows).sort_values("mode_number", kind="stable")
-                base_id = None
-                negative_ids = tuple(str(value) for value in negative_modes["run_id"])
-            else:
-                raise ValueError(f"Unknown analysis mode: {analysis_mode}.")
+                if analysis_mode == "one_sided":
+                    if len(base) != 1:
+                        diagnostics.append({**prefix, "status": "invalid", "details": f"{family_prefix}: expected one matching reference; found {len(base)}."})
+                        continue
+                    if (modes["amplitude"] <= 0.0).any():
+                        diagnostics.append({**prefix, "status": "invalid", "details": "One-sided analysis requires exactly positive single-mode amplitudes."})
+                        continue
+                    if modes["mode_number"].duplicated().any():
+                        diagnostics.append({**prefix, "status": "invalid", "details": "Mode numbers must be unique."})
+                        continue
+                    positive_modes = modes.sort_values("mode_number", kind="stable")
+                    base_id: str | None = str(base.iloc[0]["run_id"])
+                    negative_ids = tuple(None for _ in range(len(positive_modes)))
+                elif analysis_mode == "paired":
+                    if (modes["amplitude"] == 0.0).any():
+                        diagnostics.append({**prefix, "status": "invalid", "details": "Paired analysis does not allow zero amplitudes."})
+                        continue
+                    positive_rows: list[pd.Series] = []
+                    negative_rows: list[pd.Series] = []
+                    pairing_error: str | None = None
+                    for mode_number, mode_group in modes.groupby("mode_number", sort=True):
+                        positive = mode_group[mode_group["amplitude"] > 0.0]
+                        negative = mode_group[mode_group["amplitude"] < 0.0]
+                        if len(positive) != 1 or len(negative) != 1:
+                            pairing_error = (
+                                f"Mode n={int(mode_number)} needs exactly one positive and one negative run; "
+                                f"found {len(positive)} positive and {len(negative)} negative."
+                            )
+                            break
+                        positive_amplitude = float(positive.iloc[0]["amplitude"])
+                        negative_amplitude = float(negative.iloc[0]["amplitude"])
+                        if not np.isclose(positive_amplitude, -negative_amplitude, rtol=1e-12, atol=0.0):
+                            pairing_error = (
+                                f"Mode n={int(mode_number)} amplitudes must have equal magnitude; "
+                                f"found {positive_amplitude:.6g} and {negative_amplitude:.6g}."
+                            )
+                            break
+                        positive_rows.append(positive.iloc[0])
+                        negative_rows.append(negative.iloc[0])
+                    if pairing_error is not None:
+                        diagnostics.append({**prefix, "status": "invalid", "details": f"{family_prefix}: {pairing_error}"})
+                        continue
+                    positive_modes = pd.DataFrame(positive_rows).sort_values("mode_number", kind="stable")
+                    negative_modes = pd.DataFrame(negative_rows).sort_values("mode_number", kind="stable")
+                    base_id = None
+                    negative_ids = tuple(str(value) for value in negative_modes["run_id"])
+                else:
+                    raise ValueError(f"Unknown analysis mode: {analysis_mode}.")
 
-            candidates.append(
-                {
-                    **setup_values,
-                    "base_id": base_id,
-                    "mode_numbers": tuple(int(value) for value in positive_modes["mode_number"]),
-                    "mode_ids": tuple(str(value) for value in positive_modes["run_id"]),
-                    "negative_mode_ids": negative_ids,
-                    "amplitudes": tuple(float(value) for value in positive_modes["amplitude"]),
-                }
-            )
-            details = (
-                f"Reference plus {len(positive_modes)} positive single-mode runs."
-                if analysis_mode == "one_sided"
-                else f"{len(positive_modes)} matched positive/negative single-mode pairs."
-            )
-            diagnostics.append({**prefix, "status": "ready", "details": details})
+                candidates.append(
+                    {
+                        **setup_values,
+                        "base_phi_type": base_phi_type,
+                        "mode_phi_type": mode_phi_type,
+                        "base_id": base_id,
+                        "mode_numbers": tuple(int(value) for value in positive_modes["mode_number"]),
+                        "mode_ids": tuple(str(value) for value in positive_modes["run_id"]),
+                        "negative_mode_ids": negative_ids,
+                        "amplitudes": tuple(float(value) for value in positive_modes["amplitude"]),
+                    }
+                )
+                details = (
+                    f"{family_prefix}: reference plus {len(positive_modes)} positive single-mode runs."
+                    if analysis_mode == "one_sided"
+                    else f"{family_prefix}: {len(positive_modes)} matched positive/negative single-mode pairs."
+                )
+                diagnostics.append({**prefix, "status": "ready", "details": details})
 
         return pd.DataFrame(candidates, columns=candidate_columns), pd.DataFrame(diagnostics, columns=diagnostic_columns)
 
@@ -253,7 +272,15 @@ def _(Path, analysis_mode, mo, pd, scan_sweep, ui_sweep_dir, validate_sweeps):
         try:
             sweep_df = scan_sweep(sweep_dir)
             candidate_df, diagnostics_df = validate_sweeps(sweep_df, analysis_mode)
-            scan_status = mo.md(f"Found {len(sweep_df)} relevant Taylor runs and {len(candidate_df)} compatible setups for {analysis_mode} analysis in {sweep_dir}.")
+            families = {
+                f"{row.base_phi_type} / {row.mode_phi_type}"
+                for _, row in candidate_df.iterrows()
+            }
+            family_text = ", ".join(sorted(families)) if families else "no compatible phi family"
+            scan_status = mo.md(
+                f"Found {len(sweep_df)} relevant Taylor runs and {len(candidate_df)} compatible "
+                f"setups for {analysis_mode} analysis in {sweep_dir}. Detected: {family_text}."
+            )
         except ValueError as exc:
             sweep_df = pd.DataFrame()
             candidate_df = pd.DataFrame()
@@ -265,7 +292,7 @@ def _(Path, analysis_mode, mo, pd, scan_sweep, ui_sweep_dir, validate_sweeps):
 
 @app.cell
 def _(diagnostics_df, mo):
-    mo.stop(diagnostics_df.empty, mo.md("No smooth/single-mode Taylor candidates found."))
+    mo.stop(diagnostics_df.empty, mo.md("No compatible base/single-mode Taylor candidates found."))
     mo.ui.table(data=diagnostics_df, selection=None, pagination=True)
     return
 
@@ -274,7 +301,10 @@ def _(diagnostics_df, mo):
 def _(candidate_df, mo):
     mo.stop(candidate_df.empty, mo.md("No complete compatible single-mode setups are available yet."))
     options = {
-        f"ν={row.NU:.6e}, μ={row.MU:.6e} (N={row.N}, T={row['T']:g})": index
+        (
+            f"{row.base_phi_type} / {row.mode_phi_type}; "
+            f"ν={row.NU:.6e}, μ={row.MU:.6e} (N={row.N}, T={row['T']:g})"
+        ): index
         for index, row in candidate_df.iterrows()
     }
     pair_selector = mo.ui.dropdown(options=options, value=next(iter(options)), label=r"Select $(\nu, \mu)$ setup")
@@ -357,6 +387,7 @@ def _(analysis_mode, delta_psi, mo, selected_amplitude, selected_n, selected_neg
         f"## Selected run\n\n"
         f"$\\nu={selected_setup['NU']:.6e}$, $\\mu={selected_setup['MU']:.6e}$  \n"
         f"Analysis mode: `{analysis_mode}`  \n"
+        f"Initial-phi family: `{selected_setup['base_phi_type']}` $\\to$ `{selected_setup['mode_phi_type']}`  \n"
         f"{response_text}  \n"
         f"Positive single-mode run: `{selected_run_id}`; injected $n={selected_n}$; amplitude: `{selected_amplitude:.6g}`  \n"
         f"Saved frames: `{delta_psi.shape[0]}`; spatial points: `{z.size}`."
@@ -376,7 +407,10 @@ def _(analysis_mode, base_run, get_rbc_cmap, mo, plot_psi, selected_setup):
         vmin=0.0,
         vmax=100.0,
         cmap=get_rbc_cmap(),
-        title=rf"Smooth reference $\psi(z,t)$ ($\nu={selected_setup['NU']:.3e}$, $\mu={selected_setup['MU']:.3e}$)",
+        title=(
+            rf"{selected_setup['base_phi_type']} reference $\psi(z,t)$ "
+            rf"($\nu={selected_setup['NU']:.3e}$, $\mu={selected_setup['MU']:.3e}$)"
+        ),
     )
     base_plot
     return
@@ -389,7 +423,10 @@ def _(get_rbc_cmap, mode_run, plot_psi, selected_n, selected_setup):
         vmin=0.0,
         vmax=100.0,
         cmap=get_rbc_cmap(),
-        title=rf"Single-mode $\psi(z,t)$ for injected $n={selected_n}$ ($\nu={selected_setup['NU']:.3e}$, $\mu={selected_setup['MU']:.3e}$)",
+        title=(
+            rf"{selected_setup['mode_phi_type']} $\psi(z,t)$ for injected $n={selected_n} "
+            rf"($\nu={selected_setup['NU']:.3e}$, $\mu={selected_setup['MU']:.3e}$)"
+        ),
     )
     mode_plot
     return
