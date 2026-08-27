@@ -55,7 +55,7 @@ with app.setup:
         ),
     }
 
-    from red_patterns import RunData, find_peaks, get_rbc_cmap, plot_psi
+    from red_patterns import RunData, get_rbc_cmap, plot_psi
     from red_patterns.kernel import (
         compute_kernel,
         kernel_config_from_ui,
@@ -303,17 +303,22 @@ def cell_run(
     run_store_fields = STORE_PLOT_OPTIONS[ui_store_fields.value]
     if not ui_run_button.value:
         run_h5 = None
+        run_no_interaction_h5 = None
         _result = mo.md("Configure the run and click the button to launch.")
     elif not ui_binary.value:
         run_h5 = None
+        run_no_interaction_h5 = None
         _result = mo.md("Select a simulation binary first.")
     else:
         _binary = Path(ui_binary.value[0].path)
         _work = Path(tempfile.mkdtemp(prefix="workbench_"))
         _phi_path = _work / "phi.h5"
         _kernel_path = _work / "kernel.h5"
+        _zero_kernel_path = _work / "kernel-no-interaction.h5"
         _run_dir = _work / "run"
+        _run_no_interaction_dir = _work / "run-no-interaction"
         _run_dir.mkdir(parents=True, exist_ok=True)
+        _run_no_interaction_dir.mkdir(parents=True, exist_ok=True)
 
         # Write inputs directly via the library (no `uv run ... export` hops).
         from dataclasses import replace as _replace
@@ -321,6 +326,13 @@ def cell_run(
         phi_cfg.write_phi_h5(_phi_path, phi_result)
         write_kernel_h5(
             _kernel_path, kernel_result, _replace(kernel_cfg, output_path=_kernel_path)
+        )
+        # The convolution baseline has the identical stencil geometry and HDF5
+        # metadata, but no interaction force at any offset.
+        write_kernel_h5(
+            _zero_kernel_path,
+            _replace(kernel_result, K_sample=np.zeros_like(kernel_result.K_sample)),
+            _replace(kernel_cfg, output_path=_zero_kernel_path),
         )
 
         # In Taylor mode, ν/μ are either derived from the current kernel or taken
@@ -347,6 +359,21 @@ def cell_run(
             mu=_mu,
             store_fields=run_store_fields,
         )
+        _no_interaction_cli = build_cli_args(
+            binary_path=_binary,
+            mode=ui_mode.value,
+            out_dir=_run_no_interaction_dir,
+            phi_path=_phi_path,
+            kernel_path=_zero_kernel_path,
+            gradient=ui_gradient.value,
+            N=phi_cfg.N,
+            t_final=float(ui_t_final.value),
+            dt=float(ui_dt.value),
+            storeTime=int(ui_storeTime.value),
+            nu=0.0,
+            mu=0.0,
+            store_fields=run_store_fields,
+        )
 
         _progress = mo.ui.anywidget(
             ProgressBar(
@@ -360,55 +387,82 @@ def cell_run(
                 height=24,
             )
         )
-        _progress_path = _run_dir / "progress.json"
-        _snapshot = None
-        _returncode = None
-        _proc = subprocess.Popen(_cli, cwd=REPO_ROOT)
-        _last_seen = time.monotonic()
-        while True:
-            _maybe = read_progress(_progress_path)
-            if _maybe is not None:
-                _snapshot = _maybe
-                _last_seen = time.monotonic()
-                _total = max(1, int(_snapshot.get("total_steps", 1)))
-                _progress.max_value = _total
-                _progress.value = min(_total, max(0, int(_snapshot.get("step", 0))))
-            _returncode = _proc.poll()
-            _age = time.monotonic() - _last_seen
-            _status = None if _snapshot is None else str(_snapshot.get("status", ""))
-            mo.output.replace(
-                mo.vstack(
-                    [
-                        _progress,
-                        mo.md(
-                            progress_summary(
-                                snapshot=_snapshot,
-                                t_final=float(ui_t_final.value),
-                                is_waiting=_snapshot is None,
-                                is_stale=_age > DEFAULT_STALE_SEC,
-                                returncode=_returncode,
-                            )
-                        ),
-                    ],
-                    gap=1,
+        def _run_with_progress(_label, _command, _output_dir):
+            _progress_path = _output_dir / "progress.json"
+            _snapshot = None
+            _returncode = None
+            _progress.value = 0
+            _proc = subprocess.Popen(_command, cwd=REPO_ROOT)
+            _last_seen = time.monotonic()
+            while True:
+                _maybe = read_progress(_progress_path)
+                if _maybe is not None:
+                    _snapshot = _maybe
+                    _last_seen = time.monotonic()
+                    _total = max(1, int(_snapshot.get("total_steps", 1)))
+                    _progress.max_value = _total
+                    _progress.value = min(
+                        _total, max(0, int(_snapshot.get("step", 0)))
+                    )
+                _returncode = _proc.poll()
+                _age = time.monotonic() - _last_seen
+                _status = None if _snapshot is None else str(_snapshot.get("status", ""))
+                mo.output.replace(
+                    mo.vstack(
+                        [
+                            mo.md(f"**Running {_label}**"),
+                            _progress,
+                            mo.md(
+                                progress_summary(
+                                    snapshot=_snapshot,
+                                    t_final=float(ui_t_final.value),
+                                    is_waiting=_snapshot is None,
+                                    is_stale=_age > DEFAULT_STALE_SEC,
+                                    returncode=_returncode,
+                                )
+                            ),
+                        ],
+                        gap=1,
+                    )
                 )
-            )
-            if _returncode is not None or _status in {"finished", "failed"}:
-                break
-            time.sleep(DEFAULT_POLL_SEC)
-        _proc.wait()
+                if _returncode is not None or _status in {"finished", "failed"}:
+                    break
+                time.sleep(DEFAULT_POLL_SEC)
+            _proc.wait()
+            return _returncode
 
+        _interaction_returncode = _run_with_progress(
+            "interaction simulation", _cli, _run_dir
+        )
         run_h5 = _run_dir / "run.h5"
+        if _interaction_returncode == 0 and run_h5.exists():
+            _no_interaction_returncode = _run_with_progress(
+                "no-interaction baseline", _no_interaction_cli, _run_no_interaction_dir
+            )
+        else:
+            _no_interaction_returncode = None
+
+        run_no_interaction_h5 = _run_no_interaction_dir / "run.h5"
+        if not (
+            _interaction_returncode == 0
+            and run_h5.exists()
+            and _no_interaction_returncode == 0
+            and run_no_interaction_h5.exists()
+        ):
+            run_h5 = None
+            run_no_interaction_h5 = None
         _result = mo.vstack(
             [
                 _progress,
+                mo.md(f"`interaction returncode = {_interaction_returncode}`"),
+                mo.md(f"`no-interaction returncode = {_no_interaction_returncode}`"),
                 mo.md(f"`run_h5 = {run_h5}`"),
-                mo.md(f"`returncode = {_returncode}`"),
+                mo.md(f"`run_no_interaction_h5 = {run_no_interaction_h5}`"),
             ],
             gap=1,
         )
     _result
-    return run_h5, run_store_fields
+    return run_h5, run_no_interaction_h5, run_store_fields
 
 
 @app.cell(hide_code=True)
@@ -420,14 +474,25 @@ def _():
 
 
 @app.cell
-def cell_inspect_run(run_h5):
+def cell_inspect_run(run_h5, run_no_interaction_h5):
     mo.stop(
-        run_h5 is None or not run_h5.exists(),
-        mo.md("Run a simulation to inspect the resulting `run.h5`."),
+        (
+            run_h5 is None
+            or run_no_interaction_h5 is None
+            or not run_h5.exists()
+            or not run_no_interaction_h5.exists()
+        ),
+        mo.md("Both interaction and no-interaction simulations must finish to inspect the run."),
     )
     inspect_run = RunData.from_h5(run_h5, load_fields=False)
-    inspect_run_md = mo.md(f"**Active file:** `{run_h5}`")
-    return inspect_run, inspect_run_md
+    inspect_no_interaction_run = RunData.from_h5(
+        run_no_interaction_h5, load_fields=False
+    )
+    inspect_run_md = mo.md(
+        f"**Interaction file:** `{run_h5}`  \n"
+        + f"**No-interaction file:** `{run_no_interaction_h5}`"
+    )
+    return inspect_no_interaction_run, inspect_run, inspect_run_md
 
 
 @app.cell
@@ -436,6 +501,23 @@ def _(inspect_run):
     inspect_time = np.asarray(inspect_run.time, dtype=np.float64)
     inspect_z = np.asarray(inspect_run.z, dtype=np.float64)
     return inspect_psi, inspect_time, inspect_z
+
+
+@app.cell
+def _(inspect_no_interaction_run, inspect_psi, inspect_time, inspect_z):
+    _baseline_psi = np.asarray(inspect_no_interaction_run.load_psi(), dtype=np.float64)
+    _baseline_time = np.asarray(inspect_no_interaction_run.time, dtype=np.float64)
+    _baseline_z = np.asarray(inspect_no_interaction_run.z, dtype=np.float64)
+    mo.stop(
+        (
+            inspect_psi.shape != _baseline_psi.shape
+            or not np.array_equal(inspect_time, _baseline_time)
+            or not np.array_equal(inspect_z, _baseline_z)
+        ),
+        mo.md("Interaction and no-interaction runs have incompatible ψ grids."),
+    )
+    psi_difference = inspect_psi - _baseline_psi
+    return (psi_difference,)
 
 
 @app.cell
@@ -512,6 +594,19 @@ def _(fft_z_start_index, fft_z_stop_index, inspect_psi, inspect_z):
         fft_wavelengths,
         fft_z,
     )
+
+
+@app.cell
+def _(fft_n_points, fft_z_start_index, fft_z_stop_index, psi_difference):
+    mo.stop(
+        fft_n_points < 2,
+        mo.md("Select at least two z indices for the Fourier transform."),
+    )
+    _z_slice = slice(fft_z_start_index, fft_z_stop_index + 1)
+    _difference_fft = np.asarray(psi_difference[:, _z_slice], dtype=np.float64)
+    _difference_fft -= _difference_fft.mean(axis=1, keepdims=True)
+    difference_fft_amplitudes = np.abs(np.fft.rfft(_difference_fft, axis=1))
+    return (difference_fft_amplitudes,)
 
 
 @app.cell
@@ -768,6 +863,39 @@ def _(
 
 
 @app.cell
+def _(inspect_time, inspect_z, psi_difference):
+    _difference_pct = 100.0 * np.asarray(psi_difference, dtype=np.float64)
+    _limit = max(float(np.max(np.abs(_difference_pct))), 1e-12)
+    _difference_fig, _difference_ax = plt.subplots(constrained_layout=True)
+    _difference_image = _difference_ax.pcolormesh(
+        inspect_time,
+        100.0 * inspect_z,
+        _difference_pct.T,
+        shading="nearest",
+        cmap="RdBu_r",
+        vmin=-_limit,
+        vmax=_limit,
+    )
+    _difference_colorbar = _difference_fig.colorbar(
+        _difference_image, ax=_difference_ax
+    )
+    _difference_colorbar.set_label(
+        r"$\Delta\psi = \psi_{\mathrm{interaction}} - \psi_{\mathrm{no\ interaction}}\;[\%]$"
+    )
+    _difference_ax.set_xlabel(r"$t\;[s]$")
+    _difference_ax.set_ylabel(r"$z\;[cm]$")
+    _difference_ax.set_title(r"$\psi$ difference: interaction − no interaction")
+    psi_difference_panel = mo.vstack(
+        [
+            mo.md("### Psi Difference(z, t)"),
+            mo.ui.matplotlib(_difference_ax),
+        ],
+        align="stretch",
+    )
+    return (psi_difference_panel,)
+
+
+@app.cell
 def _(fft_amplitudes, fft_mode_numbers, inspect_time):
     _fft_fig, _fft_ax = plt.subplots(constrained_layout=True)
     _fft_image = _fft_ax.pcolormesh(
@@ -790,6 +918,31 @@ def _(fft_amplitudes, fft_mode_numbers, inspect_time):
         align="stretch",
     )
     return (fft_heatmap_panel,)
+
+
+@app.cell
+def _(difference_fft_amplitudes, fft_mode_numbers, inspect_time):
+    _fft_fig, _fft_ax = plt.subplots(constrained_layout=True)
+    _fft_image = _fft_ax.pcolormesh(
+        inspect_time,
+        fft_mode_numbers[1:],
+        difference_fft_amplitudes[:, 1:].T,
+        shading="nearest",
+        cmap="viridis",
+    )
+    _fft_colorbar = _fft_fig.colorbar(_fft_image, ax=_fft_ax)
+    _fft_colorbar.set_label(r"$|\delta\widehat{\Delta\psi}_n(t)|$")
+    _fft_ax.set_xlabel(r"$t\;[s]$")
+    _fft_ax.set_ylabel("Mode number n")
+    _fft_ax.set_title(r"FFT amplitude of $\Delta\psi$ by mode and time")
+    difference_fft_heatmap_panel = mo.vstack(
+        [
+            mo.md("### Delta Psi FFT Amplitude Heatmap"),
+            mo.ui.matplotlib(_fft_ax),
+        ],
+        align="stretch",
+    )
+    return (difference_fft_heatmap_panel,)
 
 
 @app.cell
@@ -823,12 +976,53 @@ def _(fft_amplitudes, fft_mode_numbers, inspect_time):
 
 
 @app.cell
-def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time):
-    fft_dominant_mode = 1 + np.argmax(fft_amplitudes[:, 1:], axis=1)
-    fft_dominant_wavelength = np.asarray(
-        fft_wavelengths[fft_dominant_mode], dtype=np.float64
+def _(difference_fft_amplitudes, fft_mode_numbers, inspect_time):
+    _traces_fig, _traces_ax = plt.subplots(constrained_layout=True)
+    _modes = fft_mode_numbers[1:]
+    _mode_colormap = plt.get_cmap("viridis")
+    _mode_scale = max(1, int(_modes[-1] - _modes[0]))
+    for _mode in _modes:
+        _traces_ax.plot(
+            inspect_time,
+            difference_fft_amplitudes[:, _mode],
+            color=_mode_colormap((_mode - _modes[0]) / _mode_scale),
+            linewidth=1.0,
+        )
+    _mode_colors = plt.cm.ScalarMappable(cmap=_mode_colormap)
+    _mode_colors.set_clim(float(_modes[0]), float(_modes[-1]))
+    _mode_colorbar = _traces_fig.colorbar(_mode_colors, ax=_traces_ax)
+    _mode_colorbar.set_label("Mode number n")
+    _traces_ax.set_xlabel(r"$t\;[s]$")
+    _traces_ax.set_ylabel(r"$|\delta\widehat{\Delta\psi}_n(t)|$")
+    _traces_ax.set_title(r"FFT amplitude of every $\Delta\psi$ mode over time")
+    difference_fft_traces_panel = mo.vstack(
+        [
+            mo.md("### Delta Psi FFT Amplitude Traces"),
+            mo.ui.matplotlib(_traces_ax),
+        ],
+        align="stretch",
     )
-    _dominant_wavelength_cm = 100.0 * fft_dominant_wavelength
+    return (difference_fft_traces_panel,)
+
+
+@app.cell
+def _(
+    difference_fft_amplitudes,
+    fft_time_index,
+    fft_wavelengths,
+    inspect_time,
+):
+    _non_dc_amplitudes = difference_fft_amplitudes[:, 1:]
+    _dominant_mode_indices = 1 + np.argmax(_non_dc_amplitudes, axis=1)
+    _has_nonzero_mode = np.any(_non_dc_amplitudes > 0.0, axis=1)
+    difference_fft_dominant_mode = np.where(_has_nonzero_mode, _dominant_mode_indices, -1)
+    difference_fft_dominant_wavelength = np.full(
+        difference_fft_dominant_mode.shape, np.nan, dtype=np.float64
+    )
+    difference_fft_dominant_wavelength[_has_nonzero_mode] = fft_wavelengths[
+        _dominant_mode_indices[_has_nonzero_mode]
+    ]
+    _dominant_wavelength_cm = 100.0 * difference_fft_dominant_wavelength
 
     _dominant_fig, _dominant_ax = plt.subplots(constrained_layout=True)
     _dominant_ax.plot(
@@ -838,40 +1032,42 @@ def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time):
         linewidth=1.5,
         drawstyle="steps-mid",
     )
-    _dominant_ax.scatter(
-        [inspect_time[fft_time_index]],
-        [_dominant_wavelength_cm[fft_time_index]],
-        color="#dc2626",
-        zorder=3,
-        label=f"step {fft_time_index}",
-    )
+    if np.isfinite(_dominant_wavelength_cm[fft_time_index]):
+        _dominant_ax.scatter(
+            [inspect_time[fft_time_index]],
+            [_dominant_wavelength_cm[fft_time_index]],
+            color="#dc2626",
+            zorder=3,
+            label=f"step {fft_time_index}",
+        )
+        _dominant_ax.legend()
     _dominant_ax.set_xlabel(r"$t\;[s]$")
     _dominant_ax.set_ylabel(r"$\lambda_{\mathrm{dom}}(t)\;[\mathrm{cm}]$")
-    _dominant_ax.set_title(
-        r"Wavelength of the mode with maximum $|\delta\hat{\psi}_n(t)|$"
-    )
-    _dominant_ax.legend()
+    _dominant_ax.set_title(r"Dominant wavelength of $\Delta\psi$ FFT")
 
-    fft_dominant_wavelength_panel = mo.vstack(
+    difference_fft_dominant_wavelength_panel = mo.vstack(
         [
-            mo.md("### Dominant Wavelength"),
+            mo.md("### Delta Psi Dominant Wavelength"),
             mo.ui.matplotlib(_dominant_ax),
         ],
         align="stretch",
     )
     return (
-        fft_dominant_mode,
-        fft_dominant_wavelength,
-        fft_dominant_wavelength_panel,
+        difference_fft_dominant_mode,
+        difference_fft_dominant_wavelength,
+        difference_fft_dominant_wavelength_panel,
     )
 
 
 @app.cell(hide_code=True)
 def _(
+    difference_fft_amplitudes,
+    difference_fft_dominant_mode,
+    difference_fft_dominant_wavelength,
+    difference_fft_dominant_wavelength_panel,
+    difference_fft_heatmap_panel,
+    difference_fft_traces_panel,
     fft_amplitudes,
-    fft_dominant_mode,
-    fft_dominant_wavelength,
-    fft_dominant_wavelength_panel,
     fft_heatmap_panel,
     fft_n_points,
     fft_time_index,
@@ -883,12 +1079,26 @@ def _(
     fft_z_stop_index,
     inspect_run_md,
     percoll_panel,
+    psi_difference_panel,
     psi_panel,
 ):
+    _difference_dominant_wavelength_cm = 100.0 * difference_fft_dominant_wavelength[
+        fft_time_index
+    ]
+    _difference_dominant_text = (
+        f"At step `{fft_time_index}`, Δψ has no non-DC FFT amplitude."
+        if not np.isfinite(_difference_dominant_wavelength_cm)
+        else (
+            f"At step `{fft_time_index}`, the maximum-amplitude Δψ mode is "
+            f"`{difference_fft_dominant_mode[fft_time_index]}` with wavelength "
+            f"`{_difference_dominant_wavelength_cm:.6g}` cm."
+        )
+    )
     _coefficient_summary = mo.md(
         f"FFT amplitude array shape `{fft_amplitudes.shape}` (time steps × modes).  \n"
+        + f"Δψ FFT amplitude array shape `{difference_fft_amplitudes.shape}` (time steps × modes).  \n"
         + f"FFT window uses z indices `{fft_z_start_index}:{fft_z_stop_index}` inclusive, i.e. `{100.0 * fft_z[0]:.6g}` to `{100.0 * fft_z[-1]:.6g}` cm over `{fft_n_points}` grid points.  \n"
-        + f"At step `{fft_time_index}`, the maximum-amplitude non-DC mode is `{fft_dominant_mode[fft_time_index]}` with wavelength `{100.0 * fft_dominant_wavelength[fft_time_index]:.6g}` cm."
+        + _difference_dominant_text
     )
 
     mo.vstack(
@@ -897,7 +1107,7 @@ def _(
             mo.hstack(
                 [
                     panel
-                    for panel in [psi_panel, percoll_panel]
+                    for panel in [psi_panel, psi_difference_panel, percoll_panel]
                     if panel is not None
                 ],
                 align="start",
@@ -912,7 +1122,19 @@ def _(
                         justify="start",
                         gap=1,
                     ),
-                    fft_dominant_wavelength_panel,
+                ],
+                align="start",
+                gap=1,
+            ),
+            mo.vstack(
+                [
+                    mo.hstack(
+                        [difference_fft_heatmap_panel, difference_fft_traces_panel],
+                        align="start",
+                        justify="start",
+                        gap=1,
+                    ),
+                    difference_fft_dominant_wavelength_panel,
                 ],
                 align="start",
                 gap=1,
@@ -928,43 +1150,6 @@ def _(
         align="stretch",
         gap=1,
     )
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    ### Peak Detection
-    """)
-    return
-
-
-@app.cell
-def cell_peaks(inspect_run):
-    _z_cm = inspect_run.z * 100.0
-    _psi_last_pct = inspect_run.load_psi()[-1] * 100.0
-    _peak_z, _peak_psi, _peak_spacing, _peak_dev = find_peaks(_z_cm, _psi_last_pct)
-
-    _fig, _ax = plt.subplots(constrained_layout=True)
-    _ax.plot(_z_cm, _psi_last_pct, label=r"$\psi(z)$")
-    # _ax.plot(_peak_z, _peak_psi, "x", color="red", label="Detected peaks")
-    _ax.set_xlabel(r"$z \; [cm]$")
-    _ax.set_ylabel(r"$\psi \; [\%]$")
-    _ax.set_title("Peak detection")
-    _ax.legend()
-
-    _freq = 1.0 / _peak_spacing
-    _freq_dev = _peak_dev / _peak_spacing**2  # error propagation
-    _table = mo.md(
-        f"""
-    | Quantity | Value |
-    |----------|-------|
-    | **Number of peaks** | {len(_peak_z)} |
-    | **λ** (avg. spacing) | {_peak_spacing:.4f} ± {_peak_dev:.4f} cm |
-    | **ν** (frequency) | {_freq:.4f} ± {_freq_dev:.4f} cm⁻¹ |
-    """
-    )
-    mo.vstack([mo.as_html(_fig), _table])
     return
 
 
