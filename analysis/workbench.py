@@ -24,7 +24,6 @@ with app.setup:
     import sys
     import tempfile
     import time
-    from matplotlib.ticker import MaxNLocator
     from pathlib import Path
 
     import marimo as mo
@@ -499,49 +498,20 @@ def _(fft_z_start_index, fft_z_stop_index, inspect_psi, inspect_z):
     _delta_psi = _psi_fft - _psi_fft.mean(axis=1, keepdims=True)
     fft_coeffs = np.fft.rfft(_delta_psi, axis=1)
     fft_amplitudes = np.abs(fft_coeffs)
-    fft_phases = np.angle(fft_coeffs)
 
     _dz = float(fft_z[1] - fft_z[0])
     fft_mode_numbers = np.arange(fft_coeffs.shape[1], dtype=int)
     fft_spatial_freqs = np.fft.rfftfreq(fft_z.shape[0], d=_dz)
-    fft_wavenumbers = 2.0 * np.pi * fft_spatial_freqs
     fft_wavelengths = np.full(fft_spatial_freqs.shape, np.inf, dtype=np.float64)
     _nonzero_modes = fft_spatial_freqs > 0.0
     fft_wavelengths[_nonzero_modes] = 1.0 / fft_spatial_freqs[_nonzero_modes]
     return (
         fft_amplitudes,
-        fft_coeffs,
         fft_mode_numbers,
         fft_n_points,
-        fft_phases,
-        fft_spatial_freqs,
         fft_wavelengths,
-        fft_wavenumbers,
         fft_z,
     )
-
-
-@app.cell
-def _(fft_coeffs):
-    _fft_max_mode = fft_coeffs.shape[1] - 1
-    mo.stop(
-        _fft_max_mode < 1,
-        mo.md("The selected run does not contain any non-zero Fourier modes."),
-    )
-    fft_mode_selector = mo.ui.slider(
-        start=1,
-        stop=_fft_max_mode,
-        step=1,
-        value=min(1, _fft_max_mode),
-        label="Fourier mode n",
-    )
-    return (fft_mode_selector,)
-
-
-@app.cell
-def _(fft_mode_selector):
-    fft_selected_mode = int(fft_mode_selector.value)
-    return (fft_selected_mode,)
 
 
 @app.cell
@@ -582,41 +552,6 @@ def _(fft_time_index, fft_time_slider, inspect_run, inspect_time):
         align="stretch",
     )
     return (fft_time_panel,)
-
-
-@app.cell
-def _(fft_time_panel):
-    fft_time_panel
-    return
-
-
-@app.cell
-def _(
-    fft_amplitudes,
-    fft_mode_selector,
-    fft_selected_mode,
-    fft_spatial_freqs,
-    fft_wavelengths,
-):
-    _wavelength_text = (
-        r"$\infty$"
-        if not np.isfinite(fft_wavelengths[fft_selected_mode])
-        else f"{100.0 * fft_wavelengths[fft_selected_mode]:.6g} cm"
-    )
-    fft_mode_panel = mo.vstack(
-        [
-            mo.md("### Mode Selection"),
-            fft_mode_selector,
-            mo.md(
-                f"Mode `{fft_selected_mode}`  \n"
-                + f"Spatial frequency `{fft_spatial_freqs[fft_selected_mode]:.6g}` m$^{{-1}}$  \n"
-                + f"Wavelength `{_wavelength_text}`  \n"
-                + f"Stored coefficient series shape `{fft_amplitudes[:, fft_selected_mode].shape}`"
-            ),
-        ],
-        align="stretch",
-    )
-    return (fft_mode_panel,)
 
 
 @app.cell
@@ -833,66 +768,58 @@ def _(
 
 
 @app.cell
-def _(fft_amplitudes, fft_mode_numbers, fft_selected_mode, fft_time_index):
+def _(fft_amplitudes, fft_mode_numbers, inspect_time):
     _fft_fig, _fft_ax = plt.subplots(constrained_layout=True)
-    _fft_ax.plot(
+    _fft_image = _fft_ax.pcolormesh(
+        inspect_time,
         fft_mode_numbers[1:],
-        fft_amplitudes[fft_time_index, 1:],
-        color="#2563eb",
-        linewidth=1.5,
+        fft_amplitudes[:, 1:].T,
+        shading="nearest",
+        cmap="viridis",
     )
-    _fft_ax.scatter(
-        [fft_selected_mode],
-        [fft_amplitudes[fft_time_index, fft_selected_mode]],
-        color="#dc2626",
-        zorder=3,
-        label=f"mode {fft_selected_mode}",
-    )
-    _fft_ax.set_xlabel("Mode number n")
-    _fft_ax.set_ylabel(r"$A_n(t) = |\delta\hat{\psi}_n(t)|$")
-    _fft_ax.set_title(rf"FFT amplitude at step {fft_time_index}")
-    _fft_ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-    _fft_ax.legend()
-    fft_panel = mo.vstack(
+    _fft_colorbar = _fft_fig.colorbar(_fft_image, ax=_fft_ax)
+    _fft_colorbar.set_label(r"$A_n(t) = |\delta\hat{\psi}_n(t)|$")
+    _fft_ax.set_xlabel(r"$t\;[s]$")
+    _fft_ax.set_ylabel("Mode number n")
+    _fft_ax.set_title("FFT amplitude by mode and time")
+    fft_heatmap_panel = mo.vstack(
         [
-            mo.md("### FFT Amplitude"),
+            mo.md("### FFT Amplitude Heatmap"),
             mo.ui.matplotlib(_fft_ax),
         ],
         align="stretch",
     )
-    return (fft_panel,)
+    return (fft_heatmap_panel,)
 
 
 @app.cell
-def _(fft_amplitudes, fft_selected_mode, fft_time_index, inspect_time):
-    fft_mode_amplitude = np.asarray(
-        fft_amplitudes[:, fft_selected_mode], dtype=np.float64
-    )
-    _safe_amplitude = np.clip(fft_mode_amplitude, np.finfo(np.float64).tiny, None)
-    _ln_amplitude = _safe_amplitude
-
-    _growth_fig, _growth_ax = plt.subplots(constrained_layout=True)
-    _growth_ax.plot(inspect_time, _ln_amplitude, color="#059669", linewidth=1.5)
-    _growth_ax.scatter(
-        [inspect_time[fft_time_index]],
-        [_ln_amplitude[fft_time_index]],
-        color="#dc2626",
-        zorder=3,
-        label=f"mode {fft_selected_mode} at step {fft_time_index}",
-    )
-    _growth_ax.set_xlabel(r"$t\;[s]$")
-    _growth_ax.set_ylabel(r"$A_n(t)$")
-    _growth_ax.set_title(rf"Growth of mode {fft_selected_mode}")
-    _growth_ax.legend()
-
-    fft_growth_panel = mo.vstack(
+def _(fft_amplitudes, fft_mode_numbers, inspect_time):
+    _traces_fig, _traces_ax = plt.subplots(constrained_layout=True)
+    _modes = fft_mode_numbers[1:]
+    _mode_colormap = plt.get_cmap("viridis")
+    _mode_scale = max(1, int(_modes[-1] - _modes[0]))
+    for _mode in _modes:
+        _traces_ax.plot(
+            inspect_time,
+            fft_amplitudes[:, _mode],
+            color=_mode_colormap((_mode - _modes[0]) / _mode_scale),
+            linewidth=1.0,
+        )
+    _mode_colors = plt.cm.ScalarMappable(cmap=_mode_colormap)
+    _mode_colors.set_clim(float(_modes[0]), float(_modes[-1]))
+    _mode_colorbar = _traces_fig.colorbar(_mode_colors, ax=_traces_ax)
+    _mode_colorbar.set_label("Mode number n")
+    _traces_ax.set_xlabel(r"$t\;[s]$")
+    _traces_ax.set_ylabel(r"$A_n(t) = |\delta\hat{\psi}_n(t)|$")
+    _traces_ax.set_title("FFT amplitude of every mode over time")
+    fft_traces_panel = mo.vstack(
         [
-            mo.md("### Growth Rate"),
-            mo.ui.matplotlib(_growth_ax),
+            mo.md("### FFT Amplitude Traces"),
+            mo.ui.matplotlib(_traces_ax),
         ],
         align="stretch",
     )
-    return fft_growth_panel, fft_mode_amplitude
+    return (fft_traces_panel,)
 
 
 @app.cell
@@ -920,7 +847,9 @@ def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time):
     )
     _dominant_ax.set_xlabel(r"$t\;[s]$")
     _dominant_ax.set_ylabel(r"$\lambda_{\mathrm{dom}}(t)\;[\mathrm{cm}]$")
-    _dominant_ax.set_title(r"Dominant wavelength of $\text{arg}\max_{n > 1} A_n(t)$")
+    _dominant_ax.set_title(
+        r"Wavelength of the mode with maximum $|\delta\hat{\psi}_n(t)|$"
+    )
     _dominant_ax.legend()
 
     fft_dominant_wavelength_panel = mo.vstack(
@@ -937,78 +866,16 @@ def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time):
     )
 
 
-@app.cell
-def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time):
-    _safe_amplitudes = np.clip(fft_amplitudes[:, 1:], np.finfo(np.float64).tiny, None)
-    _log_amplitudes = np.log(_safe_amplitudes)
-    if inspect_time.shape[0] > 1:
-        fft_log_growth_rates = np.gradient(_log_amplitudes, inspect_time, axis=0)
-    else:
-        fft_log_growth_rates = np.zeros_like(_log_amplitudes)
-
-    fft_fastest_growing_mode = 1 + np.argmax(fft_log_growth_rates, axis=1)
-    fft_fastest_growing_wavelength = np.asarray(
-        fft_wavelengths[fft_fastest_growing_mode], dtype=np.float64
-    )
-    _fastest_wavelength_cm = 100.0 * fft_fastest_growing_wavelength
-
-    _fastest_fig, _fastest_ax = plt.subplots(constrained_layout=True)
-    _fastest_ax.plot(
-        inspect_time,
-        _fastest_wavelength_cm,
-        color="#ea580c",
-        linewidth=1.5,
-        drawstyle="steps-mid",
-    )
-    _fastest_ax.scatter(
-        [inspect_time[fft_time_index]],
-        [_fastest_wavelength_cm[fft_time_index]],
-        color="#dc2626",
-        zorder=3,
-        label=f"step {fft_time_index}",
-    )
-    _fastest_ax.set_xlabel(r"$t\;[s]$")
-    _fastest_ax.set_ylabel(r"$\lambda_{\mathrm{fast}}(t)\;[\mathrm{cm}]$")
-    _fastest_ax.set_title(
-        r"Wavelength of $\text{arg}\max_{n > 1}\,\partial_t \ln A_n(t)$"
-    )
-    _fastest_ax.legend()
-
-    fft_fastest_growing_panel = mo.vstack(
-        [
-            mo.md("### Fastest-Growing Wavelength"),
-            mo.ui.matplotlib(_fastest_ax),
-        ],
-        align="stretch",
-    )
-    return (
-        fft_fastest_growing_mode,
-        fft_fastest_growing_panel,
-        fft_fastest_growing_wavelength,
-        fft_log_growth_rates,
-    )
-
-
 @app.cell(hide_code=True)
 def _(
-    fft_coeffs,
+    fft_amplitudes,
     fft_dominant_mode,
     fft_dominant_wavelength,
     fft_dominant_wavelength_panel,
-    fft_fastest_growing_mode,
-    fft_fastest_growing_panel,
-    fft_fastest_growing_wavelength,
-    fft_growth_panel,
-    fft_log_growth_rates,
-    fft_mode_amplitude,
-    fft_mode_panel,
+    fft_heatmap_panel,
     fft_n_points,
-    fft_panel,
-    fft_phases,
-    fft_selected_mode,
-    fft_spatial_freqs,
+    fft_traces_panel,
     fft_time_index,
-    fft_wavenumbers,
     fft_z,
     fft_z_range_panel,
     fft_z_start_index,
@@ -1018,12 +885,9 @@ def _(
     psi_panel,
 ):
     _coefficient_summary = mo.md(
-        f"Stored complex Fourier coefficients with shape `{fft_coeffs.shape}`.  \n"
+        f"FFT amplitude array shape `{fft_amplitudes.shape}` (time steps × modes).  \n"
         + f"FFT window uses z indices `{fft_z_start_index}:{fft_z_stop_index}` inclusive, i.e. `{100.0 * fft_z[0]:.6g}` to `{100.0 * fft_z[-1]:.6g}` cm over `{fft_n_points}` grid points.  \n"
-        + f"Selected mode `{fft_selected_mode}` at step `{fft_time_index}`:  \n"
-        + f"`|coeff| = {fft_mode_amplitude[fft_time_index]:.6g}`, `phase = {fft_phases[fft_time_index, fft_selected_mode]:.6g}` rad, `k = {fft_wavenumbers[fft_selected_mode]:.6g}` m$^{{-1}}$, `nu = {fft_spatial_freqs[fft_selected_mode]:.6g}` m$^{{-1}}$.  \n"
-        + f"Dominant mode at this step is `{fft_dominant_mode[fft_time_index]}` with wavelength `{100.0 * fft_dominant_wavelength[fft_time_index]:.6g}` cm.  \n"
-        + f"Fastest-growing mode at this step is `{fft_fastest_growing_mode[fft_time_index]}` with wavelength `{100.0 * fft_fastest_growing_wavelength[fft_time_index]:.6g}` cm and log-growth rate `{fft_log_growth_rates[fft_time_index, fft_fastest_growing_mode[fft_time_index] - 1]:.6g}` s$^{{-1}}$."
+        + f"At step `{fft_time_index}`, the maximum-amplitude non-DC mode is `{fft_dominant_mode[fft_time_index]}` with wavelength `{100.0 * fft_dominant_wavelength[fft_time_index]:.6g}` cm."
     )
 
     mo.vstack(
@@ -1042,26 +906,18 @@ def _(
             mo.vstack(
                 [
                     mo.hstack(
-                        [fft_panel, fft_growth_panel],
+                        [fft_heatmap_panel, fft_traces_panel],
                         align="start",
                         justify="start",
                         gap=1,
                     ),
-                    mo.hstack(
-                        [
-                            fft_dominant_wavelength_panel,
-                            fft_fastest_growing_panel,
-                        ],
-                        align="start",
-                        justify="start",
-                        gap=1,
-                    ),
+                    fft_dominant_wavelength_panel,
                 ],
                 align="start",
                 gap=1,
             ),
             mo.hstack(
-                [fft_mode_panel, fft_z_range_panel],
+                [fft_time_panel, fft_z_range_panel],
                 align="start",
                 justify="start",
                 gap=1,
