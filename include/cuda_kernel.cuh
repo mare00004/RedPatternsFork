@@ -31,7 +31,8 @@ __global__ void CuKernelComputeFluxFVM(
     const double *__restrict__ percoll,
     const double *__restrict__ R,
     const double *__restrict__ I_face,
-    const double *__restrict__ gradWing);
+    const double *__restrict__ gradWing,
+    double *__restrict__ faceVelocity);
 __global__ void CuKernelUpdatePhiFVM(
     double *__restrict__ phi,
     const double *__restrict__ J);

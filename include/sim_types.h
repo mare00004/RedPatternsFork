@@ -19,6 +19,8 @@ typedef enum {
     PHI,
     PSI,
     PERCOLL,
+    FACE_VELOCITY,
+    FACE_FLUX,
     NUM_STORE_TYPES,
 } StoreType;
 

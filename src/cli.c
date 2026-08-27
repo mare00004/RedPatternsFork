@@ -62,8 +62,13 @@ void setCommonArguments(CommonCLIArguments *args, SimConfig *cfg) {
                 BITMAP_ADD(cfg->run.store, PSI);
             }
             if (strcmp(str, "percoll") == 0) {
-                printf("Percoll bitmap set\n");
                 BITMAP_ADD(cfg->run.store, PERCOLL);
+            }
+            if (strcmp(str, "face-velocity") == 0) {
+                BITMAP_ADD(cfg->run.store, FACE_VELOCITY);
+            }
+            if (strcmp(str, "face-flux") == 0) {
+                BITMAP_ADD(cfg->run.store, FACE_FLUX);
             }
         }
     }
@@ -89,7 +94,13 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     struct arg_file *cli_phiFile =
         arg_file1(NULL, "phi-file", "<file>", "initial phi file");
     struct arg_str *cli_gradient = arg_str0(NULL, "gradient", "linear|sigmoid|zero|linear-full", "Pressure gradient");
-    struct arg_str *cli_store = arg_strn("s", "store", "phi|psi|percoll", 0, 3, "Arrays to store in HDF5 out file");
+    struct arg_str *cli_store = arg_strn(
+        "s",
+        "store",
+        "phi|psi|percoll|face-velocity|face-flux",
+        0,
+        NUM_STORE_TYPES,
+        "Arrays to store in HDF5 output file");
 
     CommonCLIArguments commonArgs = {
         .N = cli_N,

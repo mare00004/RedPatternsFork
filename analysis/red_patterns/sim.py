@@ -52,6 +52,7 @@ def build_cli_args(
     storeTime: float,
     nu: float,
     mu: float,
+    store_fields: tuple[str, ...] = ("phi", "psi", "percoll"),
 ) -> list[str]:
     """Assemble the ``red-patterns`` CLI. ``mode`` is ``"Taylor"`` or ``"Convolution"``."""
     args = [
@@ -64,10 +65,8 @@ def build_cli_args(
         f"--gradient={gradient}",
         f"--phi-file={phi_path}",
         f"--out-dir={out_dir}",
-        "--store=phi",
-        "--store=psi",
-        "--store=percoll",
     ]
+    args.extend(f"--store={field}" for field in store_fields)
     if mode == "Taylor":
         args.extend([f"--NU={nu}", f"--MU={mu}"])
     elif kernel_path is not None:

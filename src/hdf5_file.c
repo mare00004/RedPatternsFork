@@ -408,6 +408,21 @@ int ts_create(
     writeU32Attr(z_ds, "N", (unsigned int)N);
     H5Dclose(z_ds);
 
+    double *zFace = malloc((N + 1) * sizeof(*zFace));
+    if (zFace == NULL) {
+        H5Gclose(g_coords);
+        return -1;
+    }
+    for (int i = 0; i <= N; i++) {
+        zFace[i] = i * cfg->run.DZ;
+    }
+    hid_t z_face_ds = writeF64Vec(g_coords, "z_face", N + 1, zFace);
+    free(zFace);
+    writeStrAttr(z_face_ds, "long_name", "height at finite-volume faces");
+    writeStrAttr(z_face_ds, "units", "m");
+    writeU32Attr(z_face_ds, "N", (unsigned int)(N + 1));
+    H5Dclose(z_face_ds);
+
     H5Gclose(g_coords);
 
     /* /fields */
@@ -439,10 +454,51 @@ int ts_create(
         writeStrAttr(w->dsetPercoll, "coordinates", "time z");
     }
 
+    if (BITMAP_CONTAINS(cfg->run.store, FACE_VELOCITY)) {
+        w->dsetFaceVelocity = createExtendableF64Dataset(g_fields, "face_velocity", 3, (hsize_t[]){ 0, N, N + 1 }, (hsize_t[]){ H5S_UNLIMITED, N, N + 1 }, (hsize_t[]){ 1, N, N + 1 });
+        writeStrAttr(w->dsetFaceVelocity, "long_name", "time series of axial velocity at finite-volume faces");
+        writeStrAttr(w->dsetFaceVelocity, "units", "m s-1");
+        writeStrAttr(w->dsetFaceVelocity, "coordinates", "time rho z_face");
+    }
+
+    if (BITMAP_CONTAINS(cfg->run.store, FACE_FLUX)) {
+        w->dsetFaceFlux = createExtendableF64Dataset(g_fields, "face_flux", 3, (hsize_t[]){ 0, N, N + 1 }, (hsize_t[]){ H5S_UNLIMITED, N, N + 1 }, (hsize_t[]){ 1, N, N + 1 });
+        writeStrAttr(w->dsetFaceFlux, "long_name", "time series of axial flux at finite-volume faces");
+        writeStrAttr(w->dsetFaceFlux, "units", "m s-1");
+        writeStrAttr(w->dsetFaceFlux, "coordinates", "time rho z_face");
+    }
+
+    H5Gclose(g_fields);
+
     return 0;
 }
 
-int ts_append(TSWriter *w, double t, StoreBitMap store, const double *phi, const double *psi, const double *percoll) {
+static int appendFaceField(hid_t dataset, hsize_t timeIndex, hsize_t N, const double *values) {
+    const hsize_t faceCount = N + 1;
+    hsize_t newSize[3] = { timeIndex + 1, N, faceCount };
+    if (H5Dset_extent(dataset, newSize) < 0)
+        return -1;
+
+    hid_t fspace = H5Dget_space(dataset);
+    hsize_t start[3] = { timeIndex, 0, 0 };
+    hsize_t count[3] = { 1, N, faceCount };
+    H5Sselect_hyperslab(fspace, H5S_SELECT_SET, start, NULL, count, NULL);
+    hid_t mspace = H5Screate_simple(3, count, NULL);
+    const herr_t result = H5Dwrite(dataset, H5T_NATIVE_DOUBLE, mspace, fspace, H5P_DEFAULT, values);
+    H5Sclose(mspace);
+    H5Sclose(fspace);
+    return result < 0 ? -1 : 0;
+}
+
+int ts_append(
+    TSWriter *w,
+    double t,
+    StoreBitMap store,
+    const double *phi,
+    const double *psi,
+    const double *percoll,
+    const double *faceVelocity,
+    const double *faceFlux) {
     const hsize_t N = w->N;
 
     if (BITMAP_CONTAINS(store, PHI)) {
@@ -492,7 +548,6 @@ int ts_append(TSWriter *w, double t, StoreBitMap store, const double *phi, const
     }
 
     if (BITMAP_CONTAINS(store, PERCOLL)) {
-        printf("Percoll bitmap found\n");
         // Append one percoll N array
         hsize_t newSize[2] = { w->t + 1, N };
         if (H5Dset_extent(w->dsetPercoll, newSize) < 0)
@@ -514,6 +569,14 @@ int ts_append(TSWriter *w, double t, StoreBitMap store, const double *phi, const
         H5Sclose(mspace);
         H5Sclose(fspace);
     }
+
+    if (BITMAP_CONTAINS(store, FACE_VELOCITY) &&
+        (faceVelocity == NULL || appendFaceField(w->dsetFaceVelocity, w->t, N, faceVelocity) != 0))
+        return -1;
+
+    if (BITMAP_CONTAINS(store, FACE_FLUX) &&
+        (faceFlux == NULL || appendFaceField(w->dsetFaceFlux, w->t, N, faceFlux) != 0))
+        return -1;
 
     // Append one t value
     {
@@ -552,6 +615,12 @@ void ts_close(TSWriter *w) {
         H5Dclose(w->dsetPhi);
     if (w->dsetPsi > 0)
         H5Dclose(w->dsetPsi);
+    if (w->dsetPercoll > 0)
+        H5Dclose(w->dsetPercoll);
+    if (w->dsetFaceVelocity > 0)
+        H5Dclose(w->dsetFaceVelocity);
+    if (w->dsetFaceFlux > 0)
+        H5Dclose(w->dsetFaceFlux);
     if (w->dsetTime > 0)
         H5Dclose(w->dsetTime);
     if (w->file > 0)

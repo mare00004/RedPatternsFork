@@ -13,10 +13,11 @@
 
 import marimo
 
-__generated_with = "0.23.14"
+__generated_with = "0.24.0"
 app = marimo.App(width="wide")
 
 with app.setup:
+    import h5py
     import matplotlib.pyplot as plt
     import numpy as np
     import subprocess
@@ -43,6 +44,17 @@ with app.setup:
     # units (displayed value = actual / scale) so they stay human-readable.
     NU_DISPLAY_SCALE = 1e-30
     MU_DISPLAY_SCALE = 1e-37
+    STORE_PLOT_OPTIONS = {
+        "Psi": ("psi",),
+        "Phi and psi": ("phi", "psi"),
+        "Phi, psi, and percoll": ("phi", "psi", "percoll"),
+        "Phi, psi, face velocity, and face flux": (
+            "phi",
+            "psi",
+            "face-velocity",
+            "face-flux",
+        ),
+    }
 
     from red_patterns import RunData, find_peaks, get_rbc_cmap, plot_psi
     from red_patterns.kernel import (
@@ -239,9 +251,22 @@ def cell_sim_controls():
     ui_t_final = mo.ui.number(start=0.1, step=0.1, value=1000.0, label="T")
     ui_dt = mo.ui.number(start=1e-5, step=1e-4, value=1e-2, label="DT")
     ui_storeTime = mo.ui.number(start=0, step=1e-3, value=1.0, label="storeTime")
+    ui_store_fields = mo.ui.radio(
+        options=list(STORE_PLOT_OPTIONS),
+        value="Phi and psi",
+        label="Stored fields and plots",
+    )
     ui_run_button = mo.ui.run_button(label="Build inputs and run simulation")
     mo.vstack(
-        [ui_mode, ui_gradient, ui_t_final, ui_dt, ui_storeTime, ui_run_button],
+        [
+            ui_mode,
+            ui_gradient,
+            ui_t_final,
+            ui_dt,
+            ui_storeTime,
+            ui_store_fields,
+            ui_run_button,
+        ],
         gap=1,
     )
     return (
@@ -252,6 +277,7 @@ def cell_sim_controls():
         ui_nu,
         ui_run_button,
         ui_storeTime,
+        ui_store_fields,
         ui_t_final,
         ui_taylor_source,
     )
@@ -271,9 +297,11 @@ def cell_run(
     ui_nu,
     ui_run_button,
     ui_storeTime,
+    ui_store_fields,
     ui_t_final,
     ui_taylor_source,
 ):
+    run_store_fields = STORE_PLOT_OPTIONS[ui_store_fields.value]
     if not ui_run_button.value:
         run_h5 = None
         _result = mo.md("Configure the run and click the button to launch.")
@@ -318,6 +346,7 @@ def cell_run(
             storeTime=int(ui_storeTime.value),
             nu=_nu,
             mu=_mu,
+            store_fields=run_store_fields,
         )
 
         _progress = mo.ui.anywidget(
@@ -380,36 +409,14 @@ def cell_run(
             gap=1,
         )
     _result
-    return (run_h5,)
+    return run_h5, run_store_fields
 
 
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    ## 4. Percoll Field Inspection
+    ## 4. Run Inspection
     """)
-    return
-
-
-@app.cell
-def cell_check_perco(fft_time_index, inspect_z, run_h5):
-    import h5py
-
-    perco_path = Path(run_h5)
-    mo.stop(predicate=not perco_path.exists(), output=f"{perco_path} does not exist.")
-    with h5py.File(perco_path, "r") as f:
-        P0 = 1100.0
-        perco_data = P0 - np.array(f["/fields/percoll/"])
-
-    def plot_perco(t_idx):
-        plt.figure()
-        plt.plot(inspect_z, perco_data[t_idx, :])
-        plt.xlabel("$z$ [cm]")
-        plt.ylabel("Percoll field")
-        plt.title("Perco field vs z")
-        return mo.ui.matplotlib(plt.gca())
-
-    plot_perco(fft_time_index)
     return
 
 
@@ -578,6 +585,12 @@ def _(fft_time_index, fft_time_slider, inspect_run, inspect_time):
 
 
 @app.cell
+def _(fft_time_panel):
+    fft_time_panel
+    return
+
+
+@app.cell
 def _(
     fft_amplitudes,
     fft_mode_selector,
@@ -607,26 +620,168 @@ def _(
 
 
 @app.cell
-def _(fft_time_index, inspect_run, inspect_time):
-    _phi_frame = inspect_run.phi_frame(fft_time_index)
-    _phi_figure = plot_phi(
-        PhiResult(
-            rho=inspect_run.rho,
-            z=inspect_run.z,
-            phi_values=_phi_frame,
+def _(fft_time_index, inspect_run, inspect_time, run_h5, run_store_fields):
+    if "phi" not in run_store_fields:
+        phi_panel = None
+    else:
+        _phi_frame = inspect_run.phi_frame(fft_time_index)
+        _phi_figure = plot_phi(
+            PhiResult(
+                rho=inspect_run.rho,
+                z=inspect_run.z,
+                phi_values=_phi_frame,
+            )
         )
-    )
-    _phi_figure.axes[0].set_title(
-        rf"$\varphi(\rho, z)$ at $t={inspect_time[fft_time_index]:.3f}\,\mathrm{{s}}$"
-    )
-    phi_panel = mo.vstack(
-        [
-            mo.md("### Phi(z, rho)"),
-            mo.as_html(_phi_figure),
-        ],
-        align="stretch",
-    )
+        _phi_ax = _phi_figure.axes[0]
+        _phi_figure.set_size_inches(16, 9, forward=True)
+        _phi_ax.set_title(
+            rf"$\varphi(\rho, z)$ at $t={inspect_time[fft_time_index]:.3f}\,\mathrm{{s}}$"
+        )
+        _z_padding = 0.05 * float(inspect_run.z[-1] - inspect_run.z[0])
+        _rho_padding = 0.05 * float(inspect_run.rho[-1] - inspect_run.rho[0])
+        _phi_ax.set_xlim(
+            float(inspect_run.z[0] - _z_padding),
+            float(inspect_run.z[-1] + _z_padding),
+        )
+        _phi_ax.set_ylim(
+            float(inspect_run.rho[0] - _rho_padding),
+            float(inspect_run.rho[-1] + _rho_padding),
+        )
+
+        if "face-velocity" in run_store_fields:
+            with h5py.File(run_h5, "r") as _h5:
+                _z_face = np.asarray(_h5["coords/z_face"], dtype=np.float64)
+                _face_velocity = np.asarray(
+                    _h5["fields/face_velocity"][fft_time_index], dtype=np.float64
+                )
+                _face_flux = np.asarray(
+                    _h5["fields/face_flux"][fft_time_index], dtype=np.float64
+                )
+
+            _rho_count, _face_count = _face_velocity.shape
+            _rho_offset = min(8, max(0, _rho_count - 1))
+            _rho_indices = np.unique(
+                np.linspace(
+                    0,
+                    _rho_count - 1 - _rho_offset,
+                    min(12, max(1, _rho_count - _rho_offset)),
+                    dtype=int,
+                )
+            )
+            _flux_rho_indices = _rho_indices + _rho_offset
+            _face_indices = np.unique(
+                np.linspace(
+                    1 if _face_count > 2 else 0,
+                    _face_count - 2 if _face_count > 2 else _face_count - 1,
+                    min(16, max(1, _face_count - 2)),
+                    dtype=int,
+                )
+            )
+            _velocity_z_grid, _velocity_rho_grid = np.meshgrid(
+                _z_face[_face_indices], inspect_run.rho[_rho_indices]
+            )
+            _flux_z_grid, _flux_rho_grid = np.meshgrid(
+                _z_face[_face_indices], inspect_run.rho[_flux_rho_indices]
+            )
+            _z_spacing = (
+                float(np.median(np.diff(_z_face))) if _face_count > 1 else 1.0
+            )
+            _sample_z_spacing = (
+                float(np.median(np.diff(_z_face[_face_indices])))
+                if _face_indices.size > 1
+                else _z_spacing
+            )
+            _arrow_length = 0.7 * _sample_z_spacing
+
+            def _normalized_arrow_lengths(_field, _field_rho_indices):
+                _sampled = _field[np.ix_(_field_rho_indices, _face_indices)]
+                _max_abs = float(np.max(np.abs(_sampled)))
+                if _max_abs == 0.0:
+                    return np.zeros_like(_sampled)
+                return _arrow_length * _sampled / _max_abs
+
+            _velocity_quiver = _phi_ax.quiver(
+                _velocity_z_grid,
+                _velocity_rho_grid,
+                _normalized_arrow_lengths(_face_velocity, _rho_indices),
+                np.zeros_like(_velocity_z_grid),
+                angles="xy",
+                scale_units="xy",
+                scale=1,
+                color="#2563eb",
+                width=0.003,
+                label="Face velocity (normalized)",
+            )
+            _flux_quiver = _phi_ax.quiver(
+                _flux_z_grid,
+                _flux_rho_grid,
+                _normalized_arrow_lengths(_face_flux, _flux_rho_indices),
+                np.zeros_like(_flux_z_grid),
+                angles="xy",
+                scale_units="xy",
+                scale=1,
+                color="#dc2626",
+                width=0.003,
+                label="Face flux (normalized)",
+            )
+            _phi_ax.quiverkey(
+                _velocity_quiver,
+                0.84,
+                1.05,
+                0.5 * _arrow_length,
+                "velocity: independently normalized",
+                labelpos="E",
+            )
+            _phi_ax.quiverkey(
+                _flux_quiver,
+                0.84,
+                1.11,
+                0.5 * _arrow_length,
+                "flux: independently normalized",
+                labelpos="E",
+            )
+            _phi_ax.legend(loc="upper left")
+
+        phi_panel = mo.vstack(
+            [
+                mo.md("### Phi(z, rho)"),
+                mo.as_html(_phi_figure),
+            ],
+            align="stretch",
+        )
     return (phi_panel,)
+
+
+@app.cell
+def _(phi_panel):
+    mo.stop(phi_panel is None)
+    phi_panel
+    return
+
+
+@app.cell
+def _(fft_time_index, inspect_run, inspect_time, run_h5, run_store_fields):
+    if "percoll" not in run_store_fields:
+        percoll_panel = None
+    else:
+        with h5py.File(run_h5, "r") as _h5:
+            _percoll = np.asarray(
+                _h5["fields/percoll"][fft_time_index], dtype=np.float64
+            )
+
+        _percoll_fig, _percoll_ax = plt.subplots(constrained_layout=True)
+        _percoll_ax.plot(100.0 * inspect_run.z, 1100.0 - _percoll, color="#7c3aed")
+        _percoll_ax.set_xlabel(r"$z$ [cm]")
+        _percoll_ax.set_ylabel("Percoll field")
+        _percoll_ax.set_title(
+            rf"Percoll field at $t={inspect_time[fft_time_index]:.3f}\,\mathrm{{s}}$"
+        )
+        _percoll_ax.grid(alpha=0.3)
+        percoll_panel = mo.vstack(
+            [mo.md("### Percoll(z)"), mo.ui.matplotlib(_percoll_ax)],
+            align="stretch",
+        )
+    return (percoll_panel,)
 
 
 @app.cell
@@ -853,14 +1008,13 @@ def _(
     fft_selected_mode,
     fft_spatial_freqs,
     fft_time_index,
-    fft_time_panel,
     fft_wavenumbers,
     fft_z,
     fft_z_range_panel,
     fft_z_start_index,
     fft_z_stop_index,
     inspect_run_md,
-    phi_panel,
+    percoll_panel,
     psi_panel,
 ):
     _coefficient_summary = mo.md(
@@ -875,7 +1029,16 @@ def _(
     mo.vstack(
         [
             inspect_run_md,
-            mo.hstack([phi_panel, psi_panel], align="start", justify="start", gap=1),
+            mo.hstack(
+                [
+                    panel
+                    for panel in [psi_panel, percoll_panel]
+                    if panel is not None
+                ],
+                align="start",
+                justify="start",
+                gap=1,
+            ),
             mo.vstack(
                 [
                     mo.hstack(
@@ -898,7 +1061,7 @@ def _(
                 gap=1,
             ),
             mo.hstack(
-                [fft_time_panel, fft_mode_panel, fft_z_range_panel],
+                [fft_mode_panel, fft_z_range_panel],
                 align="start",
                 justify="start",
                 gap=1,
@@ -945,11 +1108,6 @@ def cell_peaks(inspect_run):
     """
     )
     mo.vstack([mo.as_html(_fig), _table])
-    return
-
-
-@app.cell
-def _():
     return
 
 

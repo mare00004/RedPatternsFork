@@ -279,7 +279,8 @@ __global__ void CuKernelComputeFluxFVM(
     const double *__restrict__ percoll,
     const double *__restrict__ R,
     const double *__restrict__ I_face,
-    const double *__restrict__ gradWing) {
+    const double *__restrict__ gradWing,
+    double *__restrict__ faceVelocity) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x; // face index: 0 ... N
     const int j = blockIdx.y * blockDim.y + threadIdx.y; // rho index
 
@@ -295,6 +296,9 @@ __global__ void CuKernelComputeFluxFVM(
     // No-flux boundaries.
     if (i == 0 || i == N) {
         J[fidx] = 0.0;
+        if (faceVelocity != nullptr) {
+            faceVelocity[fidx] = 0.0;
+        }
         return;
     }
 
@@ -318,6 +322,10 @@ __global__ void CuKernelComputeFluxFVM(
 
     const double v_face =
         -d_cfg.model.alpha * rp - d_cfg.model.beta * I_face_value;
+
+    if (faceVelocity != nullptr) {
+        faceVelocity[fidx] = v_face;
+    }
 
     const double phi_left = phi[j * N + left];
     const double phi_right = phi[j * N + right];

@@ -181,10 +181,19 @@ int runSim(SimConfig &cfg) {
     // std::vector<double> h_dJ(N * N);
     // std::vector<double> h_gradWing(N);
     std::vector<double> h_percoll(numZCells);
+    std::vector<double> h_faceVelocity;
+    std::vector<double> h_faceFlux;
+    if (BITMAP_CONTAINS(cfg.run.store, FACE_VELOCITY)) {
+        h_faceVelocity.resize(numFluxPoints);
+    }
+    if (BITMAP_CONTAINS(cfg.run.store, FACE_FLUX)) {
+        h_faceFlux.resize(numFluxPoints);
+    }
 
     printf("Allocating device memory...\n");
     double *d_R = nullptr, *d_phi = nullptr, *d_F = nullptr, *d_intKernel = nullptr, *d_I = nullptr, *d_psi = nullptr, *d_psiIntp = nullptr,
-           *d_IIntp = nullptr, *d_percoll = nullptr, *d_gradWing = nullptr, *d_b = nullptr, *d_c = nullptr, *d_d = nullptr, *d_Iface = nullptr;
+           *d_IIntp = nullptr, *d_percoll = nullptr, *d_gradWing = nullptr, *d_b = nullptr, *d_c = nullptr, *d_d = nullptr, *d_Iface = nullptr,
+           *d_faceVelocity = nullptr;
 
     cudaMalloc(&d_R, TO_BYTES(numRhoPoints));
     cudaMalloc(&d_phi, TO_BYTES(numPhiPoints));
@@ -194,6 +203,9 @@ int runSim(SimConfig &cfg) {
     cudaMalloc(&d_percoll, TO_BYTES(numZCells));
     cudaMalloc(&d_gradWing, TO_BYTES(numZCells));
     cudaMalloc(&d_Iface, TO_BYTES(numZFaces));
+    if (BITMAP_CONTAINS(cfg.run.store, FACE_VELOCITY)) {
+        cudaMalloc(&d_faceVelocity, TO_BYTES(numFluxPoints));
+    }
 
     cudaEvent_t startEvent = nullptr;
     cudaEvent_t stopEvent = nullptr;
@@ -213,6 +225,7 @@ int runSim(SimConfig &cfg) {
         cudaFree(d_I);
         cudaFree(d_psi);
         cudaFree(d_Iface);
+        cudaFree(d_faceVelocity);
         cudaFree(d_percoll);
         cudaFree(d_gradWing);
 
@@ -403,7 +416,8 @@ int runSim(SimConfig &cfg) {
             d_percoll,
             d_R,
             d_Iface,
-            d_gradWing);
+            d_gradWing,
+            d_faceVelocity);
 
         const dim3 update_block_dim(BLOCK_SIZE, BLOCK_SIZE, 1);
         const dim3 update_grid_dim(
@@ -417,8 +431,22 @@ int runSim(SimConfig &cfg) {
             checkCuda(cudaMemcpy(h_phi.data(), d_phi, TO_BYTES(numPhiPoints), cudaMemcpyDeviceToHost));
             checkCuda(cudaMemcpy(h_psi.data(), d_psi, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
             checkCuda(cudaMemcpy(h_percoll.data(), d_percoll, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
+            if (BITMAP_CONTAINS(cfg.run.store, FACE_VELOCITY)) {
+                checkCuda(cudaMemcpy(h_faceVelocity.data(), d_faceVelocity, TO_BYTES(numFluxPoints), cudaMemcpyDeviceToHost));
+            }
+            if (BITMAP_CONTAINS(cfg.run.store, FACE_FLUX)) {
+                checkCuda(cudaMemcpy(h_faceFlux.data(), d_F, TO_BYTES(numFluxPoints), cudaMemcpyDeviceToHost));
+            }
 
-            if (ts_append(&w, t, cfg.run.store, h_phi.data(), h_psi.data(), h_percoll.data()) != 0) {
+            if (ts_append(
+                    &w,
+                    t,
+                    cfg.run.store,
+                    h_phi.data(),
+                    h_psi.data(),
+                    h_percoll.data(),
+                    h_faceVelocity.empty() ? nullptr : h_faceVelocity.data(),
+                    h_faceFlux.empty() ? nullptr : h_faceFlux.data()) != 0) {
                 fprintf(stderr, "Failed to append timestep data to %s\n", outFilePath);
                 cleanup();
                 return failRun("Failed to append timestep data", i, 0.0, 0.0, t);
