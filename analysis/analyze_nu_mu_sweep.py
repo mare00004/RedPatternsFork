@@ -26,20 +26,18 @@ def _():
     import pandas as pd
     import altair as alt
     import pyarrow  # noqa: F401
-    from red_patterns import RunData, plot_psi
+    from red_patterns import RunData, get_rbc_cmap, plot_psi
 
-    return Path, RunData, alt, mo, np, pd, plot_psi, plt
+    return Path, RunData, alt, get_rbc_cmap, mo, np, pd, plot_psi, plt
 
 
 @app.cell
-def _(Path, RunData, plot_psi, plt):
+def _(Path, RunData, get_rbc_cmap, plot_psi, plt):
     def plot_psi_file(run_h5: Path, **kwargs) -> plt.Figure:
         run = RunData.from_h5(run_h5, load_fields=False)
-        # Use a standard colormap; the repo's custom colormap can render poorly
-        # depending on environment.
-        kwargs.setdefault("cmap", "viridis")
+        kwargs.setdefault("cmap", get_rbc_cmap())
         kwargs.setdefault("vmin", 0.0)
-        kwargs.setdefault("vmax", 0.5)
+        kwargs.setdefault("vmax", 100.0)
         return plot_psi(run, **kwargs)
 
     return
@@ -434,7 +432,7 @@ def _(df_plot, mo, ui_rmse_heatmap):
 
 
 @app.cell
-def _(RunData, mo, plt, psi_ref, ref_h5, selected_run_h5):
+def _(RunData, get_rbc_cmap, mo, plt, psi_ref, ref_h5, selected_run_h5):
     # Plot reference psi(t,z) next to the selected run.
     mo.stop(not selected_run_h5, mo.md("Click a (NU, MU) cell to pick a run."))
 
@@ -450,38 +448,37 @@ def _(RunData, mo, plt, psi_ref, ref_h5, selected_run_h5):
         ),
     )
 
-    vmin = float(min(psi_ref.min(), psi_sel.min()))
-    vmax = float(max(psi_ref.max(), psi_sel.max()))
-
     _fig, (_ax0, _ax1) = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
     # Flip axes so x=t and y=z (psi is stored as psi[t, z]).
     im0 = _ax0.imshow(
-        psi_ref.T,
+        100.0 * psi_ref.T,
         origin="lower",
         aspect="auto",
         interpolation="nearest",
-        vmin=vmin,
-        vmax=vmax,
-        cmap="viridis",
+        vmin=0.0,
+        vmax=100.0,
+        cmap=get_rbc_cmap(),
     )
     _ax0.set_title("Reference $\\psi(t,z)$")
     _ax0.set_xlabel("t index")
     _ax0.set_ylabel("z index")
 
     im1 = _ax1.imshow(
-        psi_sel.T,
+        100.0 * psi_sel.T,
         origin="lower",
         aspect="auto",
         interpolation="nearest",
-        vmin=vmin,
-        vmax=vmax,
-        cmap="viridis",
+        vmin=0.0,
+        vmax=100.0,
+        cmap=get_rbc_cmap(),
     )
     _ax1.set_title("Selected $\\psi(t,z)$")
     _ax1.set_xlabel("t index")
     _ax1.set_ylabel("z index")
 
-    _fig.colorbar(im1, ax=[_ax0, _ax1], shrink=0.9, pad=0.02, label="$\\psi$")
+    _fig.colorbar(
+        im1, ax=[_ax0, _ax1], shrink=0.9, pad=0.02, label=r"$\psi$ [%]"
+    )
     _ui_psi = mo.ui.matplotlib(_ax0)
     _ui_psi
     return

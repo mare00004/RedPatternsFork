@@ -22,9 +22,9 @@ def _():
     import marimo as mo
 
     # Import the shared module we just created
-    from red_patterns import RunData, plot_psi
+    from red_patterns import RunData, get_rbc_cmap, plot_psi
 
-    return Path, RunData, mo, pd, plot_psi
+    return Path, RunData, get_rbc_cmap, mo, pd, plot_psi
 
 
 @app.cell
@@ -182,7 +182,7 @@ def _(get_df, mo):
 
 
 @app.cell
-def _(RunData, mo, plot_psi, table):
+def _(RunData, get_rbc_cmap, mo, plot_psi, table):
     # Ensure a table exists and has values
     if isinstance(table, mo.ui.table):
         selection = table.value
@@ -192,14 +192,26 @@ def _(RunData, mo, plot_psi, table):
             _result = mo.md("**Select a run to plot!**")
         elif count == 1:
             run_data = RunData.from_h5(selection.iloc[0]["run_h5"])
-            _result = plot_psi(run_data, vmin=0.0, vmax=0.5)
+            _result = plot_psi(
+                run_data, vmin=0.0, vmax=100.0, cmap=get_rbc_cmap()
+            )
         elif count == 2:
             run_data_1 = RunData.from_h5(selection.iloc[0]["run_h5"])
             run_data_2 = RunData.from_h5(selection.iloc[1]["run_h5"])
             _result = mo.hstack(
                 [
-                    plot_psi(run_data_1, vmin=0.0, vmax=0.5),
-                    plot_psi(run_data_2, vmin=0.0, vmax=0.5),
+                    plot_psi(
+                        run_data_1,
+                        vmin=0.0,
+                        vmax=100.0,
+                        cmap=get_rbc_cmap(),
+                    ),
+                    plot_psi(
+                        run_data_2,
+                        vmin=0.0,
+                        vmax=100.0,
+                        cmap=get_rbc_cmap(),
+                    ),
                 ],
                 align="center",
                 gap=1,

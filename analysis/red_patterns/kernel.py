@@ -438,7 +438,8 @@ def compute_kernel(cfg: KernelConfig) -> KernelResult:
         kernel_n=cfg.kernel_n * _DENSE_SCALE,
         kernel_dz=fine_dz / _DENSE_SCALE,
     )
-    nu, mu = calculate_nu_mu(x_dense, K_dense)
+    # nu, mu = calculate_nu_mu(x_dense, K_dense)
+    nu, mu = calculate_nu_mu(x_sample, K_sample)
     return KernelResult(
         fine_dz=fine_dz,
         x_sample=x_sample,

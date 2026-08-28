@@ -160,7 +160,9 @@ def cell_phi_cfg(phi_ui):
 def _(phi_result):
     _phi_figure = plot_phi(phi_result)
 
-    _psi_initial = 100.0 * np.asarray(phi_result.phi_values, dtype=np.float64).sum(axis=0)
+    _psi_initial = 100.0 * np.asarray(phi_result.phi_values, dtype=np.float64).sum(
+        axis=0
+    )
     _z_cm = 100.0 * np.asarray(phi_result.z, dtype=np.float64)
     _psi_fig, _psi_ax = plt.subplots(constrained_layout=True)
     _psi_ax.plot(_z_cm, _psi_initial, color="#2563eb", linewidth=1.5)
@@ -243,7 +245,9 @@ def cell_sim_controls():
             "sigmoid": mo.md("Sigmoid pressure gradient."),
             "linear": mo.md("Linear pressure gradient."),
             "zero": mo.md("Zero pressure gradient (no driving term)."),
-            "linear-full": mo.md("Linear pressure gradient over the whole domain (no wings)."),
+            "linear-full": mo.md(
+                "Linear pressure gradient over the whole domain (no wings)."
+            ),
         },
         value="sigmoid",
     )
@@ -369,7 +373,7 @@ def cell_run(
             N=phi_cfg.N,
             t_final=float(ui_t_final.value),
             dt=float(ui_dt.value),
-            storeTime=int(ui_storeTime.value),
+            storeTime=float(ui_storeTime.value),
             nu=0.0,
             mu=0.0,
             store_fields=run_store_fields,
@@ -387,6 +391,7 @@ def cell_run(
                 height=24,
             )
         )
+
         def _run_with_progress(_label, _command, _output_dir):
             _progress_path = _output_dir / "progress.json"
             _snapshot = None
@@ -401,12 +406,12 @@ def cell_run(
                     _last_seen = time.monotonic()
                     _total = max(1, int(_snapshot.get("total_steps", 1)))
                     _progress.max_value = _total
-                    _progress.value = min(
-                        _total, max(0, int(_snapshot.get("step", 0)))
-                    )
+                    _progress.value = min(_total, max(0, int(_snapshot.get("step", 0))))
                 _returncode = _proc.poll()
                 _age = time.monotonic() - _last_seen
-                _status = None if _snapshot is None else str(_snapshot.get("status", ""))
+                _status = (
+                    None if _snapshot is None else str(_snapshot.get("status", ""))
+                )
                 mo.output.replace(
                     mo.vstack(
                         [
@@ -482,7 +487,9 @@ def cell_inspect_run(run_h5, run_no_interaction_h5):
             or not run_h5.exists()
             or not run_no_interaction_h5.exists()
         ),
-        mo.md("Both interaction and no-interaction simulations must finish to inspect the run."),
+        mo.md(
+            "Both interaction and no-interaction simulations must finish to inspect the run."
+        ),
     )
     inspect_run = RunData.from_h5(run_h5, load_fields=False)
     inspect_no_interaction_run = RunData.from_h5(
@@ -713,9 +720,7 @@ def _(fft_time_index, inspect_run, inspect_time, run_h5, run_store_fields):
             _flux_z_grid, _flux_rho_grid = np.meshgrid(
                 _z_face[_face_indices], inspect_run.rho[_flux_rho_indices]
             )
-            _z_spacing = (
-                float(np.median(np.diff(_z_face))) if _face_count > 1 else 1.0
-            )
+            _z_spacing = float(np.median(np.diff(_z_face))) if _face_count > 1 else 1.0
             _sample_z_spacing = (
                 float(np.median(np.diff(_z_face[_face_indices])))
                 if _face_indices.size > 1
@@ -1015,7 +1020,9 @@ def _(
     _non_dc_amplitudes = difference_fft_amplitudes[:, 1:]
     _dominant_mode_indices = 1 + np.argmax(_non_dc_amplitudes, axis=1)
     _has_nonzero_mode = np.any(_non_dc_amplitudes > 0.0, axis=1)
-    difference_fft_dominant_mode = np.where(_has_nonzero_mode, _dominant_mode_indices, -1)
+    difference_fft_dominant_mode = np.where(
+        _has_nonzero_mode, _dominant_mode_indices, -1
+    )
     difference_fft_dominant_wavelength = np.full(
         difference_fft_dominant_mode.shape, np.nan, dtype=np.float64
     )
@@ -1082,9 +1089,9 @@ def _(
     psi_difference_panel,
     psi_panel,
 ):
-    _difference_dominant_wavelength_cm = 100.0 * difference_fft_dominant_wavelength[
-        fft_time_index
-    ]
+    _difference_dominant_wavelength_cm = (
+        100.0 * difference_fft_dominant_wavelength[fft_time_index]
+    )
     _difference_dominant_text = (
         f"At step `{fft_time_index}`, Δψ has no non-DC FFT amplitude."
         if not np.isfinite(_difference_dominant_wavelength_cm)
