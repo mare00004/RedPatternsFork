@@ -354,7 +354,7 @@ def cell_run(
             N=phi_cfg.N,
             t_final=float(ui_t_final.value),
             dt=float(ui_dt.value),
-            storeTime=int(ui_storeTime.value),
+            storeTime=float(ui_storeTime.value),
             nu=_nu,
             mu=_mu,
             store_fields=run_store_fields,
