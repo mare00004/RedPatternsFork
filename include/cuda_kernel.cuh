@@ -28,7 +28,7 @@ __global__ void CuKernelInte(double *phi, double *psi);
 __global__ void CuKernelComputeFluxFVM(
     const double *__restrict__ phi,
     double *__restrict__ J,
-    const double *__restrict__ percoll,
+    const double *__restrict__ p,
     const double *__restrict__ R,
     const double *__restrict__ I_face,
     const double *__restrict__ gradWing,

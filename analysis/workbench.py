@@ -800,12 +800,26 @@ def _(fft_time_index, inspect_run, inspect_time, run_h5, run_store_fields):
         percoll_panel = None
     else:
         with h5py.File(run_h5, "r") as _h5:
-            _percoll = np.asarray(
-                _h5["fields/percoll"][fft_time_index], dtype=np.float64
+            _percoll_dataset = _h5["fields/percoll"]
+            _percoll = np.asarray(_percoll_dataset[fft_time_index], dtype=np.float64)
+            _definition_attr = _percoll_dataset.attrs.get("definition", "")
+            _percoll_definition = (
+                _definition_attr.decode("utf-8")
+                if isinstance(_definition_attr, bytes)
+                else str(_definition_attr)
             )
 
+        # New runs store the physical density directly. Runs from the brief
+        # offset convention store p_fluid - p0; older runs store p0 - p_fluid.
+        if _percoll_definition == "percoll = p_fluid":
+            _physical_percoll = _percoll
+        elif _percoll_definition == "percoll = p_fluid - p0":
+            _physical_percoll = 1100.0 + _percoll
+        else:
+            _physical_percoll = 1100.0 - _percoll
+
         _percoll_fig, _percoll_ax = plt.subplots(constrained_layout=True)
-        _percoll_ax.plot(100.0 * inspect_run.z, 1100.0 - _percoll, color="#7c3aed")
+        _percoll_ax.plot(100.0 * inspect_run.z, _physical_percoll, color="#7c3aed")
         _percoll_ax.set_xlabel(r"$z$ [cm]")
         _percoll_ax.set_ylabel("Percoll field")
         _percoll_ax.set_title(

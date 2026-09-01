@@ -448,9 +448,9 @@ int ts_create(
     /* /fields/percoll -> extendable along T (T, N) of float64 */
     if (BITMAP_CONTAINS(cfg->run.store, PERCOLL)) {
         w->dsetPercoll = createExtendableF64Dataset(g_fields, "percoll", 2, (hsize_t[]){ 0, N }, (hsize_t[]){ H5S_UNLIMITED, N }, (hsize_t[]){ 1, N });
-        writeStrAttr(w->dsetPercoll, "long_name", "time series of percoll density");
-        // TODO: should be g/L
-        writeStrAttr(w->dsetPercoll, "units", "???");
+        writeStrAttr(w->dsetPercoll, "long_name", "physical Percoll density p(z, t)");
+        writeStrAttr(w->dsetPercoll, "definition", "percoll = p_fluid");
+        writeStrAttr(w->dsetPercoll, "units", "g/L");
         writeStrAttr(w->dsetPercoll, "coordinates", "time z");
     }
 
@@ -496,7 +496,7 @@ int ts_append(
     StoreBitMap store,
     const double *phi,
     const double *psi,
-    const double *percoll,
+    const double *p,
     const double *faceVelocity,
     const double *faceFlux) {
     const hsize_t N = w->N;
@@ -561,7 +561,7 @@ int ts_append(
         hsize_t mdims[2] = { 1, N };
         hid_t mspace = H5Screate_simple(2, mdims, NULL);
 
-        if (H5Dwrite(w->dsetPercoll, H5T_NATIVE_DOUBLE, mspace, fspace, H5P_DEFAULT, percoll)) {
+        if (H5Dwrite(w->dsetPercoll, H5T_NATIVE_DOUBLE, mspace, fspace, H5P_DEFAULT, p)) {
             H5Sclose(mspace);
             H5Sclose(fspace);
             return -1;

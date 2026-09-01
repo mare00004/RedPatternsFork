@@ -56,7 +56,7 @@ __device__ __forceinline__ double piecewise_func(double x) {
     }
 }
 
-__global__ void CuKernelGradLinear(double *percoll) {
+__global__ void CuKernelGradLinear(double *p) {
     const std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= d_cfg.run.N) {
         return;
@@ -64,14 +64,16 @@ __global__ void CuKernelGradLinear(double *percoll) {
 
     const double dz = d_cfg.run.DZ;
     const double z = ((double)idx + 0.5) * dz;
-    percoll[idx] = piecewise_func(z);
+    // Store the physical Percoll density p = P0 + Q. The flipped z axis runs
+    // upward, so the physical density decreases with z.
+    p[idx] = P0 - piecewise_func(z);
 }
 
 /*****************
  * LINEAR (FULL) *
  *****************/
 
-__global__ void CuKernelGradLinearFull(double *percoll) {
+__global__ void CuKernelGradLinearFull(double *p) {
     const std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= d_cfg.run.N) {
         return;
@@ -79,20 +81,20 @@ __global__ void CuKernelGradLinearFull(double *percoll) {
 
     const double dz = d_cfg.run.DZ;
     const double z = ((double)idx + 0.5) * dz;
-    percoll[idx] = p_func(z - d_cfg.run.wingL);
+    p[idx] = P0 - p_func(z - d_cfg.run.wingL);
 }
 
 /*********
  * ZERO   *
  **********/
 
-__global__ void CuKernelGradZero(double *percoll) {
+__global__ void CuKernelGradZero(double *p) {
     const std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= d_cfg.run.N) {
         return;
     }
 
-    percoll[idx] = 0.0;
+    p[idx] = P0;
 }
 
 /*********************************************************
@@ -130,14 +132,14 @@ __device__ __forceinline__ double sigmoid_value_at_index(int i, int N, double t)
     return delta_1 * pow(t, delta_2) * (chi / denom);
 }
 
-__global__ void CuKernelGradSigmoid(double *percoll, double t) {
+__global__ void CuKernelGradSigmoid(double *p, double t) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     int N = d_cfg.run.N;
     if (i >= N) {
         return;
     }
 
-    percoll[i] = sigmoid_value_at_index(i, N, t);
+    p[i] = sigmoid_value_at_index(i, N, t);
 
     const double dz = d_cfg.run.sysL / ((double)N - 1.0);
     int wingL = int((d_cfg.run.wingL / dz) + 0.5);
@@ -165,10 +167,14 @@ __global__ void CuKernelGradSigmoid(double *percoll, double t) {
     c = r2 - r3 * x2 + x2 * x2 * a;
 
     if (i <= wingL) {
-        percoll[i] = a * i * i + b * i + c;
+        p[i] = a * i * i + b * i + c;
     }
     if (i >= N - 1 - wingL) {
         const double mirrored = double(N - 1 - i);
-        percoll[i] = -(a * mirrored * mirrored + b * mirrored + c);
+        p[i] = -(a * mirrored * mirrored + b * mirrored + c);
     }
+
+    // Convert the profile expressed in the old code convention into the true
+    // physical Percoll density p = P0 + Q.
+    p[i] = P0 - p[i];
 }

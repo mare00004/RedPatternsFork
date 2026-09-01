@@ -40,7 +40,7 @@ int ts_append(
     StoreBitMap store,
     const double *phi,
     const double *psi,
-    const double *percoll,
+    const double *p,
     const double *faceVelocity,
     const double *faceFlux);
 

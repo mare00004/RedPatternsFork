@@ -263,20 +263,20 @@ __global__ void CuKernelConv(double *psi, double *I, double *convKernel, int M, 
 }
 
 __device__ inline double pressure_cell_value(
-    const double *__restrict__ percoll,
+    const double *__restrict__ p,
     const double *__restrict__ gradWing,
     int idx,
     int N) {
     // return (idx > wingL && idx < N - 1 - wingL)
-    //            ? percoll[idx]
+    //            ? p[idx]
     //            : gradWing[idx];
-    return percoll[idx];
+    return p[idx];
 }
 
 __global__ void CuKernelComputeFluxFVM(
     const double *__restrict__ phi,
     double *__restrict__ J,
-    const double *__restrict__ percoll,
+    const double *__restrict__ p,
     const double *__restrict__ R,
     const double *__restrict__ I_face,
     const double *__restrict__ gradWing,
@@ -305,23 +305,24 @@ __global__ void CuKernelComputeFluxFVM(
     const int left = i - 1;
     const int right = i;
 
-    const double P_left =
-        pressure_cell_value(percoll, gradWing, left, N);
+    const double p_left =
+        pressure_cell_value(p, gradWing, left, N);
 
-    const double P_right =
-        pressure_cell_value(percoll, gradWing, right, N);
+    const double p_right =
+        pressure_cell_value(p, gradWing, right, N);
 
-    const double P_face = 0.5 * (P_left + P_right);
+    // Physical Percoll density p(z, t) at the face.
+    const double p_face = 0.5 * (p_left + p_right);
 
     // No smoothing of I_face: the canonical taylor branch uses I directly,
     // so any low-pass filter here biases the linear-stability spectrum of
     // the pattern-formation instability and changes the selected wavelength.
     const double I_face_value = I_face[i];
 
-    const double rp = R[j] + P_face - P0;
+    const double density_difference = R[j] - p_face;
 
     const double v_face =
-        -d_cfg.model.alpha * rp - d_cfg.model.beta * I_face_value;
+        -d_cfg.model.alpha * density_difference - d_cfg.model.beta * I_face_value;
 
     if (faceVelocity != nullptr) {
         faceVelocity[fidx] = v_face;

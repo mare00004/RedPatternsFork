@@ -279,17 +279,17 @@ def phi_linear_full_ridge(
 
     This initial phi should be the equilibrium state of the ``LINEAR_FULL`` gradient
 
-    The CUDA implementation uses cell centers and maps its full gradient from
-    ``-15`` to ``+15`` g/L relative to the central density. This generator
-    evaluates those same centers, shifts them by ``rho_center``, and places
-    each column in the nearest exported rho bin.
+    The CUDA implementation uses cell centers and stores the physical Percoll
+    density from ``1115`` to ``1085`` g/L along the flipped z axis. This
+    generator evaluates the corresponding neutral-buoyancy density, shifts it
+    by ``rho_center``, and places each column in the nearest exported rho bin.
     """
     N_rho, N_z = rho.shape[0], z.shape[0]
     if N_z == 0:
         return np.zeros((N_rho, 0), dtype=np.float64)
 
-    # In ``p_func``: DR = 30 / N and z is the cell center.  Substituting the
-    # simulator's full-domain geometry yields this density for each z index.
+    # With Q = p_fluid - p0 and z at cell centers, the simulator's full-domain
+    # geometry yields this neutral-buoyancy density for each z index.
     z_indices = np.arange(N_z, dtype=np.float64)
     gradient_rho = rho_center + 15.0 - 30.0 * (z_indices + 0.5) / N_z
     insertion = np.searchsorted(rho, gradient_rho, side="left")
