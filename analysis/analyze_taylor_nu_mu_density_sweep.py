@@ -87,7 +87,7 @@ def _(Path, mo):
 
 
 @app.cell
-def _(Path, TaylorRun, load_runs_jsonl, pd):
+def _(Path, TaylorRun, load_runs_jsonl, np, pd):
     def scan_sweep(sweep_dir: Path) -> pd.DataFrame:
         """Read Taylor metadata from runs.jsonl and locate expected result files."""
         runs_path = sweep_dir / "runs.jsonl"
@@ -122,9 +122,93 @@ def _(Path, TaylorRun, load_runs_jsonl, pd):
             dataframe = dataframe.sort_values(
                 ["psi_avg", "MU", "NU", "run_id"], kind="stable"
             ).reset_index(drop=True)
+
+            # NU = MU = 0 is the no-interaction Taylor reference. Pair it only
+            # with runs that share every other simulation and phi setting.
+            comparison_columns = [
+                column
+                for column in dataframe.columns
+                if column
+                not in {"run_id", "NU", "MU", "run_h5", "h5_exists"}
+            ]
+            baseline_mask = np.isclose(
+                dataframe["NU"], 0.0, rtol=0.0, atol=1e-300
+            ) & np.isclose(
+                dataframe["MU"], 0.0, rtol=0.0, atol=1e-300
+            )
+            dataframe["is_no_interaction"] = baseline_mask
+            dataframe["baseline_run_id"] = None
+            dataframe["baseline_run_h5"] = None
+            dataframe["comparison_status"] = "baseline not found"
+
+            baselines = dataframe.loc[baseline_mask]
+            for index, row in dataframe.loc[~baseline_mask].iterrows():
+                matches = baselines
+                for column in comparison_columns:
+                    if pd.isna(row[column]):
+                        matches = matches[matches[column].isna()]
+                    else:
+                        matches = matches[matches[column] == row[column]]
+                if len(matches) == 1:
+                    baseline = matches.iloc[0]
+                    dataframe.at[index, "baseline_run_id"] = baseline["run_id"]
+                    dataframe.at[index, "baseline_run_h5"] = baseline["run_h5"]
+                    dataframe.at[index, "comparison_status"] = "pending FFT"
+                elif len(matches) > 1:
+                    dataframe.at[index, "comparison_status"] = "ambiguous baseline"
         return dataframe
 
     return (scan_sweep,)
+
+
+@app.cell
+def _(Path, RunData, np):
+    def delta_dominant_wavelength_series(
+        interaction_h5: str | Path, baseline_h5: str | Path
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Return time, dominant mode, and wavelength for interaction minus baseline ψ."""
+        interaction = RunData.from_h5(Path(interaction_h5), load_fields=False)
+        baseline = RunData.from_h5(Path(baseline_h5), load_fields=False)
+        interaction_psi = np.asarray(interaction.load_psi(), dtype=np.float64)
+        baseline_psi = np.asarray(baseline.load_psi(), dtype=np.float64)
+        time = np.asarray(interaction.time, dtype=np.float64)
+        z = np.asarray(interaction.z, dtype=np.float64)
+
+        if (
+            interaction_psi.shape != baseline_psi.shape
+            or not np.array_equal(time, np.asarray(baseline.time, dtype=np.float64))
+            or not np.array_equal(z, np.asarray(baseline.z, dtype=np.float64))
+        ):
+            raise ValueError("interaction and no-interaction ψ grids differ")
+        if interaction_psi.ndim != 2 or interaction_psi.shape[1] < 2:
+            raise ValueError("ψ requires at least two z points for an FFT")
+        if not np.all(np.isfinite(interaction_psi)) or not np.all(
+            np.isfinite(baseline_psi)
+        ):
+            raise ValueError("ψ contains non-finite values")
+
+        dz = float(z[1] - z[0])
+        if not np.isfinite(dz) or dz <= 0.0:
+            raise ValueError("z coordinates must be strictly increasing")
+        difference = interaction_psi - baseline_psi
+        coefficients = np.fft.rfft(
+            difference - difference.mean(axis=1, keepdims=True), axis=1
+        )
+        amplitudes = np.abs(coefficients)
+        if amplitudes.shape[1] < 2:
+            raise ValueError("ψ has no non-DC FFT modes")
+
+        mode_candidates = 1 + np.argmax(amplitudes[:, 1:], axis=1)
+        has_nonzero_mode = np.any(amplitudes[:, 1:] > 0.0, axis=1)
+        dominant_modes = np.where(has_nonzero_mode, mode_candidates, -1)
+        spatial_frequencies = np.fft.rfftfreq(z.size, d=dz)
+        wavelengths = np.full(time.shape, np.nan, dtype=np.float64)
+        wavelengths[has_nonzero_mode] = 1.0 / spatial_frequencies[
+            mode_candidates[has_nonzero_mode]
+        ]
+        return time, dominant_modes, wavelengths
+
+    return (delta_dominant_wavelength_series,)
 
 
 @app.cell
@@ -190,12 +274,33 @@ def _(mo, sweep_df):
 
 
 @app.cell
-def _(mo, sweep_df, ui_density):
+def _(delta_dominant_wavelength_series, mo, np, sweep_df, ui_density):
     mo.stop(sweep_df is None or sweep_df.empty, mo.md("No heatmap data yet."))
-    density_df = sweep_df[sweep_df["psi_avg"] == float(ui_density.value)].copy()
+    density_df = sweep_df[
+        (sweep_df["psi_avg"] == float(ui_density.value))
+        & ~sweep_df["is_no_interaction"]
+    ].copy()
+    density_df["delta_dominant_wavelength_cm"] = np.nan
+    for _index, _row in density_df.iterrows():
+        _baseline_h5 = _row["baseline_run_h5"]
+        if (
+            _row["comparison_status"] != "pending FFT"
+            or not bool(_row["h5_exists"])
+            or not _baseline_h5
+        ):
+            continue
+        try:
+            _, _, _wavelengths = delta_dominant_wavelength_series(
+                _row["run_h5"], _baseline_h5
+            )
+            density_df.at[_index, "delta_dominant_wavelength_cm"] = (
+                100.0 * _wavelengths[-1]
+            )
+            density_df.at[_index, "comparison_status"] = "ready"
+        except (OSError, ValueError) as _error:
+            density_df.at[_index, "comparison_status"] = str(_error)
     density_df["NU_label"] = density_df["NU"].map(lambda value: f"{value:.3e}")
     density_df["MU_label"] = density_df["MU"].map(lambda value: f"{value:.3e}")
-    density_df["heatmap_value"] = 1.0
     return (density_df,)
 
 
@@ -217,9 +322,9 @@ def _(alt, density_df, mo, ui_density):
                 sort=alt.SortField(field="MU", order="ascending"),
             ),
             color=alt.Color(
-                "heatmap_value:Q",
-                title="Placeholder value",
-                scale=alt.Scale(domain=[0.0, 1.0], scheme="blues"),
+                "delta_dominant_wavelength_cm:Q",
+                title=r"Final Δψ dominant λ [cm]",
+                scale=alt.Scale(scheme="viridis"),
             ),
             opacity=alt.condition(click, alt.value(1.0), alt.value(0.45)),
             tooltip=[
@@ -229,13 +334,23 @@ def _(alt, density_df, mo, ui_density):
                 alt.Tooltip("psi_avg:Q", title="average density", format=".6g"),
                 alt.Tooltip("phi_type:N", title="initial phi"),
                 alt.Tooltip("h5_exists:N", title="run.h5 available"),
+                alt.Tooltip("baseline_run_id:N", title="no-interaction run"),
+                alt.Tooltip(
+                    "delta_dominant_wavelength_cm:Q",
+                    title="final Δψ dominant λ [cm]",
+                    format=".6g",
+                ),
+                alt.Tooltip("comparison_status:N", title="comparison status"),
             ],
         )
         .add_params(click)
         .properties(
             width=500,
             height=430,
-            title=f"Taylor runs at average density {float(ui_density.value):.6g}",
+            title=(
+                f"Final Δψ dominant wavelength at average density "
+                f"{float(ui_density.value):.6g}"
+            ),
         )
     )
     ui_heatmap = mo.ui.altair_chart(heatmap)
@@ -278,7 +393,8 @@ def _(mo, selected_row):
         f"`{selected_row['run_id']}` — ν = `{float(selected_row['NU']):.3e}`, "
         f"μ = `{float(selected_row['MU']):.3e}`, "
         f"$\\langle\\psi\\rangle$ = `{float(selected_row['psi_avg']):.6g}`  \n"
-        f"Expected result: `{selected_row['run_h5']}`"
+        f"Interaction result: `{selected_row['run_h5']}`  \n"
+        f"No-interaction reference: `{selected_row['baseline_run_id']}`"
     )
     selected_summary
     return
@@ -287,6 +403,15 @@ def _(mo, selected_row):
 @app.cell
 def _(Path, RunData, mo, selected_row):
     selected_run_h5 = Path(selected_row["run_h5"])
+    baseline_run_h5 = selected_row["baseline_run_h5"]
+    mo.stop(
+        selected_row["comparison_status"] != "ready" or not baseline_run_h5,
+        mo.callout(
+            "This run has no usable no-interaction comparison: "
+            f"{selected_row['comparison_status']}.",
+            kind="warn",
+        ),
+    )
     mo.stop(
         not bool(selected_row["h5_exists"]),
         mo.callout(
@@ -299,8 +424,11 @@ def _(Path, RunData, mo, selected_row):
         selected_run.n_saved < 2,
         mo.callout("The selected run needs at least two saved timesteps.", kind="warn"),
     )
-    selected_run_md = mo.md(f"**Active file:** `{selected_run_h5}`")
-    return selected_run, selected_run_h5, selected_run_md
+    selected_run_md = mo.md(
+        f"**Interaction file:** `{selected_run_h5}`  \n"
+        f"**No-interaction file:** `{baseline_run_h5}`"
+    )
+    return baseline_run_h5, selected_run, selected_run_h5, selected_run_md
 
 
 @app.cell
@@ -309,6 +437,16 @@ def _(np, selected_run):
     inspect_time = np.asarray(selected_run.time, dtype=np.float64)
     inspect_z = np.asarray(selected_run.z, dtype=np.float64)
     return inspect_psi, inspect_time, inspect_z
+
+
+@app.cell
+def _(baseline_run_h5, delta_dominant_wavelength_series, selected_run_h5):
+    (
+        delta_time,
+        delta_dominant_mode,
+        delta_dominant_wavelength,
+    ) = delta_dominant_wavelength_series(selected_run_h5, baseline_run_h5)
+    return delta_dominant_mode, delta_dominant_wavelength, delta_time
 
 
 @app.cell
@@ -346,6 +484,49 @@ def _(inspect_z, mo):
 def _(fft_time_slider):
     fft_time_index = int(fft_time_slider.value["value"])
     return (fft_time_index,)
+
+
+@app.cell
+def _(
+    delta_dominant_mode,
+    delta_dominant_wavelength,
+    delta_time,
+    fft_time_index,
+    mo,
+    np,
+    plt,
+):
+    _delta_wavelength_cm = 100.0 * delta_dominant_wavelength
+    _, delta_wavelength_axis = plt.subplots(constrained_layout=True)
+    delta_wavelength_axis.plot(
+        delta_time,
+        _delta_wavelength_cm,
+        color="#7c3aed",
+        linewidth=1.5,
+        drawstyle="steps-mid",
+    )
+    if np.isfinite(_delta_wavelength_cm[fft_time_index]):
+        delta_wavelength_axis.scatter(
+            [delta_time[fft_time_index]],
+            [_delta_wavelength_cm[fft_time_index]],
+            color="#dc2626",
+            zorder=3,
+            label=f"mode {delta_dominant_mode[fft_time_index]}",
+        )
+        delta_wavelength_axis.legend()
+    delta_wavelength_axis.set(
+        xlabel=r"$t\;[s]$",
+        ylabel=r"$\lambda_{\mathrm{dom}}(t)\;[\mathrm{cm}]$",
+        title=r"Dominant wavelength of $\Delta\psi$",
+    )
+    delta_dominant_wavelength_panel = mo.vstack(
+        [
+            mo.md("### Delta Psi Dominant Wavelength"),
+            mo.ui.matplotlib(delta_wavelength_axis),
+        ],
+        align="stretch",
+    )
+    return (delta_dominant_wavelength_panel,)
 
 
 @app.cell
@@ -534,19 +715,33 @@ def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time, mo, np, plt
 
 
 @app.cell(hide_code=True)
-def _(fft_coeffs, fft_dominant_mode, dominant_wavelength, fft_fastest_mode, fastest_wavelength, fft_growth_panel, fft_log_growth_rates, fft_mode_amplitude, fft_mode_panel, fft_n_points, fft_panel, fft_phases, fft_selected_mode, fft_spatial_freqs, fft_time_index, fft_time_panel, fft_wavenumbers, fft_z, fft_z_range_panel, fft_z_start_index, fft_z_stop_index, fft_dominant_panel, fft_fastest_panel, mo, phi_panel, psi_panel, selected_run_md):
+def _(delta_dominant_mode, delta_dominant_wavelength, delta_dominant_wavelength_panel, fft_coeffs, fft_dominant_mode, dominant_wavelength, fft_fastest_mode, fastest_wavelength, fft_growth_panel, fft_log_growth_rates, fft_mode_amplitude, fft_mode_panel, fft_n_points, fft_panel, fft_phases, fft_selected_mode, fft_spatial_freqs, fft_time_index, fft_time_panel, fft_wavenumbers, fft_z, fft_z_range_panel, fft_z_start_index, fft_z_stop_index, fft_dominant_panel, fft_fastest_panel, mo, np, phi_panel, psi_panel, selected_run_md):
+    _delta_wavelength_cm = 100.0 * delta_dominant_wavelength[fft_time_index]
+    delta_wavelength_text = (
+        "no non-DC FFT amplitude"
+        if not np.isfinite(_delta_wavelength_cm)
+        else (
+            f"mode `{delta_dominant_mode[fft_time_index]}` at "
+            f"`{_delta_wavelength_cm:.6g}` cm"
+        )
+    )
     summary = mo.md(
         f"Stored complex Fourier coefficients with shape `{fft_coeffs.shape}`.  \\n"
         f"FFT window uses z indices `{fft_z_start_index}:{fft_z_stop_index}` inclusive, over `{fft_n_points}` grid points.  \\n"
         f"Selected mode `{fft_selected_mode}` at step `{fft_time_index}`: `|coeff| = {fft_mode_amplitude[fft_time_index]:.6g}`, `phase = {fft_phases[fft_time_index, fft_selected_mode]:.6g}` rad, `k = {fft_wavenumbers[fft_selected_mode]:.6g}` m$^{{-1}}$.  \\n"
         f"Dominant mode `{fft_dominant_mode[fft_time_index]}`: `{100 * dominant_wavelength[fft_time_index]:.6g}` cm.  \\n"
-        f"Fastest-growing mode `{fft_fastest_mode[fft_time_index]}`: `{100 * fastest_wavelength[fft_time_index]:.6g}` cm, log-growth rate `{fft_log_growth_rates[fft_time_index, fft_fastest_mode[fft_time_index] - 1]:.6g}` s$^{{-1}}$."
+        f"Fastest-growing mode `{fft_fastest_mode[fft_time_index]}`: `{100 * fastest_wavelength[fft_time_index]:.6g}` cm, log-growth rate `{fft_log_growth_rates[fft_time_index, fft_fastest_mode[fft_time_index] - 1]:.6g}` s$^{{-1}}$.  \n"
+        f"Δψ dominant wavelength: {delta_wavelength_text}."
     )
     mo.vstack([
         selected_run_md,
         mo.hstack([phi_panel, psi_panel], align="start", gap=1),
         mo.hstack([fft_panel, fft_growth_panel], align="start", gap=1),
-        mo.hstack([fft_dominant_panel, fft_fastest_panel], align="start", gap=1),
+        mo.hstack(
+            [fft_dominant_panel, delta_dominant_wavelength_panel, fft_fastest_panel],
+            align="start",
+            gap=1,
+        ),
         mo.hstack([fft_time_panel, fft_mode_panel, fft_z_range_panel], align="start", gap=1),
         summary,
     ], align="stretch", gap=1)
