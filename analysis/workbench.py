@@ -1025,6 +1025,55 @@ def _(difference_fft_amplitudes, fft_mode_numbers, inspect_time):
 
 
 @app.cell
+def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time):
+    _non_dc_amplitudes = fft_amplitudes[:, 1:]
+    _dominant_mode_indices = 1 + np.argmax(_non_dc_amplitudes, axis=1)
+    _has_nonzero_mode = np.any(_non_dc_amplitudes > 0.0, axis=1)
+    fft_dominant_mode = np.where(_has_nonzero_mode, _dominant_mode_indices, -1)
+    fft_dominant_wavelength = np.full(
+        fft_dominant_mode.shape, np.nan, dtype=np.float64
+    )
+    fft_dominant_wavelength[_has_nonzero_mode] = fft_wavelengths[
+        _dominant_mode_indices[_has_nonzero_mode]
+    ]
+    _dominant_wavelength_cm = 100.0 * fft_dominant_wavelength
+
+    _dominant_fig, _dominant_ax = plt.subplots(constrained_layout=True)
+    _dominant_ax.plot(
+        inspect_time,
+        _dominant_wavelength_cm,
+        color="#2563eb",
+        linewidth=1.5,
+        drawstyle="steps-mid",
+    )
+    if np.isfinite(_dominant_wavelength_cm[fft_time_index]):
+        _dominant_ax.scatter(
+            [inspect_time[fft_time_index]],
+            [_dominant_wavelength_cm[fft_time_index]],
+            color="#dc2626",
+            zorder=3,
+            label=f"step {fft_time_index}",
+        )
+        _dominant_ax.legend()
+    _dominant_ax.set_xlabel(r"$t\;[s]$")
+    _dominant_ax.set_ylabel(r"$\lambda_{\mathrm{dom}}(t)\;[\mathrm{cm}]$")
+    _dominant_ax.set_title(r"Dominant wavelength of interaction $\psi$ FFT")
+
+    fft_dominant_wavelength_panel = mo.vstack(
+        [
+            mo.md("### Interaction Psi Dominant Wavelength"),
+            mo.ui.matplotlib(_dominant_ax),
+        ],
+        align="stretch",
+    )
+    return (
+        fft_dominant_mode,
+        fft_dominant_wavelength,
+        fft_dominant_wavelength_panel,
+    )
+
+
+@app.cell
 def _(
     difference_fft_amplitudes,
     fft_time_index,
@@ -1089,6 +1138,9 @@ def _(
     difference_fft_heatmap_panel,
     difference_fft_traces_panel,
     fft_amplitudes,
+    fft_dominant_mode,
+    fft_dominant_wavelength,
+    fft_dominant_wavelength_panel,
     fft_heatmap_panel,
     fft_n_points,
     fft_time_index,
@@ -1103,6 +1155,16 @@ def _(
     psi_difference_panel,
     psi_panel,
 ):
+    _dominant_wavelength_cm = 100.0 * fft_dominant_wavelength[fft_time_index]
+    _dominant_text = (
+        f"At step `{fft_time_index}`, interaction ψ has no non-DC FFT amplitude."
+        if not np.isfinite(_dominant_wavelength_cm)
+        else (
+            f"At step `{fft_time_index}`, the maximum-amplitude interaction ψ mode is "
+            f"`{fft_dominant_mode[fft_time_index]}` with wavelength "
+            f"`{_dominant_wavelength_cm:.6g}` cm."
+        )
+    )
     _difference_dominant_wavelength_cm = (
         100.0 * difference_fft_dominant_wavelength[fft_time_index]
     )
@@ -1119,6 +1181,8 @@ def _(
         f"FFT amplitude array shape `{fft_amplitudes.shape}` (time steps × modes).  \n"
         + f"Δψ FFT amplitude array shape `{difference_fft_amplitudes.shape}` (time steps × modes).  \n"
         + f"FFT window uses z indices `{fft_z_start_index}:{fft_z_stop_index}` inclusive, i.e. `{100.0 * fft_z[0]:.6g}` to `{100.0 * fft_z[-1]:.6g}` cm over `{fft_n_points}` grid points.  \n"
+        + _dominant_text
+        + "  \n"
         + _difference_dominant_text
     )
 
@@ -1138,7 +1202,10 @@ def _(
             mo.vstack(
                 [
                     mo.hstack(
-                        [fft_heatmap_panel, fft_traces_panel],
+                        [
+                            fft_heatmap_panel,
+                            fft_traces_panel,
+                        ],
                         align="start",
                         justify="start",
                         gap=1,
@@ -1155,7 +1222,15 @@ def _(
                         justify="start",
                         gap=1,
                     ),
-                    difference_fft_dominant_wavelength_panel,
+                    mo.hstack(
+                        [
+                            fft_dominant_wavelength_panel,
+                            difference_fft_dominant_wavelength_panel,
+                        ],
+                        align="start",
+                        justify="start",
+                        gap=1,
+                    ),
                 ],
                 align="start",
                 gap=1,
