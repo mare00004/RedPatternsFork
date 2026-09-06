@@ -252,14 +252,6 @@ def _(mo, sweep_df):
 
 @app.cell
 def _(mo, sweep_df):
-    mo.stop(sweep_df is None or sweep_df.empty, mo.md("No dataframe to display yet."))
-    dataframe_table = mo.ui.table(data=sweep_df, selection=None, pagination=True)
-    dataframe_table
-    return (dataframe_table,)
-
-
-@app.cell
-def _(mo, sweep_df):
     mo.stop(sweep_df is None or sweep_df.empty, mo.md("No densities are available yet."))
 
     density_values = sorted(float(value) for value in sweep_df["psi_avg"].unique())
@@ -396,8 +388,7 @@ def _(mo, selected_row):
         f"Interaction result: `{selected_row['run_h5']}`  \n"
         f"No-interaction reference: `{selected_row['baseline_run_id']}`"
     )
-    selected_summary
-    return
+    return (selected_summary,)
 
 
 @app.cell
@@ -440,6 +431,39 @@ def _(np, selected_run):
 
 
 @app.cell
+def _(baseline_run_h5, inspect_psi, inspect_time, inspect_z, mo, np, plt, RunData):
+    baseline_run = RunData.from_h5(baseline_run_h5, load_fields=False)
+    baseline_psi = np.asarray(baseline_run.load_psi(), dtype=np.float64)
+    delta_psi = inspect_psi - baseline_psi
+    delta_limit = max(float(np.max(np.abs(delta_psi))) * 100.0, 1e-12)
+    _, delta_psi_axis = plt.subplots(constrained_layout=True)
+    delta_image = delta_psi_axis.pcolormesh(
+        inspect_time,
+        100.0 * inspect_z,
+        100.0 * delta_psi.T,
+        shading="auto",
+        cmap="RdBu_r",
+        vmin=-delta_limit,
+        vmax=delta_limit,
+    )
+    delta_psi_axis.set(
+        xlabel=r"$t\;[s]$",
+        ylabel=r"$z\;[cm]$",
+        title=r"$\Delta\psi$: interaction − no interaction",
+    )
+    delta_psi_axis.figure.colorbar(
+        delta_image,
+        ax=delta_psi_axis,
+        label=r"$\Delta\psi\;[\%]$",
+    )
+    delta_psi_panel = mo.vstack(
+        [mo.md("### Delta Psi(z, t)"), mo.ui.matplotlib(delta_psi_axis)],
+        align="stretch",
+    )
+    return (delta_psi_panel,)
+
+
+@app.cell
 def _(baseline_run_h5, delta_dominant_wavelength_series, selected_run_h5):
     (
         delta_time,
@@ -450,40 +474,13 @@ def _(baseline_run_h5, delta_dominant_wavelength_series, selected_run_h5):
 
 
 @app.cell
-def _(PlaySlider, mo, selected_run):
-    fft_time_slider = mo.ui.anywidget(
-        PlaySlider(
-            value=0,
-            min_value=0,
-            max_value=selected_run.n_saved - 1,
-            step=1,
-            interval_ms=200,
-            loop=False,
-            width=480,
-        )
-    )
-    return (fft_time_slider,)
-
-
-@app.cell
-def _(inspect_z, mo):
-    fft_z_index_range = mo.ui.range_slider(
-        start=0,
-        stop=inspect_z.shape[0] - 1,
-        step=1,
-        value=[0, inspect_z.shape[0] - 1],
-        debounce=True,
-        show_value=True,
-        full_width=True,
-        label="FFT z-index range",
-    )
-    return (fft_z_index_range,)
-
-
-@app.cell
-def _(fft_time_slider):
-    fft_time_index = int(fft_time_slider.value["value"])
-    return (fft_time_index,)
+def _(inspect_z, selected_run):
+    # Keep the compact selected-run view deterministic: inspect the final saved
+    # frame and use the full z domain for its FFT.
+    fft_time_index = selected_run.n_saved - 1
+    fft_z_start_index = 0
+    fft_z_stop_index = inspect_z.shape[0] - 1
+    return fft_time_index, fft_z_start_index, fft_z_stop_index
 
 
 @app.cell
@@ -527,12 +524,6 @@ def _(
         align="stretch",
     )
     return (delta_dominant_wavelength_panel,)
-
-
-@app.cell
-def _(fft_z_index_range):
-    fft_z_start_index, fft_z_stop_index = (int(v) for v in fft_z_index_range.value)
-    return fft_z_start_index, fft_z_stop_index
 
 
 @app.cell
@@ -655,21 +646,25 @@ def _(PhiResult, fft_time_index, inspect_time, mo, plot_phi, selected_run):
 
 
 @app.cell
-def _(fft_time_index, fft_z_start_index, fft_z_stop_index, get_rbc_cmap, inspect_time, inspect_z, mo, plot_psi, selected_row, selected_run):
-    _psi_figure = plot_psi(selected_run, vmin=0.0, vmax=100.0, cmap=get_rbc_cmap(), title=selected_row["run_id"])
-    _psi_figure.axes[0].axvline(inspect_time[fft_time_index], color="white", linestyle="--")
-    for index in (fft_z_start_index, fft_z_stop_index):
-        _psi_figure.axes[0].axhline(100 * inspect_z[index], color="#fbbf24", linestyle="--")
+def _(get_rbc_cmap, mo, plot_psi, selected_row, selected_run):
+    _psi_figure = plot_psi(
+        selected_run,
+        vmin=0.0,
+        vmax=100.0,
+        cmap=get_rbc_cmap(),
+        title=selected_row["run_id"],
+    )
     psi_panel = mo.vstack([mo.md("### Psi(z, t)"), mo.as_html(_psi_figure)], align="stretch")
     return (psi_panel,)
 
 
 @app.cell
-def _(MaxNLocator, fft_amplitudes, fft_mode_numbers, fft_selected_mode, fft_time_index, mo, plt):
+def _(MaxNLocator, fft_amplitudes, fft_dominant_mode, fft_mode_numbers, fft_time_index, mo, plt):
+    final_dominant_mode = int(fft_dominant_mode[fft_time_index])
     _, _fft_axis = plt.subplots(constrained_layout=True)
     _fft_axis.plot(fft_mode_numbers[1:], fft_amplitudes[fft_time_index, 1:], color="#2563eb")
-    _fft_axis.scatter([fft_selected_mode], [fft_amplitudes[fft_time_index, fft_selected_mode]], color="#dc2626", label=f"mode {fft_selected_mode}")
-    _fft_axis.set(xlabel="Mode number n", ylabel=r"$A_n(t) = |\delta\hat{\psi}_n(t)|$", title=f"FFT amplitude at step {fft_time_index}")
+    _fft_axis.scatter([final_dominant_mode], [fft_amplitudes[fft_time_index, final_dominant_mode]], color="#dc2626", label=f"dominant mode {final_dominant_mode}")
+    _fft_axis.set(xlabel="Mode number n", ylabel=r"$A_n(t) = |\delta\hat{\psi}_n(t)|$", title="Final-time ψ FFT amplitude")
     _fft_axis.xaxis.set_major_locator(MaxNLocator(integer=True))
     _fft_axis.legend()
     fft_panel = mo.vstack([mo.md("### FFT Amplitude"), mo.ui.matplotlib(_fft_axis)], align="stretch")
@@ -715,59 +710,25 @@ def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time, mo, np, plt
 
 
 @app.cell(hide_code=True)
-def _(delta_dominant_mode, delta_dominant_wavelength, delta_dominant_wavelength_panel, fft_coeffs, fft_dominant_mode, dominant_wavelength, fft_fastest_mode, fastest_wavelength, fft_growth_panel, fft_log_growth_rates, fft_mode_amplitude, fft_mode_panel, fft_n_points, fft_panel, fft_phases, fft_selected_mode, fft_spatial_freqs, fft_time_index, fft_time_panel, fft_wavenumbers, fft_z, fft_z_range_panel, fft_z_start_index, fft_z_stop_index, fft_dominant_panel, fft_fastest_panel, mo, np, phi_panel, psi_panel, selected_run_md):
-    _delta_wavelength_cm = 100.0 * delta_dominant_wavelength[fft_time_index]
-    delta_wavelength_text = (
-        "no non-DC FFT amplitude"
-        if not np.isfinite(_delta_wavelength_cm)
-        else (
-            f"mode `{delta_dominant_mode[fft_time_index]}` at "
-            f"`{_delta_wavelength_cm:.6g}` cm"
-        )
+def _(
+    delta_dominant_wavelength_panel,
+    delta_psi_panel,
+    fft_panel,
+    mo,
+    phi_panel,
+    psi_panel,
+    selected_summary,
+):
+    mo.vstack(
+        [
+            selected_summary,
+            mo.hstack([phi_panel, psi_panel], align="start", gap=1),
+            mo.hstack([delta_psi_panel, fft_panel], align="start", gap=1),
+            delta_dominant_wavelength_panel,
+        ],
+        align="stretch",
+        gap=1,
     )
-    summary = mo.md(
-        f"Stored complex Fourier coefficients with shape `{fft_coeffs.shape}`.  \\n"
-        f"FFT window uses z indices `{fft_z_start_index}:{fft_z_stop_index}` inclusive, over `{fft_n_points}` grid points.  \\n"
-        f"Selected mode `{fft_selected_mode}` at step `{fft_time_index}`: `|coeff| = {fft_mode_amplitude[fft_time_index]:.6g}`, `phase = {fft_phases[fft_time_index, fft_selected_mode]:.6g}` rad, `k = {fft_wavenumbers[fft_selected_mode]:.6g}` m$^{{-1}}$.  \\n"
-        f"Dominant mode `{fft_dominant_mode[fft_time_index]}`: `{100 * dominant_wavelength[fft_time_index]:.6g}` cm.  \\n"
-        f"Fastest-growing mode `{fft_fastest_mode[fft_time_index]}`: `{100 * fastest_wavelength[fft_time_index]:.6g}` cm, log-growth rate `{fft_log_growth_rates[fft_time_index, fft_fastest_mode[fft_time_index] - 1]:.6g}` s$^{{-1}}$.  \n"
-        f"Δψ dominant wavelength: {delta_wavelength_text}."
-    )
-    mo.vstack([
-        selected_run_md,
-        mo.hstack([phi_panel, psi_panel], align="start", gap=1),
-        mo.hstack([fft_panel, fft_growth_panel], align="start", gap=1),
-        mo.hstack(
-            [fft_dominant_panel, delta_dominant_wavelength_panel, fft_fastest_panel],
-            align="start",
-            gap=1,
-        ),
-        mo.hstack([fft_time_panel, fft_mode_panel, fft_z_range_panel], align="start", gap=1),
-        summary,
-    ], align="stretch", gap=1)
-    return
-
-
-@app.cell
-def _(find_peaks, mo, np, plt, selected_run):
-    z_cm = np.asarray(selected_run.z, dtype=np.float64) * 100.0
-    psi_last_pct = np.asarray(selected_run.load_psi()[-1], dtype=np.float64) * 100.0
-    peak_z, _peak_psi, peak_spacing, peak_deviation = find_peaks(z_cm, psi_last_pct)
-    _, _peaks_axis = plt.subplots(constrained_layout=True)
-    _peaks_axis.plot(z_cm, psi_last_pct, label=r"$\psi(z)$")
-    _peaks_axis.set(xlabel=r"$z\;[cm]$", ylabel=r"$\psi\;[\%]$", title="Peak detection")
-    _peaks_axis.legend()
-    frequency = 1.0 / peak_spacing
-    frequency_deviation = peak_deviation / peak_spacing**2
-    table = mo.md(f"""### Peak Detection
-
-| Quantity | Value |
-|----------|-------|
-| **Number of peaks** | {len(peak_z)} |
-| **λ** (avg. spacing) | {peak_spacing:.4f} ± {peak_deviation:.4f} cm |
-| **ν** (frequency) | {frequency:.4f} ± {frequency_deviation:.4f} cm⁻¹ |
-""")
-    mo.vstack([mo.as_html(_peaks_axis.figure), table])
     return
 
 
