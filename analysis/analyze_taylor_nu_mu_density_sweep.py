@@ -149,52 +149,38 @@ def _(SweepCatalog, TaylorRun, np, pd):
 
 @app.cell
 def _(Path, RunData, np):
-    def delta_dominant_wavelength_series(
-        interaction_h5: str | Path, baseline_h5: str | Path
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Return time, dominant mode, and wavelength for interaction minus baseline ψ."""
-        interaction = RunData.from_h5(Path(interaction_h5), load_fields=False)
-        baseline = RunData.from_h5(Path(baseline_h5), load_fields=False)
-        interaction_psi = np.asarray(interaction.load_psi(), dtype=np.float64)
-        baseline_psi = np.asarray(baseline.load_psi(), dtype=np.float64)
-        time = np.asarray(interaction.time, dtype=np.float64)
-        z = np.asarray(interaction.z, dtype=np.float64)
+    def final_dominant_wavelength(
+        run_h5: str | Path, minimum_mode: int = 6
+    ) -> tuple[int, float]:
+        """Return the strongest final-time normal-ψ Fourier mode and wavelength.
 
-        if (
-            interaction_psi.shape != baseline_psi.shape
-            or not np.array_equal(time, np.asarray(baseline.time, dtype=np.float64))
-            or not np.array_equal(z, np.asarray(baseline.z, dtype=np.float64))
-        ):
-            raise ValueError("interaction and no-interaction ψ grids differ")
-        if interaction_psi.ndim != 2 or interaction_psi.shape[1] < 2:
-            raise ValueError("ψ requires at least two z points for an FFT")
-        if not np.all(np.isfinite(interaction_psi)) or not np.all(
-            np.isfinite(baseline_psi)
-        ):
+        Only the final ψ frame is read so the sweep heatmap does not load every
+        saved timestep (or a no-interaction reference) for every run.
+        """
+        run = RunData.from_h5(Path(run_h5), load_fields=False)
+        z = np.asarray(run.z, dtype=np.float64)
+        psi = np.asarray(run.psi_frame(-1), dtype=np.float64)
+        if psi.ndim != 1 or psi.size != z.size:
+            raise ValueError("final ψ frame and z coordinates have incompatible shapes")
+        if not np.all(np.isfinite(psi)):
             raise ValueError("ψ contains non-finite values")
+        if z.size < 2:
+            raise ValueError("ψ requires at least two z points for an FFT")
 
         dz = float(z[1] - z[0])
         if not np.isfinite(dz) or dz <= 0.0:
             raise ValueError("z coordinates must be strictly increasing")
-        difference = interaction_psi - baseline_psi
-        coefficients = np.fft.rfft(
-            difference - difference.mean(axis=1, keepdims=True), axis=1
-        )
-        amplitudes = np.abs(coefficients)
-        if amplitudes.shape[1] < 2:
-            raise ValueError("ψ has no non-DC FFT modes")
+        amplitudes = np.abs(np.fft.rfft(psi - psi.mean()))
+        if amplitudes.size <= minimum_mode:
+            raise ValueError(f"ψ has no Fourier modes above {minimum_mode - 1}")
 
-        mode_candidates = 1 + np.argmax(amplitudes[:, 1:], axis=1)
-        has_nonzero_mode = np.any(amplitudes[:, 1:] > 0.0, axis=1)
-        dominant_modes = np.where(has_nonzero_mode, mode_candidates, -1)
-        spatial_frequencies = np.fft.rfftfreq(z.size, d=dz)
-        wavelengths = np.full(time.shape, np.nan, dtype=np.float64)
-        wavelengths[has_nonzero_mode] = 1.0 / spatial_frequencies[
-            mode_candidates[has_nonzero_mode]
-        ]
-        return time, dominant_modes, wavelengths
+        dominant_mode = minimum_mode + int(np.argmax(amplitudes[minimum_mode:]))
+        if amplitudes[dominant_mode] <= 0.0:
+            raise ValueError(f"ψ has no nonzero Fourier modes at or above {minimum_mode}")
+        frequency = np.fft.rfftfreq(z.size, d=dz)[dominant_mode]
+        return dominant_mode, float(1.0 / frequency)
 
-    return (delta_dominant_wavelength_series,)
+    return (final_dominant_wavelength,)
 
 
 @app.cell
@@ -240,28 +226,19 @@ def _(mo, sweep_df):
 
 
 @app.cell
-def _(delta_dominant_wavelength_series, mo, np, sweep_df, ui_density):
+def _(final_dominant_wavelength, mo, np, sweep_df, ui_density):
     mo.stop(sweep_df is None or sweep_df.empty, mo.md("No heatmap data yet."))
     density_df = sweep_df[
         (sweep_df["psi_avg"] == float(ui_density.value))
         & ~sweep_df["is_no_interaction"]
     ].copy()
-    density_df["delta_dominant_wavelength_cm"] = np.nan
+    density_df["dominant_wavelength_cm"] = np.nan
     for _index, _row in density_df.iterrows():
-        _baseline_h5 = _row["baseline_run_h5"]
-        if (
-            _row["comparison_status"] != "pending FFT"
-            or not bool(_row["h5_exists"])
-            or not _baseline_h5
-        ):
+        if not bool(_row["h5_exists"]):
             continue
         try:
-            _, _, _wavelengths = delta_dominant_wavelength_series(
-                _row["run_h5"], _baseline_h5
-            )
-            density_df.at[_index, "delta_dominant_wavelength_cm"] = (
-                100.0 * _wavelengths[-1]
-            )
+            _, _wavelength = final_dominant_wavelength(_row["run_h5"])
+            density_df.at[_index, "dominant_wavelength_cm"] = 100.0 * _wavelength
             density_df.at[_index, "comparison_status"] = "ready"
         except (OSError, ValueError) as _error:
             density_df.at[_index, "comparison_status"] = str(_error)
@@ -288,8 +265,8 @@ def _(alt, density_df, mo, ui_density):
                 sort=alt.SortField(field="MU", order="ascending"),
             ),
             color=alt.Color(
-                "delta_dominant_wavelength_cm:Q",
-                title=r"Final Δψ dominant λ [cm]",
+                "dominant_wavelength_cm:Q",
+                title=r"Final ψ dominant λ [cm] (n ≥ 6)",
                 scale=alt.Scale(scheme="viridis"),
             ),
             opacity=alt.condition(click, alt.value(1.0), alt.value(0.45)),
@@ -300,10 +277,9 @@ def _(alt, density_df, mo, ui_density):
                 alt.Tooltip("psi_avg:Q", title="average density", format=".6g"),
                 alt.Tooltip("phi_type:N", title="initial phi"),
                 alt.Tooltip("h5_exists:N", title="run.h5 available"),
-                alt.Tooltip("baseline_run_id:N", title="no-interaction run"),
                 alt.Tooltip(
-                    "delta_dominant_wavelength_cm:Q",
-                    title="final Δψ dominant λ [cm]",
+                    "dominant_wavelength_cm:Q",
+                    title="final ψ dominant λ [cm] (n ≥ 6)",
                     format=".6g",
                 ),
                 alt.Tooltip("comparison_status:N", title="comparison status"),
@@ -314,7 +290,7 @@ def _(alt, density_df, mo, ui_density):
             width=500,
             height=430,
             title=(
-                f"Final Δψ dominant wavelength at average density "
+                f"Final ψ dominant wavelength (n ≥ 6) at average density "
                 f"{float(ui_density.value):.6g}"
             ),
         )
@@ -359,8 +335,7 @@ def _(mo, selected_row):
         f"`{selected_row['run_id']}` — ν = `{float(selected_row['NU']):.3e}`, "
         f"μ = `{float(selected_row['MU']):.3e}`, "
         f"$\\langle\\psi\\rangle$ = `{float(selected_row['psi_avg']):.6g}`  \n"
-        f"Interaction result: `{selected_row['run_h5']}`  \n"
-        f"No-interaction reference: `{selected_row['baseline_run_id']}`"
+        f"Result: `{selected_row['run_h5']}`"
     )
     return (selected_summary,)
 
@@ -368,15 +343,6 @@ def _(mo, selected_row):
 @app.cell
 def _(Path, RunData, mo, selected_row):
     selected_run_h5 = Path(selected_row["run_h5"])
-    baseline_run_h5 = selected_row["baseline_run_h5"]
-    mo.stop(
-        selected_row["comparison_status"] != "ready" or not baseline_run_h5,
-        mo.callout(
-            "This run has no usable no-interaction comparison: "
-            f"{selected_row['comparison_status']}.",
-            kind="warn",
-        ),
-    )
     mo.stop(
         not bool(selected_row["h5_exists"]),
         mo.callout(
@@ -390,10 +356,9 @@ def _(Path, RunData, mo, selected_row):
         mo.callout("The selected run needs at least two saved timesteps.", kind="warn"),
     )
     selected_run_md = mo.md(
-        f"**Interaction file:** `{selected_run_h5}`  \n"
-        f"**No-interaction file:** `{baseline_run_h5}`"
+        f"**Result file:** `{selected_run_h5}`"
     )
-    return baseline_run_h5, selected_run, selected_run_h5, selected_run_md
+    return selected_run, selected_run_h5, selected_run_md
 
 
 @app.cell
@@ -405,49 +370,6 @@ def _(np, selected_run):
 
 
 @app.cell
-def _(baseline_run_h5, inspect_psi, inspect_time, inspect_z, mo, np, plt, RunData):
-    baseline_run = RunData.from_h5(baseline_run_h5, load_fields=False)
-    baseline_psi = np.asarray(baseline_run.load_psi(), dtype=np.float64)
-    delta_psi = inspect_psi - baseline_psi
-    delta_limit = max(float(np.max(np.abs(delta_psi))) * 100.0, 1e-12)
-    _, delta_psi_axis = plt.subplots(constrained_layout=True)
-    delta_image = delta_psi_axis.pcolormesh(
-        inspect_time,
-        100.0 * inspect_z,
-        100.0 * delta_psi.T,
-        shading="auto",
-        cmap="RdBu_r",
-        vmin=-delta_limit,
-        vmax=delta_limit,
-    )
-    delta_psi_axis.set(
-        xlabel=r"$t\;[s]$",
-        ylabel=r"$z\;[cm]$",
-        title=r"$\Delta\psi$: interaction − no interaction",
-    )
-    delta_psi_axis.figure.colorbar(
-        delta_image,
-        ax=delta_psi_axis,
-        label=r"$\Delta\psi\;[\%]$",
-    )
-    delta_psi_panel = mo.vstack(
-        [mo.md("### Delta Psi(z, t)"), mo.ui.matplotlib(delta_psi_axis)],
-        align="stretch",
-    )
-    return (delta_psi_panel,)
-
-
-@app.cell
-def _(baseline_run_h5, delta_dominant_wavelength_series, selected_run_h5):
-    (
-        delta_time,
-        delta_dominant_mode,
-        delta_dominant_wavelength,
-    ) = delta_dominant_wavelength_series(selected_run_h5, baseline_run_h5)
-    return delta_dominant_mode, delta_dominant_wavelength, delta_time
-
-
-@app.cell
 def _(inspect_z, selected_run):
     # Keep the compact selected-run view deterministic: inspect the final saved
     # frame and use the full z domain for its FFT.
@@ -455,49 +377,6 @@ def _(inspect_z, selected_run):
     fft_z_start_index = 0
     fft_z_stop_index = inspect_z.shape[0] - 1
     return fft_time_index, fft_z_start_index, fft_z_stop_index
-
-
-@app.cell
-def _(
-    delta_dominant_mode,
-    delta_dominant_wavelength,
-    delta_time,
-    fft_time_index,
-    mo,
-    np,
-    plt,
-):
-    _delta_wavelength_cm = 100.0 * delta_dominant_wavelength
-    _, delta_wavelength_axis = plt.subplots(constrained_layout=True)
-    delta_wavelength_axis.plot(
-        delta_time,
-        _delta_wavelength_cm,
-        color="#7c3aed",
-        linewidth=1.5,
-        drawstyle="steps-mid",
-    )
-    if np.isfinite(_delta_wavelength_cm[fft_time_index]):
-        delta_wavelength_axis.scatter(
-            [delta_time[fft_time_index]],
-            [_delta_wavelength_cm[fft_time_index]],
-            color="#dc2626",
-            zorder=3,
-            label=f"mode {delta_dominant_mode[fft_time_index]}",
-        )
-        delta_wavelength_axis.legend()
-    delta_wavelength_axis.set(
-        xlabel=r"$t\;[s]$",
-        ylabel=r"$\lambda_{\mathrm{dom}}(t)\;[\mathrm{cm}]$",
-        title=r"Dominant wavelength of $\Delta\psi$",
-    )
-    delta_dominant_wavelength_panel = mo.vstack(
-        [
-            mo.md("### Delta Psi Dominant Wavelength"),
-            mo.ui.matplotlib(delta_wavelength_axis),
-        ],
-        align="stretch",
-    )
-    return (delta_dominant_wavelength_panel,)
 
 
 @app.cell
@@ -540,7 +419,7 @@ def _(fft_z_start_index, fft_z_stop_index, inspect_psi, inspect_z, mo, np):
 @app.cell
 def _(fft_coeffs, mo):
     max_mode = fft_coeffs.shape[1] - 1
-    mo.stop(max_mode < 1, mo.md("The selected run has no non-zero Fourier modes."))
+    mo.stop(max_mode < 6, mo.md("The selected run has no Fourier modes above 5."))
     fft_mode_selector = mo.ui.slider(
         start=1, stop=max_mode, step=1, value=1, label="Fourier mode n"
     )
@@ -636,9 +515,9 @@ def _(get_rbc_cmap, mo, plot_psi, selected_row, selected_run):
 def _(MaxNLocator, fft_amplitudes, fft_dominant_mode, fft_mode_numbers, fft_time_index, mo, plt):
     final_dominant_mode = int(fft_dominant_mode[fft_time_index])
     _, _fft_axis = plt.subplots(constrained_layout=True)
-    _fft_axis.plot(fft_mode_numbers[1:], fft_amplitudes[fft_time_index, 1:], color="#2563eb")
+    _fft_axis.plot(fft_mode_numbers[6:], fft_amplitudes[fft_time_index, 6:], color="#2563eb")
     _fft_axis.scatter([final_dominant_mode], [fft_amplitudes[fft_time_index, final_dominant_mode]], color="#dc2626", label=f"dominant mode {final_dominant_mode}")
-    _fft_axis.set(xlabel="Mode number n", ylabel=r"$A_n(t) = |\delta\hat{\psi}_n(t)|$", title="Final-time ψ FFT amplitude")
+    _fft_axis.set(xlabel="Mode number n", ylabel=r"$A_n(t) = |\hat{\psi}_n(t)|$", title="Final-time ψ FFT amplitude (n ≥ 6)")
     _fft_axis.xaxis.set_major_locator(MaxNLocator(integer=True))
     _fft_axis.legend()
     fft_panel = mo.vstack([mo.md("### FFT Amplitude"), mo.ui.matplotlib(_fft_axis)], align="stretch")
@@ -659,13 +538,13 @@ def _(fft_amplitudes, fft_selected_mode, fft_time_index, inspect_time, mo, np, p
 
 @app.cell
 def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time, mo, np, plt):
-    fft_dominant_mode = 1 + np.argmax(fft_amplitudes[:, 1:], axis=1)
+    fft_dominant_mode = 6 + np.argmax(fft_amplitudes[:, 6:], axis=1)
     dominant_wavelength = fft_wavelengths[fft_dominant_mode]
     _, _dominant_axis = plt.subplots(constrained_layout=True)
     _dominant_axis.plot(inspect_time, 100 * dominant_wavelength, color="#7c3aed", drawstyle="steps-mid")
     _dominant_axis.scatter([inspect_time[fft_time_index]], [100 * dominant_wavelength[fft_time_index]], color="#dc2626")
-    _dominant_axis.set(xlabel=r"$t\;[s]$", ylabel=r"$\lambda_{\mathrm{dom}}(t)\;[\mathrm{cm}]$", title="Dominant wavelength")
-    fft_dominant_panel = mo.vstack([mo.md("### Dominant Wavelength"), mo.ui.matplotlib(_dominant_axis)], align="stretch")
+    _dominant_axis.set(xlabel=r"$t\;[s]$", ylabel=r"$\lambda_{\mathrm{dom}}(t)\;[\mathrm{cm}]$", title="Dominant wavelength (n ≥ 6)")
+    fft_dominant_panel = mo.vstack([mo.md("### Dominant Wavelength (n ≥ 6)"), mo.ui.matplotlib(_dominant_axis)], align="stretch")
     return fft_dominant_mode, dominant_wavelength, fft_dominant_panel
 
 
@@ -685,8 +564,7 @@ def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time, mo, np, plt
 
 @app.cell(hide_code=True)
 def _(
-    delta_dominant_wavelength_panel,
-    delta_psi_panel,
+    fft_dominant_panel,
     fft_panel,
     mo,
     phi_panel,
@@ -697,8 +575,7 @@ def _(
         [
             selected_summary,
             mo.hstack([phi_panel, psi_panel], align="start", gap=1),
-            mo.hstack([delta_psi_panel, fft_panel], align="start", gap=1),
-            delta_dominant_wavelength_panel,
+            mo.hstack([fft_panel, fft_dominant_panel], align="start", gap=1),
         ],
         align="stretch",
         gap=1,
