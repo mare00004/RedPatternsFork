@@ -1,16 +1,3 @@
-# /// script
-# dependencies = [
-#     "h5py==3.16.0",
-#     "marimo",
-#     "matplotlib==3.10.8",
-#     "numpy==2.4.3",
-#     "pydantic==2.13.4",
-#     "scipy==1.17.1",
-#     "wigglystuff==0.3.3",
-# ]
-# requires-python = ">=3.12"
-# ///
-
 import marimo
 
 __generated_with = "0.24.0"
@@ -21,7 +8,6 @@ with app.setup:
     import matplotlib.pyplot as plt
     import numpy as np
     import subprocess
-    import sys
     import tempfile
     import time
     from pathlib import Path
@@ -34,10 +20,7 @@ with app.setup:
         if "__file__" in globals()
         else (Path.cwd() / "analysis" / "workbench.py").resolve()
     )
-    ANALYSIS_DIR = NOTEBOOK_FILE.parent
-    REPO_ROOT = ANALYSIS_DIR.parent
-    if str(ANALYSIS_DIR) not in sys.path:
-        sys.path.insert(0, str(ANALYSIS_DIR))
+    REPO_ROOT = NOTEBOOK_FILE.parent.parent
 
     # The raw Taylor coefficients are tiny; the number widgets show them in these
     # units (displayed value = actual / scale) so they stay human-readable.

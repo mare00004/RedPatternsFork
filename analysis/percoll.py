@@ -1,15 +1,3 @@
-# /// script
-# dependencies = [
-#     "marimo",
-#     "matplotlib==3.11.0",
-#     "mcp==1.28.1",
-#     "numpy==2.5.1",
-#     "pydantic-ai==2.5.1",
-#     "pydantic-ai-slim[groq]>=2.5.1",
-# ]
-# requires-python = ">=3.12"
-# ///
-
 import marimo
 
 __generated_with = "0.23.13"

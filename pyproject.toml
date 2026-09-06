@@ -5,19 +5,44 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "altair>=5.3",
+    "animatplot>=0.4.3",
     "h5py>=3.16.0",
     "h5py-stubs>=0.1.2",
     "marimo>=0.23.6",
     "matplotlib>=3.10.9",
+    "mcp>=1.28.1",
+    "nbconvert>=7.17.1",
+    "nbformat>=5.10.4",
     "numpy>=2.4.5",
+    "pandas>=3.0.0",
+    "pillow>=10",
+    "playwright>=1.60.0",
+    "pyarrow>=24.0.0",
     "pydantic>=2.0,<3",
+    "pydantic-ai>=2.5.1",
+    "pydantic-ai-slim[groq]>=2.5.1",
     "scipy>=1.17.1",
     "wigglystuff>=0.5.9",
 ]
 
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/red_patterns", "src/sweep"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/.venv", "/activate"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [dependency-groups]
 dev = [
     "mypy>=2.1.0",
+    "pytest>=9.0",
 ]
 sweep = [
     "h5py>=3.16.0",

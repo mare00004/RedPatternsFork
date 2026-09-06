@@ -1,36 +1,15 @@
-# /// script
-# requires-python = ">=3.12"
-# dependencies = [
-#     "h5py==3.16.0",
-#     "marimo>=0.19.6",
-#     "numpy==2.4.1",
-#     "pandas==3.0.0",
-#     "pydantic==2.13.4",
-# ]
-# ///
-
 import marimo
 
 __generated_with = "0.23.16"
 app = marimo.App(width="medium", sql_output="native")
 
 with app.setup:
-    import sys
     from pathlib import Path
     from types import SimpleNamespace
 
     import marimo as mo
     import numpy as np
     import pandas as pd
-
-    NOTEBOOK_FILE = (
-        Path(__file__).resolve()
-        if "__file__" in globals()
-        else (Path.cwd() / "analysis" / "gen-params.py").resolve()
-    )
-    ANALYSIS_DIR = NOTEBOOK_FILE.parent
-    if str(ANALYSIS_DIR) not in sys.path:
-        sys.path.insert(0, str(ANALYSIS_DIR))
 
     from red_patterns.kernel import ClosureType, PDFType
     from red_patterns.phi import PhiType

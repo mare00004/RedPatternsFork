@@ -39,4 +39,4 @@ then
 	exit 1
 fi
 
-exec "$PYTHON" /opt/red-patterns/sweep/run_one.py --runs-jsonl runs.jsonl --run-id "$1"
+exec "$PYTHON" -m sweep.run_one --runs-jsonl runs.jsonl --run-id "$1"

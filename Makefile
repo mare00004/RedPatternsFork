@@ -58,11 +58,11 @@ help:
 	@echo "  run-conv-const-sigmoid   Convolution + Homogeneous phi + sigmoid gradient"
 	@echo ""
 	@echo "Analyze a completed run:"
-	@echo "  uv run marimo run --sandbox analysis/analyze_single_run.py"
+	@echo "  uv run marimo run analysis/analyze_single_run.py"
 	@echo "  (select the run.h5 inside the output directory)"
 	@echo ""
 	@echo "Explore interactively (build kernel + phi, run, inspect):"
-	@echo "  uv run marimo run --sandbox analysis/workbench.py"
+	@echo "  uv run marimo run analysis/workbench.py"
 
 $(PHI_GAUSS):
 	mkdir -p ./data

@@ -1,8 +1,3 @@
-# /// script
-# dependencies = ["marimo"]
-# requires-python = ">=3.13"
-# ///
-
 import marimo
 
 __generated_with = "0.19.6"

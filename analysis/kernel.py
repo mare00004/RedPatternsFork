@@ -1,16 +1,3 @@
-# /// script
-# dependencies = [
-#     "h5py==3.16.0",
-#     "marimo",
-#     "matplotlib==3.10.8",
-#     "numpy==2.4.3",
-#     "pydantic==2.13.4",
-#     "scipy==1.17.1",
-#     "wigglystuff==0.3.3",
-# ]
-# requires-python = ">=3.12"
-# ///
-
 import marimo
 
 __generated_with = "0.23.9"
@@ -24,15 +11,6 @@ with app.setup:
     import marimo as mo
     import matplotlib.pyplot as plt
     import numpy as np
-
-    NOTEBOOK_FILE = (
-        Path(__file__).resolve()
-        if "__file__" in globals()
-        else (Path.cwd() / "analysis" / "kernel.py").resolve()
-    )
-    ANALYSIS_DIR = NOTEBOOK_FILE.parent
-    if str(ANALYSIS_DIR) not in sys.path:
-        sys.path.insert(0, str(ANALYSIS_DIR))
 
     from red_patterns.kernel import (
         compute_kernel,
@@ -188,6 +166,7 @@ def _():
 
 @app.cell
 def _(kernel_cfg):
+    _hnc_figure = None
     if kernel_cfg.kernel_type.value == "hnc":
         _r = np.linspace(0.01 * kernel_cfg.beta, 3 * kernel_cfg.beta, 500)
         _u = morse_potential(_r, kernel_cfg.alpha, kernel_cfg.beta, kernel_cfg.gamma)
@@ -236,7 +215,8 @@ def _(kernel_cfg):
         _ax.axhline(0, color="black", linewidth=1)
         _ax.set(xlabel=r"Distance $r$ ($\mu$m)", ylabel=r"$u_{\mathrm{eff}}(r)$ ($10^{-18}$ J)", title="HNC effective potential")
         _ax.grid(True, linestyle=":", alpha=0.7)
-        _fig
+        _hnc_figure = _fig
+    _hnc_figure
     return
 
 

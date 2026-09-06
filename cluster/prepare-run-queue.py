@@ -3,13 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-ANALYSIS_DIR = REPO_ROOT / "analysis"
-if str(ANALYSIS_DIR) not in sys.path:
-    sys.path.insert(0, str(ANALYSIS_DIR))
 
 from red_patterns.sweep_jobs import load_runs_jsonl, run_ids_from_runs
 

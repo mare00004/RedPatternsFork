@@ -2,15 +2,9 @@ from __future__ import annotations
 
 import contextlib
 import io
-import sys
 import tempfile
 import unittest
 from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-ANALYSIS_DIR = REPO_ROOT / "analysis"
-if str(ANALYSIS_DIR) not in sys.path:
-    sys.path.insert(0, str(ANALYSIS_DIR))
 
 import h5py
 import numpy as np
@@ -70,6 +64,10 @@ PER_TYPE_ARGS = {
     },
     PhiType.SINGLE_BIN: {"single_bin_idx": 100},
     PhiType.LINEAR_FULL_RIDGE: {},
+    PhiType.SINGLE_MODE_LINEAR_FULL_RIDGE: {
+        "amplitude": 1e-3,
+        "mode_number": 7,
+    },
 }
 
 

@@ -1,13 +1,3 @@
-# /// script
-# dependencies = [
-#     "marimo",
-#     "matplotlib==3.11.0",
-#     "numpy==2.5.1",
-#     "scipy==1.18.0",
-# ]
-# requires-python = ">=3.12"
-# ///
-
 import marimo
 
 __generated_with = "0.23.16"
@@ -1336,17 +1326,6 @@ def _(np, plt, pot_mor_ui, solve_hnc_3d, ui_beta):
 
     _()
     return
-
-
-@app.cell
-def _():
-    return
-
-
-@app.cell(column=5)
-def _():
-    return
-
 
 if __name__ == "__main__":
     app.run()

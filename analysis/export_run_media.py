@@ -1,14 +1,3 @@
-# /// script
-# requires-python = ">=3.12"
-# dependencies = [
-#     "h5py>=3.16.0",
-#     "marimo>=0.23.6",
-#     "matplotlib>=3.10.9",
-#     "numpy>=2.4.5",
-#     "pillow>=10",
-# ]
-# ///
-
 """Export plots and animations from a Red Patterns ``run.h5`` file.
 
 Launch with ``uv run marimo edit analysis/export_run_media.py``.  Select a
@@ -26,18 +15,12 @@ app = marimo.App(width="wide")
 
 with app.setup:
     from pathlib import Path
-    import sys
 
     import h5py
     import marimo as mo
     import matplotlib.pyplot as plt
     import numpy as np
     from matplotlib.animation import FFMpegWriter, FuncAnimation, PillowWriter
-
-    NOTEBOOK_FILE = Path(__file__).resolve()
-    ANALYSIS_DIR = NOTEBOOK_FILE.parent
-    if str(ANALYSIS_DIR) not in sys.path:
-        sys.path.insert(0, str(ANALYSIS_DIR))
 
     from red_patterns import RunData, get_rbc_cmap, plot_psi
 

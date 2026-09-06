@@ -440,6 +440,7 @@ def compute_kernel(cfg: KernelConfig) -> KernelResult:
     )
     # nu, mu = calculate_nu_mu(x_dense, K_dense)
     nu, mu = calculate_nu_mu(x_sample, K_sample)
+    print(f"nu {nu} mu {mu}")
     return KernelResult(
         fine_dz=fine_dz,
         x_sample=x_sample,

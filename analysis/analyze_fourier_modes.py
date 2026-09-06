@@ -1,21 +1,9 @@
-# /// script
-# dependencies = [
-#     "h5py==3.16.0",
-#     "marimo>=0.19.4",
-#     "matplotlib==3.10.8",
-#     "numpy==2.4.3",
-#     "wigglystuff==0.3.3",
-# ]
-# requires-python = ">=3.12"
-# ///
-
 import marimo
 
 __generated_with = "0.23.10"
 app = marimo.App(width="wide")
 
 with app.setup:
-    import sys
     from pathlib import Path
 
     import marimo as mo
@@ -29,10 +17,7 @@ with app.setup:
         if "__file__" in globals()
         else (Path.cwd() / "analysis" / "analyze_fourier_modes.py").resolve()
     )
-    ANALYSIS_DIR = NOTEBOOK_FILE.parent
-    REPO_ROOT = ANALYSIS_DIR.parent
-    if str(ANALYSIS_DIR) not in sys.path:
-        sys.path.insert(0, str(ANALYSIS_DIR))
+    REPO_ROOT = NOTEBOOK_FILE.parent.parent
 
     DEFAULT_RUN_H5 = REPO_ROOT / "data" / "tayl_const_linear" / "run.h5"
 

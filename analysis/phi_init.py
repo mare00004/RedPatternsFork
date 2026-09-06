@@ -1,15 +1,3 @@
-# /// script
-# dependencies = [
-#     "h5py==3.16.0",
-#     "marimo",
-#     "matplotlib==3.10.8",
-#     "numpy==2.4.3",
-#     "pydantic==2.13.4",
-#     "wigglystuff==0.3.3",
-# ]
-# requires-python = ">=3.12"
-# ///
-
 import marimo
 
 __generated_with = "0.23.9"
@@ -20,15 +8,6 @@ with app.setup:
     from pathlib import Path
 
     import marimo as mo
-
-    NOTEBOOK_FILE = (
-        Path(__file__).resolve()
-        if "__file__" in globals()
-        else (Path.cwd() / "analysis" / "phi_init.py").resolve()
-    )
-    ANALYSIS_DIR = NOTEBOOK_FILE.parent
-    if str(ANALYSIS_DIR) not in sys.path:
-        sys.path.insert(0, str(ANALYSIS_DIR))
 
     from red_patterns.phi import (
         make_phi_ui,

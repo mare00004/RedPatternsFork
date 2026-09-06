@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 import h5py
 import numpy as np
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "analysis"))
 
 from red_patterns.kernel import KernelConfig, compute_kernel, effective_morse_kernel, kernel_config_from_ui, write_kernel_h5
 from red_patterns.types import KernelType

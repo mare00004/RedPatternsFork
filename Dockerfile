@@ -94,10 +94,13 @@ ENV UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=0
 
 COPY pyproject.toml README.md uv.lock /opt/red-patterns/
+COPY src/red_patterns /opt/red-patterns/src/red_patterns
+COPY src/sweep /opt/red-patterns/src/sweep
 WORKDIR /opt/red-patterns
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --only-group sweep \
- && /opt/red-patterns/.venv/bin/python -c "import h5py, numpy, pydantic; assert pydantic.VERSION.startswith('2'), pydantic.VERSION" \
+ && uv pip install --no-deps . \
+ && /opt/red-patterns/.venv/bin/python -c "import h5py, numpy, pydantic, red_patterns, sweep; assert pydantic.VERSION.startswith('2'), pydantic.VERSION" \
  && printf '%s\n' "$IMAGE_REVISION" > /opt/red-patterns/image-revision
 
 # Copy the executable
@@ -106,11 +109,6 @@ COPY --from=build /opt/red-patterns/bin/red-patterns /bin/red-patterns
 # Copy HDF5 install tree from the build stage into the runtime image
 COPY --from=build /opt/hdf5 /opt/hdf5
 
-# Copy the Python sweep runtime used by HTCondor jobs.
-COPY analysis/red_patterns /opt/red-patterns/analysis/red_patterns
-COPY sweep /opt/red-patterns/sweep
-
 ENV LD_LIBRARY_PATH=/opt/hdf5/lib:$LD_LIBRARY_PATH
-ENV PYTHONPATH=/opt/red-patterns/analysis:$PYTHONPATH
 
 CMD ["/bin/bash"]

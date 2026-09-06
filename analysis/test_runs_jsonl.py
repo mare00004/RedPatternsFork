@@ -1,15 +1,3 @@
-# /// script
-# dependencies = [
-#     "h5py==3.16.0",
-#     "marimo",
-#     "matplotlib==3.10.8",
-#     "numpy==2.4.3",
-#     "pydantic==2.13.4",
-#     "wigglystuff==0.3.3",
-# ]
-# requires-python = ">=3.12"
-# ///
-
 import marimo
 
 __generated_with = "0.23.16"
@@ -18,7 +6,6 @@ app = marimo.App(width="wide")
 with app.setup:
     import shlex
     import subprocess
-    import sys
     import tempfile
     import time
     from pathlib import Path
@@ -34,11 +21,7 @@ with app.setup:
         if "__file__" in globals()
         else (Path.cwd() / "analysis" / "test_runs_jsonl.py").resolve()
     )
-    ANALYSIS_DIR = NOTEBOOK_FILE.parent
-    REPO_ROOT = ANALYSIS_DIR.parent
-    for _path in (str(ANALYSIS_DIR), str(REPO_ROOT)):
-        if _path not in sys.path:
-            sys.path.insert(0, _path)
+    REPO_ROOT = NOTEBOOK_FILE.parent.parent
 
     from red_patterns.models import ConvRun, TaylorRun, run_payload_adapter
     from red_patterns.phi import phi_field_from_params, plot_phi
@@ -107,7 +90,7 @@ def _():
     A manual smoke test for the `runs.jsonl` → `red-patterns` pipeline. Paste a
     single line from a `runs.jsonl`, preview the parsed payload, then run the
     simulation locally through the exact same helpers the cluster wrapper
-    (`sweep/run_one.py`) uses — with a live progress bar, exactly like
+    (`python -m sweep.run_one`) uses — with a live progress bar, exactly like
     `workbench.py`.
     """)
     return

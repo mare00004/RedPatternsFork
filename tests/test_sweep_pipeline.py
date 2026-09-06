@@ -8,10 +8,6 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ANALYSIS_DIR = REPO_ROOT / "analysis"
-if str(ANALYSIS_DIR) not in sys.path:
-    sys.path.insert(0, str(ANALYSIS_DIR))
-
 from red_patterns.kernel import ClosureType, PDFType
 from red_patterns.models import ConvRun, TaylorRun
 from red_patterns.phi import PhiType
@@ -145,7 +141,8 @@ touch "${out_dir}/run.h5"
                 result = subprocess.run(
                     [
                         sys.executable,
-                        str(REPO_ROOT / "sweep" / "run_one.py"),
+                        "-m",
+                        "sweep.run_one",
                         "--runs-jsonl",
                         str(runs_jsonl),
                         "--run-id",

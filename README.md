@@ -6,6 +6,23 @@ A Fork of the original [RedPatterns](https://github.com/FelixMaurer/RedPatterns)
 
 You can build the simulation from source using [CMake](https://cmake.org/) or download a [docker container](https://www.docker.com/resources/what-container/) with the built binary and all the needed dependencies at [this](https://hub.docker.com/repository/docker/mare00004/cuda-hdf5-dev/general) link.
 
+### Python analysis tools
+
+The analysis helpers and sweep runner are local Python packages. Install the
+project environment once before running notebooks, analysis CLIs, tests, or
+sweep tooling:
+
+```bash
+uv sync
+```
+
+Run commands through that environment, for example `uv run marimo edit
+analysis/workbench.py` or `uv run python -m pytest`.
+
+Do not add Marimo's `--sandbox` flag to project notebooks: sandbox mode creates
+a separate environment from their inline metadata and cannot install this
+repository's local `red_patterns` package from PyPI.
+
 ### Building from Source
 
 You need to have the following dependencies installed to run the simulation.

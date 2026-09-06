@@ -1,16 +1,3 @@
-# /// script
-# dependencies = [
-#     "h5py==3.16.0",
-#     "marimo>=0.23.6",
-#     "matplotlib==3.10.9",
-#     "numpy==2.4.6",
-#     "pandas==3.0.3",
-#     "pydantic==2.13.4",
-#     "scipy==1.17.1",
-# ]
-# requires-python = ">=3.12"
-# ///
-
 import marimo
 
 __generated_with = "0.23.9"
@@ -19,7 +6,6 @@ app = marimo.App(width="wide")
 
 with app.setup:
     import json
-    import sys
     import warnings
     from pathlib import Path
 
@@ -35,10 +21,7 @@ with app.setup:
         if "__file__" in globals()
         else (Path.cwd() / "analysis" / "analyze_single_mode_dct_modes.py").resolve()
     )
-    ANALYSIS_DIR = NOTEBOOK_FILE.parent
-    REPO_ROOT = ANALYSIS_DIR.parent
-    if str(ANALYSIS_DIR) not in sys.path:
-        sys.path.insert(0, str(ANALYSIS_DIR))
+    REPO_ROOT = NOTEBOOK_FILE.parent.parent
 
     from red_patterns import RunData, get_rbc_cmap, load_runs_jsonl, plot_psi
     from red_patterns.models import TaylorRun

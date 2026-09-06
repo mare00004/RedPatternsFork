@@ -3,15 +3,10 @@ from __future__ import annotations
 import argparse
 import shlex
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-ANALYSIS_DIR = REPO_ROOT / "analysis"
-if str(ANALYSIS_DIR) not in sys.path:
-    sys.path.insert(0, str(ANALYSIS_DIR))
-
+REPO_ROOT = Path(__file__).resolve().parents[2]
 from red_patterns.kernel import (
     KernelConfig,
     compute_kernel,

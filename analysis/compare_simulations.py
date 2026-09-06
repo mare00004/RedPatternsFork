@@ -1,20 +1,9 @@
-# /// script
-# dependencies = [
-#     "h5py>=3.16.0",
-#     "marimo>=0.23.6",
-#     "matplotlib>=3.10.9",
-#     "numpy>=2.4.5",
-# ]
-# requires-python = ">=3.12"
-# ///
-
 import marimo
 
 __generated_with = "0.24.0"
 app = marimo.App(width="wide")
 
 with app.setup:
-    import sys
     from pathlib import Path
 
     import marimo as mo
@@ -27,10 +16,7 @@ with app.setup:
         if "__file__" in globals()
         else (Path.cwd() / "analysis" / "compare_simulations.py").resolve()
     )
-    ANALYSIS_DIR = NOTEBOOK_FILE.parent
-    REPO_ROOT = ANALYSIS_DIR.parent
-    if str(ANALYSIS_DIR) not in sys.path:
-        sys.path.insert(0, str(ANALYSIS_DIR))
+    REPO_ROOT = NOTEBOOK_FILE.parent.parent
 
     from red_patterns import RunData, get_rbc_cmap
 
