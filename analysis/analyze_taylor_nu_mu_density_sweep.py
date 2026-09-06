@@ -402,7 +402,7 @@ def _(np, selected_run):
 
 @app.cell
 def _(inspect_psi, inspect_z, mo, np, plt, scipy_find_peaks):
-    peak_prominence = 0.10
+    peak_prominence = 0.02
     distance_bin_width_cm = 0.1
     final_psi = np.asarray(inspect_psi[-1], dtype=np.float64)
     peak_indices, _ = scipy_find_peaks(final_psi, prominence=peak_prominence)
