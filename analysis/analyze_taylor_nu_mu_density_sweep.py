@@ -14,6 +14,7 @@ def _():
     import numpy as np
     import pandas as pd
     from matplotlib.ticker import MaxNLocator
+    from scipy.signal import find_peaks as scipy_find_peaks
     from wigglystuff import PlaySlider
 
     from red_patterns import (
@@ -23,6 +24,7 @@ def _():
         get_rbc_cmap,
         plot_psi,
         selected_sweep_catalog,
+        scipy_find_peaks,
         sweep_directory_picker,
     )
     from red_patterns.models import TaylorRun
@@ -399,6 +401,69 @@ def _(np, selected_run):
 
 
 @app.cell
+def _(inspect_psi, inspect_z, mo, np, plt, scipy_find_peaks):
+    peak_prominence = 0.10
+    distance_bin_width_cm = 0.1
+    final_psi = np.asarray(inspect_psi[-1], dtype=np.float64)
+    peak_indices, _ = scipy_find_peaks(final_psi, prominence=peak_prominence)
+    peak_positions_cm = 100.0 * np.asarray(inspect_z[peak_indices], dtype=np.float64)
+    peak_distances_cm = np.diff(peak_positions_cm)
+
+    if peak_distances_cm.size == 0:
+        peak_distance_panel = mo.callout(
+            "Fewer than two RBC-rich band centers were detected at the final time "
+            f"step with ψ peak prominence {peak_prominence:.2f}; P(d) is unavailable.",
+            kind="warn",
+        )
+    else:
+        distance_min = float(peak_distances_cm.min())
+        distance_max = float(peak_distances_cm.max())
+        bin_start = distance_bin_width_cm * np.floor(
+            distance_min / distance_bin_width_cm
+        )
+        bin_stop = distance_bin_width_cm * np.ceil(
+            distance_max / distance_bin_width_cm
+        )
+        if bin_stop <= bin_start:
+            bin_start -= distance_bin_width_cm / 2.0
+            bin_stop += distance_bin_width_cm / 2.0
+        bin_edges = np.arange(
+            bin_start,
+            bin_stop + distance_bin_width_cm * 0.5,
+            distance_bin_width_cm,
+        )
+
+        _, peak_distance_axis = plt.subplots(constrained_layout=True)
+        peak_distance_axis.hist(
+            peak_distances_cm,
+            bins=bin_edges,
+            density=True,
+            color="#0f766e",
+            edgecolor="white",
+        )
+        peak_distance_axis.set(
+            xlabel=r"Neighboring RBC-rich band distance $d$ [cm]",
+            ylabel=r"$P(d)$ [cm$^{-1}$]",
+            title=r"Final-time spatial distribution of RBC-rich band distances",
+        )
+        peak_distance_panel = mo.vstack(
+            [
+                mo.md(
+                    "### Peak-Distance Distribution\n\n"
+                    f"Detected `{peak_positions_cm.size}` band centers and "
+                    f"`{peak_distances_cm.size}` neighboring distances using final-time "
+                    f"ψ peak prominence `{peak_prominence:.2f}`.  \n"
+                    f"Mean distance `{peak_distances_cm.mean():.4g}` cm; "
+                    f"standard deviation `{peak_distances_cm.std():.4g}` cm."
+                ),
+                mo.ui.matplotlib(peak_distance_axis),
+            ],
+            align="stretch",
+        )
+    return (peak_distance_panel,)
+
+
+@app.cell
 def _(inspect_z, selected_run):
     # Keep the compact selected-run view deterministic: inspect the final saved
     # frame and use the full z domain for its FFT.
@@ -596,6 +661,7 @@ def _(
     fft_dominant_panel,
     fft_panel,
     mo,
+    peak_distance_panel,
     phi_panel,
     psi_panel,
     selected_summary,
@@ -605,6 +671,7 @@ def _(
             selected_summary,
             mo.hstack([phi_panel, psi_panel], align="start", gap=1),
             mo.hstack([fft_panel, fft_dominant_panel], align="start", gap=1),
+            peak_distance_panel,
         ],
         align="stretch",
         gap=1,
