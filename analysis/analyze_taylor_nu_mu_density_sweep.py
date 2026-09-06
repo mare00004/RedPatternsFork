@@ -151,8 +151,8 @@ def _(SweepCatalog, TaylorRun, np, pd):
 def _(Path, RunData, np):
     def final_dominant_wavelength(
         run_h5: str | Path, minimum_mode: int = 6
-    ) -> tuple[int, float]:
-        """Return the strongest final-time normal-ψ Fourier mode and wavelength.
+    ) -> tuple[int, float, float, float]:
+        """Return final-time normal-ψ dominant-mode and spectral statistics.
 
         Only the final ψ frame is read so the sweep heatmap does not load every
         saved timestep (or a no-interaction reference) for every run.
@@ -178,7 +178,20 @@ def _(Path, RunData, np):
         if amplitudes[dominant_mode] <= 0.0:
             raise ValueError(f"ψ has no nonzero Fourier modes at or above {minimum_mode}")
         frequency = np.fft.rfftfreq(z.size, d=dz)[dominant_mode]
-        return dominant_mode, float(1.0 / frequency)
+        candidate_amplitudes = amplitudes[minimum_mode:]
+        relative_power = (candidate_amplitudes / candidate_amplitudes.max()) ** 2
+        mode_probabilities = relative_power / relative_power.sum()
+        nonzero_probabilities = mode_probabilities[mode_probabilities > 0.0]
+        spectral_entropy = float(
+            -np.sum(nonzero_probabilities * np.log(nonzero_probabilities))
+        )
+        effective_mode_count = float(np.exp(spectral_entropy))
+        return (
+            dominant_mode,
+            float(1.0 / frequency),
+            spectral_entropy,
+            effective_mode_count,
+        )
 
     return (final_dominant_wavelength,)
 
@@ -233,12 +246,18 @@ def _(final_dominant_wavelength, mo, np, sweep_df, ui_density):
         & ~sweep_df["is_no_interaction"]
     ].copy()
     density_df["dominant_wavelength_cm"] = np.nan
+    density_df["spectral_entropy"] = np.nan
+    density_df["effective_mode_count"] = np.nan
     for _index, _row in density_df.iterrows():
         if not bool(_row["h5_exists"]):
             continue
         try:
-            _, _wavelength = final_dominant_wavelength(_row["run_h5"])
+            _, _wavelength, _entropy, _effective_modes = final_dominant_wavelength(
+                _row["run_h5"]
+            )
             density_df.at[_index, "dominant_wavelength_cm"] = 100.0 * _wavelength
+            density_df.at[_index, "spectral_entropy"] = _entropy
+            density_df.at[_index, "effective_mode_count"] = _effective_modes
             density_df.at[_index, "comparison_status"] = "ready"
         except (OSError, ValueError) as _error:
             density_df.at[_index, "comparison_status"] = str(_error)
@@ -281,6 +300,16 @@ def _(alt, density_df, mo, ui_density):
                     "dominant_wavelength_cm:Q",
                     title="final ψ dominant λ [cm] (n ≥ 6)",
                     format=".6g",
+                ),
+                alt.Tooltip(
+                    "spectral_entropy:Q",
+                    title="spectral entropy [nats] (n ≥ 6)",
+                    format=".4f",
+                ),
+                alt.Tooltip(
+                    "effective_mode_count:Q",
+                    title="effective number of modes (n ≥ 6)",
+                    format=".3f",
                 ),
                 alt.Tooltip("comparison_status:N", title="comparison status"),
             ],
