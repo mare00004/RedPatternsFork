@@ -948,6 +948,67 @@ def _(difference_fft_amplitudes, fft_mode_numbers, inspect_time):
 
 
 @app.cell
+def _(
+    fft_n_points,
+    fft_z,
+    inspect_time,
+    inspect_psi,
+    fft_z_start_index,
+    fft_z_stop_index,
+):
+    # Compute the non-periodic, unbiased spatial autocorrelation at every saved
+    # time.  Each profile is centered so this measures spatial structure rather
+    # than its mean level, and is normalized to one at zero separation.
+    _z_slice = slice(fft_z_start_index, fft_z_stop_index + 1)
+    _profiles = np.asarray(inspect_psi[:, _z_slice], dtype=np.float64).copy()
+    _profiles -= _profiles.mean(axis=1, keepdims=True)
+    _padded_length = 2 * fft_n_points - 1
+    _autocovariance = np.fft.irfft(
+        np.abs(np.fft.rfft(_profiles, n=_padded_length, axis=1)) ** 2,
+        n=_padded_length,
+        axis=1,
+    )[:, :fft_n_points]
+    _overlap_counts = fft_n_points - np.arange(fft_n_points)
+    _autocovariance /= _overlap_counts[np.newaxis, :]
+    _zero_lag = _autocovariance[:, :1]
+    _autocorrelation = np.divide(
+        _autocovariance,
+        _zero_lag,
+        out=np.full_like(_autocovariance, np.nan),
+        where=_zero_lag > 0.0,
+    )
+    _lag_cm = 100.0 * (fft_z - fft_z[0])
+
+    _autocorrelation_fig, _autocorrelation_ax = plt.subplots(constrained_layout=True)
+    _autocorrelation_image = _autocorrelation_ax.pcolormesh(
+        inspect_time,
+        _lag_cm,
+        _autocorrelation.T,
+        shading="nearest",
+        cmap="RdBu_r",
+        vmin=-1.0,
+        vmax=1.0,
+    )
+    _autocorrelation_colorbar = _autocorrelation_fig.colorbar(
+        _autocorrelation_image, ax=_autocorrelation_ax
+    )
+    _autocorrelation_colorbar.set_label(r"$C_{\psi}(\Delta z, t) / C_{\psi}(0, t)$")
+    _autocorrelation_ax.set_xlabel(r"$t\;[s]$")
+    _autocorrelation_ax.set_ylabel(r"$\Delta z\;[cm]$")
+    _autocorrelation_ax.set_title(
+        r"Spatial autocorrelation of interaction $\psi$ over time"
+    )
+    spatial_autocorrelation_panel = mo.vstack(
+        [
+            mo.md("### Interaction Psi Spatial Autocorrelation"),
+            mo.ui.matplotlib(_autocorrelation_ax),
+        ],
+        align="stretch",
+    )
+    return (spatial_autocorrelation_panel,)
+
+
+@app.cell
 def _(fft_amplitudes, fft_mode_numbers, inspect_time):
     _traces_fig, _traces_ax = plt.subplots(constrained_layout=True)
     _modes = fft_mode_numbers[1:]
@@ -1008,10 +1069,26 @@ def _(difference_fft_amplitudes, fft_mode_numbers, inspect_time):
 
 
 @app.cell
-def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time):
-    _non_dc_amplitudes = fft_amplitudes[:, 1:]
-    _dominant_mode_indices = 1 + np.argmax(_non_dc_amplitudes, axis=1)
-    _has_nonzero_mode = np.any(_non_dc_amplitudes > 0.0, axis=1)
+def _(
+    fft_amplitudes,
+    fft_mode_numbers,
+    fft_time_index,
+    fft_wavelengths,
+    inspect_time,
+):
+    # Exclude large-scale modes when identifying the dominant interaction-psi
+    # wavelength; the corresponding Delta-psi calculation remains unfiltered.
+    _minimum_dominant_mode = 5
+    _eligible_mode_indices = np.flatnonzero(fft_mode_numbers > _minimum_dominant_mode)
+    mo.stop(
+        _eligible_mode_indices.size == 0,
+        mo.md(r"Select enough FFT points to include a mode with $n > 5$."),
+    )
+    _eligible_amplitudes = fft_amplitudes[:, _eligible_mode_indices]
+    _dominant_mode_indices = _eligible_mode_indices[
+        np.argmax(_eligible_amplitudes, axis=1)
+    ]
+    _has_nonzero_mode = np.any(_eligible_amplitudes > 0.0, axis=1)
     fft_dominant_mode = np.where(_has_nonzero_mode, _dominant_mode_indices, -1)
     fft_dominant_wavelength = np.full(
         fft_dominant_mode.shape, np.nan, dtype=np.float64
@@ -1040,11 +1117,13 @@ def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time):
         _dominant_ax.legend()
     _dominant_ax.set_xlabel(r"$t\;[s]$")
     _dominant_ax.set_ylabel(r"$\lambda_{\mathrm{dom}}(t)\;[\mathrm{cm}]$")
-    _dominant_ax.set_title(r"Dominant wavelength of interaction $\psi$ FFT")
+    _dominant_ax.set_title(
+        r"Dominant wavelength of interaction $\psi$ FFT ($n > 5$)"
+    )
 
     fft_dominant_wavelength_panel = mo.vstack(
         [
-            mo.md("### Interaction Psi Dominant Wavelength"),
+            mo.md("### Interaction Psi Dominant Wavelength ($n > 5$)"),
             mo.ui.matplotlib(_dominant_ax),
         ],
         align="stretch",
@@ -1054,6 +1133,74 @@ def _(fft_amplitudes, fft_time_index, fft_wavelengths, inspect_time):
         fft_dominant_wavelength,
         fft_dominant_wavelength_panel,
     )
+
+
+@app.cell
+def _(
+    fft_amplitudes,
+    fft_mode_numbers,
+    fft_time_index,
+    fft_wavelengths,
+    inspect_time,
+):
+    # Use the power-spectrum first moment to characterize the interaction-psi
+    # length scale, excluding the same large-scale modes as above.
+    _minimum_mode = 5
+    _eligible_mode_indices = np.flatnonzero(fft_mode_numbers > _minimum_mode)
+    mo.stop(
+        _eligible_mode_indices.size == 0,
+        mo.md(r"Select enough FFT points to include a mode with $n > 5$."),
+    )
+    _structure_factor = fft_amplitudes[:, _eligible_mode_indices] ** 2
+    _wavenumbers = 2.0 * np.pi / fft_wavelengths[_eligible_mode_indices]
+    _spectral_weight = _structure_factor.sum(axis=1)
+    _characteristic_wavenumber = np.divide(
+        _structure_factor @ _wavenumbers,
+        _spectral_weight,
+        out=np.full(_spectral_weight.shape, np.nan, dtype=np.float64),
+        where=_spectral_weight > 0.0,
+    )
+    _characteristic_wavelength_cm = 100.0 * np.divide(
+        2.0 * np.pi,
+        _characteristic_wavenumber,
+        out=np.full(_characteristic_wavenumber.shape, np.nan, dtype=np.float64),
+        where=_characteristic_wavenumber > 0.0,
+    )
+
+    _centroid_fig, _centroid_ax = plt.subplots(constrained_layout=True)
+    _centroid_ax.plot(
+        inspect_time,
+        _characteristic_wavelength_cm,
+        color="#0891b2",
+        linewidth=1.5,
+    )
+    if np.isfinite(_characteristic_wavelength_cm[fft_time_index]):
+        _centroid_ax.scatter(
+            [inspect_time[fft_time_index]],
+            [_characteristic_wavelength_cm[fft_time_index]],
+            color="#dc2626",
+            zorder=3,
+            label=f"step {fft_time_index}",
+        )
+        _centroid_ax.legend()
+    _centroid_ax.set_xlabel(r"$t\;[s]$")
+    _centroid_ax.set_ylabel(r"$\lambda_{\mathrm{char}}(t)\;[\mathrm{cm}]$")
+    _centroid_ax.set_title(
+        r"Spectral-centroid wavelength of interaction $\psi$ ($n > 5$)"
+    )
+    spectral_centroid_wavelength_panel = mo.vstack(
+        [
+            mo.md(
+                r"### Interaction Psi Spectral-Centroid Wavelength ($n > 5$)  "
+                "\n"
+                r"$k_{\mathrm{char}} = \sum kS(k,t) / \sum S(k,t)$, "
+                r"where $S(k,t)=|\tilde{\psi}(k,t)|^2$."
+            ),
+            mo.ui.matplotlib(_centroid_ax),
+        ],
+        align="stretch",
+    )
+    return (spectral_centroid_wavelength_panel,)
 
 
 @app.cell
@@ -1137,6 +1284,8 @@ def _(
     percoll_panel,
     psi_difference_panel,
     psi_panel,
+    spatial_autocorrelation_panel,
+    spectral_centroid_wavelength_panel,
 ):
     _dominant_wavelength_cm = 100.0 * fft_dominant_wavelength[fft_time_index]
     _dominant_text = (
@@ -1182,6 +1331,7 @@ def _(
                 justify="start",
                 gap=1,
             ),
+            spatial_autocorrelation_panel,
             mo.vstack(
                 [
                     mo.hstack(
@@ -1208,6 +1358,7 @@ def _(
                     mo.hstack(
                         [
                             fft_dominant_wavelength_panel,
+                            spectral_centroid_wavelength_panel,
                             difference_fft_dominant_wavelength_panel,
                         ],
                         align="start",
