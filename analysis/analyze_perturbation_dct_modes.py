@@ -21,7 +21,14 @@ with app.setup:
     )
     REPO_ROOT = NOTEBOOK_FILE.parent.parent
 
-    from red_patterns import RunData, get_rbc_cmap, load_runs_jsonl, plot_psi
+    from red_patterns import (
+        RunData,
+        SweepCatalog,
+        get_rbc_cmap,
+        plot_psi,
+        selected_sweep_catalog,
+        sweep_directory_picker,
+    )
     from red_patterns.models import TaylorRun
     from red_patterns.types import PhiType
 
@@ -41,12 +48,10 @@ def _():
 
 
 @app.cell
-def _(Path):
-    ui_sweep_dir = mo.ui.file_browser(
+def _(Path, sweep_directory_picker):
+    ui_sweep_dir = sweep_directory_picker(
+        mo,
         initial_path=Path.cwd(),
-        ignore_empty_dirs=False,
-        multiple=False,
-        selection_mode="directory",
         label="Choose Taylor sweep directory",
     )
     ui_sweep_dir
@@ -54,11 +59,12 @@ def _(Path):
 
 
 @app.cell
-def _(Path, TaylorRun, load_runs_jsonl, pd):
-    def scan_sweep(sweep_dir: Path) -> pd.DataFrame:
+def _(SweepCatalog, TaylorRun, pd):
+    def scan_sweep(catalog: SweepCatalog) -> pd.DataFrame:
         """Load candidate Taylor base and perturbed runs plus their result paths."""
         rows: list[dict[str, object]] = []
-        for run in load_runs_jsonl(sweep_dir / "runs.jsonl"):
+        for entry in catalog.entries:
+            run = entry.run
             if not isinstance(run, TaylorRun):
                 continue
 
@@ -73,7 +79,7 @@ def _(Path, TaylorRun, load_runs_jsonl, pd):
             seed = phi_params.pop("seed", None)
             amplitude = phi_params.pop("amplitude", None)
             shared_phi = json.dumps(phi_params, sort_keys=True, separators=(",", ":"))
-            result_path = sweep_dir / "results" / run.run_id / "run.h5"
+            result_path = entry.run_h5
             rows.append(
                 {
                     "run_id": run.run_id,
@@ -89,7 +95,7 @@ def _(Path, TaylorRun, load_runs_jsonl, pd):
                     "storeTime": float(run.storeTime),
                     "gradient": run.gradient.value,
                     "run_h5": result_path,
-                    "h5_exists": result_path.is_file(),
+                    "h5_exists": entry.h5_exists,
                 }
             )
 
@@ -192,37 +198,31 @@ def _(Path, TaylorRun, load_runs_jsonl, pd):
 
 
 @app.cell
-def _(Path, mo, scan_sweep, ui_sweep_dir, validate_ensembles):
-    selected_path = ui_sweep_dir.path(0) if ui_sweep_dir.value else None
-    default_dir = REPO_ROOT / "data"
-    sweep_dir = Path(selected_path) if selected_path else default_dir
-
-    if not (sweep_dir / "runs.jsonl").is_file():
+def _(mo, pd, scan_sweep, selected_sweep_catalog, ui_sweep_dir, validate_ensembles):
+    catalog, scan_status = selected_sweep_catalog(mo, ui_sweep_dir)
+    if catalog is None:
         sweep_df = pd.DataFrame()
         ensemble_df = pd.DataFrame()
         diagnostics_df = pd.DataFrame()
-        scan_status = mo.callout(
-            f"`{sweep_dir}` does not contain `runs.jsonl`. Choose a sweep directory.",
-            kind="warn",
-        )
     else:
         try:
-            sweep_df = scan_sweep(sweep_dir)
+            sweep_df = scan_sweep(catalog)
         except ValueError as exc:
             sweep_df = pd.DataFrame()
             ensemble_df = pd.DataFrame()
             diagnostics_df = pd.DataFrame()
             scan_status = mo.callout(
-                f"Could not read `{sweep_dir / 'runs.jsonl'}` with the current sweep schema: {exc}",
+                f"Could not process `{catalog.root}` with the current sweep schema: {exc}",
                 kind="warn",
             )
         else:
             ensemble_df, diagnostics_df = validate_ensembles(sweep_df)
             scan_status = mo.md(
                 f"Found `{len(sweep_df)}` smooth/perturbed Taylor runs and "
-                f"`{len(ensemble_df)}` compatible ensembles in `{sweep_dir}`."
+                f"`{len(ensemble_df)}` compatible ensembles in `{catalog.root}`."
             )
 
+    sweep_dir = catalog.root if catalog is not None else None
     scan_status
     return diagnostics_df, ensemble_df, sweep_dir
 

@@ -23,7 +23,14 @@ with app.setup:
     )
     REPO_ROOT = NOTEBOOK_FILE.parent.parent
 
-    from red_patterns import RunData, get_rbc_cmap, load_runs_jsonl, plot_psi
+    from red_patterns import (
+        RunData,
+        SweepCatalog,
+        get_rbc_cmap,
+        plot_psi,
+        selected_sweep_catalog,
+        sweep_directory_picker,
+    )
     from red_patterns.models import TaylorRun
     from red_patterns.types import PhiType
 
@@ -68,12 +75,10 @@ def _(analysis_mode_selector, mo):
 
 
 @app.cell
-def _(Path):
-    ui_sweep_dir = mo.ui.file_browser(
+def _(Path, sweep_directory_picker):
+    ui_sweep_dir = sweep_directory_picker(
+        mo,
         initial_path=Path.cwd(),
-        ignore_empty_dirs=False,
-        multiple=False,
-        selection_mode="directory",
         label="Choose Taylor sweep directory",
     )
     ui_sweep_dir
@@ -81,8 +86,8 @@ def _(Path):
 
 
 @app.cell
-def _(Path, TaylorRun, load_runs_jsonl, np, pd):
-    def scan_sweep(sweep_dir: Path) -> pd.DataFrame:
+def _(SweepCatalog, TaylorRun, np, pd):
+    def scan_sweep(catalog: SweepCatalog) -> pd.DataFrame:
         """Return compatible base and single-mode Taylor runs from a sweep."""
         compatible_phi_types = {
             PhiType.SMOOTH_HOMOGENEOUS.value,
@@ -91,7 +96,8 @@ def _(Path, TaylorRun, load_runs_jsonl, np, pd):
             PhiType.SINGLE_MODE_LINEAR_FULL_RIDGE.value,
         }
         rows: list[dict[str, object]] = []
-        for run in load_runs_jsonl(sweep_dir / "runs.jsonl"):
+        for entry in catalog.entries:
+            run = entry.run
             if not isinstance(run, TaylorRun):
                 continue
 
@@ -103,7 +109,7 @@ def _(Path, TaylorRun, load_runs_jsonl, np, pd):
             amplitude = phi_params.pop("amplitude", None)
             mode_number = phi_params.pop("mode_number", None)
             shared_phi = json.dumps(phi_params, sort_keys=True, separators=(",", ":"))
-            result_path = sweep_dir / "results" / run.run_id / "run.h5"
+            result_path = entry.run_h5
             rows.append(
                 {
                     "run_id": run.run_id,
@@ -119,7 +125,7 @@ def _(Path, TaylorRun, load_runs_jsonl, np, pd):
                     "storeTime": float(run.storeTime),
                     "gradient": run.gradient.value,
                     "run_h5": result_path,
-                    "h5_exists": result_path.is_file(),
+                    "h5_exists": entry.h5_exists,
                 }
             )
         return pd.DataFrame(rows)
@@ -243,17 +249,15 @@ def _(Path, TaylorRun, load_runs_jsonl, np, pd):
 
 
 @app.cell
-def _(Path, analysis_mode, mo, pd, scan_sweep, ui_sweep_dir, validate_sweeps):
-    selected_path = ui_sweep_dir.path(0) if ui_sweep_dir.value else None
-    sweep_dir = Path(selected_path) if selected_path else REPO_ROOT / "data"
-    if not (sweep_dir / "runs.jsonl").is_file():
+def _(analysis_mode, mo, pd, scan_sweep, selected_sweep_catalog, ui_sweep_dir, validate_sweeps):
+    catalog, scan_status = selected_sweep_catalog(mo, ui_sweep_dir)
+    if catalog is None:
         sweep_df = pd.DataFrame()
         candidate_df = pd.DataFrame()
         diagnostics_df = pd.DataFrame()
-        scan_status = mo.callout(f"`{sweep_dir}` does not contain `runs.jsonl`. Choose a sweep directory.", kind="warn")
     else:
         try:
-            sweep_df = scan_sweep(sweep_dir)
+            sweep_df = scan_sweep(catalog)
             candidate_df, diagnostics_df = validate_sweeps(sweep_df, analysis_mode)
             families = {
                 f"{row.base_phi_type} / {row.mode_phi_type}"
@@ -262,13 +266,14 @@ def _(Path, analysis_mode, mo, pd, scan_sweep, ui_sweep_dir, validate_sweeps):
             family_text = ", ".join(sorted(families)) if families else "no compatible phi family"
             scan_status = mo.md(
                 f"Found {len(sweep_df)} relevant Taylor runs and {len(candidate_df)} compatible "
-                f"setups for {analysis_mode} analysis in {sweep_dir}. Detected: {family_text}."
+                f"setups for {analysis_mode} analysis in {catalog.root}. Detected: {family_text}."
             )
         except ValueError as exc:
             sweep_df = pd.DataFrame()
             candidate_df = pd.DataFrame()
             diagnostics_df = pd.DataFrame()
-            scan_status = mo.callout(f"Could not read `{sweep_dir / 'runs.jsonl'}`: {exc}", kind="warn")
+            scan_status = mo.callout(f"Could not process `{catalog.root}`: {exc}", kind="warn")
+    sweep_dir = catalog.root if catalog is not None else None
     scan_status
     return candidate_df, diagnostics_df, sweep_dir
 

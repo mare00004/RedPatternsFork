@@ -18,10 +18,12 @@ def _():
 
     from red_patterns import (
         RunData,
+        SweepCatalog,
         find_peaks,
         get_rbc_cmap,
-        load_runs_jsonl,
         plot_psi,
+        selected_sweep_catalog,
+        sweep_directory_picker,
     )
     from red_patterns.models import TaylorRun
     from red_patterns.phi import PhiResult, plot_phi
@@ -29,11 +31,11 @@ def _():
     return (
         Path,
         RunData,
+        SweepCatalog,
         TaylorRun,
         alt,
         find_peaks,
         get_rbc_cmap,
-        load_runs_jsonl,
         MaxNLocator,
         mo,
         np,
@@ -42,17 +44,17 @@ def _():
         PlaySlider,
         plot_phi,
         plot_psi,
+        selected_sweep_catalog,
+        sweep_directory_picker,
         plt,
     )
 
 
 @app.cell
-def _(Path, mo):
-    ui_sweep_dir = mo.ui.file_browser(
+def _(Path, mo, sweep_directory_picker):
+    ui_sweep_dir = sweep_directory_picker(
+        mo,
         initial_path=Path.cwd(),
-        ignore_empty_dirs=False,
-        multiple=False,
-        selection_mode="directory",
         label="Choose Taylor sweep directory",
     )
     mo.vstack(
@@ -71,18 +73,18 @@ def _(Path, mo):
 
 
 @app.cell
-def _(Path, TaylorRun, load_runs_jsonl, np, pd):
-    def scan_sweep(sweep_dir: Path) -> pd.DataFrame:
+def _(SweepCatalog, TaylorRun, np, pd):
+    def scan_sweep(catalog: SweepCatalog) -> pd.DataFrame:
         """Read Taylor metadata from runs.jsonl and locate expected result files."""
-        runs_path = sweep_dir / "runs.jsonl"
         rows: list[dict[str, object]] = []
 
-        for run in load_runs_jsonl(runs_path):
+        for entry in catalog.entries:
+            run = entry.run
             if not isinstance(run, TaylorRun):
                 continue
 
             phi_params = run.phi.params.model_dump(mode="json")
-            run_h5 = sweep_dir / "results" / run.run_id / "run.h5"
+            run_h5 = entry.run_h5
             rows.append(
                 {
                     "run_id": run.run_id,
@@ -96,7 +98,7 @@ def _(Path, TaylorRun, load_runs_jsonl, np, pd):
                     "storeTime": run.storeTime,
                     "gradient": run.gradient.value,
                     "run_h5": str(run_h5),
-                    "h5_exists": run_h5.is_file(),
+                    "h5_exists": entry.h5_exists,
                     **{f"phi_{key}": value for key, value in phi_params.items()},
                 }
             )
@@ -196,25 +198,13 @@ def _(Path, RunData, np):
 
 
 @app.cell
-def _(Path, mo, scan_sweep, ui_sweep_dir):
-    is_script_mode = mo.app_meta().mode == "script"
-    selected_dir = ui_sweep_dir.path(0) if ui_sweep_dir.value else None
-    default_dir = Path.cwd() / "data"
-    sweep_dir = Path(selected_dir) if selected_dir else (default_dir if is_script_mode else None)
-
-    if sweep_dir is None:
+def _(mo, scan_sweep, selected_sweep_catalog, ui_sweep_dir):
+    catalog, status = selected_sweep_catalog(mo, ui_sweep_dir)
+    if catalog is None:
         sweep_df = None
-        status = mo.md("Waiting for a sweep directory selection...")
-    elif not (sweep_dir / "runs.jsonl").is_file():
-        sweep_df = None
-        status = mo.callout(
-            f"`{sweep_dir}` does not contain `runs.jsonl`.", kind="warn"
-        )
     else:
-        sweep_df = scan_sweep(sweep_dir)
-        status = mo.md(
-            f"Loaded `{len(sweep_df)}` Taylor runs from `{sweep_dir / 'runs.jsonl'}`."
-        )
+        sweep_df = scan_sweep(catalog)
+    sweep_dir = catalog.root if catalog is not None else None
 
     status
     return sweep_df, sweep_dir

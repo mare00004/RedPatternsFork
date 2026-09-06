@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from importlib import import_module
 
-_SUBMODULES = {"runs", "kernel", "phi", "sim", "sweep_jobs", "types", "models"}
+_SUBMODULES = {"runs", "kernel", "phi", "sim", "sweep_jobs", "sweep_catalog", "types", "models"}
 
 _EXPORTS = {
     "Array1F": ("runs", "Array1F"),
@@ -73,6 +73,12 @@ _EXPORTS = {
     "combine_sweeps": ("sweep_jobs", "combine_sweeps"),
     "find_run_by_id": ("sweep_jobs", "find_run_by_id"),
     "load_runs_jsonl": ("sweep_jobs", "load_runs_jsonl"),
+    "SweepCatalog": ("sweep_catalog", "SweepCatalog"),
+    "SweepCatalogError": ("sweep_catalog", "SweepCatalogError"),
+    "SweepEntry": ("sweep_catalog", "SweepEntry"),
+    "load_sweep_catalog": ("sweep_catalog", "load_sweep_catalog"),
+    "selected_sweep_catalog": ("sweep_catalog", "selected_sweep_catalog"),
+    "sweep_directory_picker": ("sweep_catalog", "sweep_directory_picker"),
     "normalize_runs": ("sweep_jobs", "normalize_runs"),
     "run_ids_from_runs": ("sweep_jobs", "run_ids_from_runs"),
     "runs_to_jsonl": ("sweep_jobs", "runs_to_jsonl"),
@@ -148,6 +154,12 @@ __all__ = [
     "combine_sweeps",
     "find_run_by_id",
     "load_runs_jsonl",
+    "SweepCatalog",
+    "SweepCatalogError",
+    "SweepEntry",
+    "load_sweep_catalog",
+    "selected_sweep_catalog",
+    "sweep_directory_picker",
     "normalize_runs",
     "run_ids_from_runs",
     "runs_to_jsonl",

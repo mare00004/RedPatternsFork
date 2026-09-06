@@ -15,21 +15,29 @@ def _():
     import pandas as pd
     from matplotlib.colors import TwoSlopeNorm
 
-    from red_patterns import RunData, get_rbc_cmap, load_runs_jsonl
+    from red_patterns import (
+        RunData,
+        SweepCatalog,
+        get_rbc_cmap,
+        selected_sweep_catalog,
+        sweep_directory_picker,
+    )
     from red_patterns.models import ConvRun, TaylorRun
 
     return (
         ConvRun,
         Path,
         RunData,
+        SweepCatalog,
         TaylorRun,
         TwoSlopeNorm,
         alt,
         get_rbc_cmap,
-        load_runs_jsonl,
         mo,
         np,
         pd,
+        selected_sweep_catalog,
+        sweep_directory_picker,
         plt,
     )
 
@@ -48,12 +56,10 @@ def _(mo):
 
 
 @app.cell
-def _(Path, mo):
-    ui_sweep_dir = mo.ui.file_browser(
+def _(Path, mo, sweep_directory_picker):
+    ui_sweep_dir = sweep_directory_picker(
+        mo,
         initial_path=Path.cwd(),
-        ignore_empty_dirs=False,
-        multiple=False,
-        selection_mode="directory",
         label="Choose mixed Taylor/convolution sweep directory",
     )
     ui_sweep_dir
@@ -106,10 +112,10 @@ def _(RunData, np):
 
 
 @app.cell
-def _(ConvRun, Path, TaylorRun, load_runs_jsonl, pd):
-    def scan_sweep(sweep_dir: Path):
+def _(ConvRun, SweepCatalog, TaylorRun, pd):
+    def scan_sweep(catalog: SweepCatalog):
         """Return the convolution reference and Taylor metadata from one sweep."""
-        runs = load_runs_jsonl(sweep_dir / "runs.jsonl")
+        runs = catalog.runs
         convolution_runs = [run for run in runs if isinstance(run, ConvRun)]
         if len(convolution_runs) != 1:
             raise ValueError(
@@ -117,19 +123,24 @@ def _(ConvRun, Path, TaylorRun, load_runs_jsonl, pd):
             )
 
         reference = convolution_runs[0]
-        reference_h5 = sweep_dir / "results" / reference.run_id / "run.h5"
+        reference_h5 = next(
+            entry.run_h5
+            for entry in catalog.entries
+            if entry.run_id == reference.run_id
+        )
         rows = []
-        for run in runs:
+        for entry in catalog.entries:
+            run = entry.run
             if not isinstance(run, TaylorRun):
                 continue
-            run_h5 = sweep_dir / "results" / run.run_id / "run.h5"
+            run_h5 = entry.run_h5
             rows.append(
                 {
                     "run_id": run.run_id,
                     "NU": float(run.NU),
                     "MU": float(run.MU),
                     "run_h5": str(run_h5),
-                    "h5_exists": run_h5.is_file(),
+                    "h5_exists": entry.h5_exists,
                     "comparison_status": "pending",
                 }
             )
@@ -153,7 +164,7 @@ def _(ConvRun, Path, TaylorRun, load_runs_jsonl, pd):
 
 
 @app.cell
-def _(Path, mo, np, pd, scan_sweep, ui_sweep_dir):
+def _(mo, np, pd, scan_sweep, selected_sweep_catalog, ui_sweep_dir):
     is_script_mode = mo.app_meta().mode == "script"
     selected_path = ui_sweep_dir.path(0) if ui_sweep_dir.value else None
     if is_script_mode:
@@ -202,22 +213,30 @@ def _(Path, mo, np, pd, scan_sweep, ui_sweep_dir):
         synthetic_taylor_fields = None
         status = mo.md("Waiting for a sweep directory selection...")
     else:
-        sweep_dir = Path(selected_path)
-        try:
-            reference_id, reference_h5, comparison_df = scan_sweep(sweep_dir)
-            synthetic_reference = None
-            synthetic_taylor_fields = None
-            status = mo.md(
-                f"Loaded convolution reference `{reference_id}` and "
-                f"{len(comparison_df)} Taylor runs from `{sweep_dir}`."
-            )
-        except (OSError, ValueError) as error:
+        catalog, status = selected_sweep_catalog(mo, ui_sweep_dir)
+        if catalog is None:
             comparison_df = None
             reference_id = None
             reference_h5 = None
             synthetic_reference = None
             synthetic_taylor_fields = None
-            status = mo.callout(str(error), kind="danger")
+        else:
+            try:
+                reference_id, reference_h5, comparison_df = scan_sweep(catalog)
+            except ValueError as error:
+                comparison_df = None
+                reference_id = None
+                reference_h5 = None
+                synthetic_reference = None
+                synthetic_taylor_fields = None
+                status = mo.callout(str(error), kind="danger")
+            else:
+                synthetic_reference = None
+                synthetic_taylor_fields = None
+                status = mo.md(
+                    f"Loaded convolution reference `{reference_id}` and "
+                    f"{len(comparison_df)} Taylor runs from `{catalog.root}`."
+                )
     status
     return (
         comparison_df,
