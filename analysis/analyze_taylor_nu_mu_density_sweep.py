@@ -24,7 +24,6 @@ def _():
         get_rbc_cmap,
         plot_psi,
         selected_sweep_catalog,
-        scipy_find_peaks,
         sweep_directory_picker,
     )
     from red_patterns.models import TaylorRun
@@ -47,6 +46,7 @@ def _():
         plot_phi,
         plot_psi,
         selected_sweep_catalog,
+        scipy_find_peaks,
         sweep_directory_picker,
         plt,
     )
