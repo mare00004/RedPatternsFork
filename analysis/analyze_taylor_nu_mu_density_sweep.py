@@ -468,25 +468,18 @@ def _(inspect_z, selected_run):
     # Keep the compact selected-run view deterministic: inspect the final saved
     # frame and use the full z domain for its FFT.
     fft_time_index = selected_run.n_saved - 1
-    fft_z_start_index = 0
-    fft_z_stop_index = inspect_z.shape[0] - 1
-    return fft_time_index, fft_z_start_index, fft_z_stop_index
+    return (fft_time_index,)
 
 
 @app.cell
-def _(fft_z_start_index, fft_z_stop_index, inspect_psi, inspect_z, mo, np):
-    fft_z = np.asarray(
-        inspect_z[slice(fft_z_start_index, fft_z_stop_index + 1)], dtype=np.float64
-    )
+def _(inspect_psi, inspect_z, mo, np):
+    fft_z = np.asarray(inspect_z, dtype=np.float64)
     fft_n_points = int(fft_z.shape[0])
     mo.stop(
         fft_n_points < 2,
-        mo.md("Select at least two z indices for the Fourier transform."),
+        mo.md("The selected run needs at least two z points for the Fourier transform."),
     )
-    psi_fft = np.asarray(
-        inspect_psi[:, slice(fft_z_start_index, fft_z_stop_index + 1)],
-        dtype=np.float64,
-    )
+    psi_fft = np.asarray(inspect_psi, dtype=np.float64)
     fft_coeffs = np.fft.rfft(psi_fft - psi_fft.mean(axis=1, keepdims=True), axis=1)
     fft_amplitudes = np.abs(fft_coeffs)
     fft_phases = np.angle(fft_coeffs)
@@ -540,23 +533,6 @@ def _(fft_time_index, fft_time_slider, inspect_time, mo, selected_run):
         align="stretch",
     )
     return (fft_time_panel,)
-
-
-@app.cell
-def _(fft_n_points, fft_z, fft_z_index_range, fft_z_start_index, fft_z_stop_index, inspect_z, mo):
-    fft_z_range_panel = mo.vstack(
-        [
-            mo.md("### FFT z-Index Range"),
-            fft_z_index_range,
-            mo.md(
-                f"Indices `{fft_z_start_index}` to `{fft_z_stop_index}`  \\n"
-                f"Physical range `{100 * fft_z[0]:.6g}` to `{100 * fft_z[-1]:.6g}` cm  \\n"
-                f"Grid points used in FFT `{fft_n_points}` of `{inspect_z.shape[0]}`"
-            ),
-        ],
-        align="stretch",
-    )
-    return (fft_z_range_panel,)
 
 
 @app.cell
