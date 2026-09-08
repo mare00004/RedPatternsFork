@@ -12,8 +12,7 @@ def _():
     import pandas as pd
     import altair as alt
     import pyarrow  # noqa: F401
-    from red_patterns import Array1F
-    from kernel import (
+    from red_patterns.kernel import (
         calculate_nu_mu,
         generate_kernel_stencil,
         compute_force_closure_kernel,
@@ -49,7 +48,7 @@ def _(mo):
 def _():
     # Pair Distribution Function
     G0 = 4.0e7
-    EQ_DIST = 6.587340962e-6 # From `nu_of_d.py`
+    EQ_DIST = 6.587340962e-6  # Nearest-neighbor reference peak
     SIGMA_C = 0.5e-6
     return EQ_DIST, G0, SIGMA_C
 
