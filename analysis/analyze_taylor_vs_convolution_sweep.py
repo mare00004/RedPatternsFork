@@ -52,13 +52,7 @@ def _(mo):
     run; every Taylor field is compared to it using the grid-normalized $L^2$
     difference (RMS over the saved $t$--$z$ grid):
 
-    $$
-    D_{\mathrm{grid}} = \left[
-    \frac{1}{N_t N_z}\sum_{i=1}^{N_t}\sum_{j=1}^{N_z}
-    \left(\psi_{\mathrm{Taylor}}(t_i, z_j)
-    - \psi_{\mathrm{conv}}(t_i, z_j)\right)^2
-    \right]^{1/2}.
-    $$
+    $$D_{\mathrm{grid}} = \sqrt{\frac{1}{N_t N_z}\sum_{i=1}^{N_t}\sum_{j=1}^{N_z}\left|\psi_{\mathrm{Taylor}}(t_i,z_j)-\psi_{\mathrm{conv}}(t_i,z_j)\right|^2}.$$
 
     Click a heatmap cell to inspect the full fields and their signed difference.
     """)
@@ -344,7 +338,7 @@ def _(alt, comparison_results, mo):
             y=alt.Y("MU_label:O", title="μ [J m⁵]", sort=alt.SortField(field="MU")),
             color=alt.Color(
                 "grid_normalized_l2_for_color:Q",
-                title="grid-normalized L2 difference",
+                title="L₂ difference",
                 scale=alt.Scale(type="log", scheme="viridis"),
             ),
             opacity=alt.condition(click, alt.value(1.0), alt.value(0.45)),
@@ -354,7 +348,7 @@ def _(alt, comparison_results, mo):
                 alt.Tooltip("MU:Q", title="μ [J m⁵]", format=".3e"),
                 alt.Tooltip(
                     "grid_normalized_l2:Q",
-                    title="grid-normalized L2 difference",
+                    title="L₂ difference",
                     format=".6g",
                 ),
                 alt.Tooltip("comparison_status:N", title="comparison status"),
@@ -365,7 +359,7 @@ def _(alt, comparison_results, mo):
         .properties(
             width=520,
             height=440,
-            title="Taylor vs convolution grid-normalized L2 difference",
+            title="Taylor vs. Convolution L₂ difference",
         )
     )
     ui_heatmap = mo.ui.altair_chart(heatmap)
