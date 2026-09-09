@@ -50,7 +50,16 @@ def _(mo):
     Choose a mixed sweep directory containing `runs.jsonl` and
     `results/<run_id>/run.h5`. The sweep must contain exactly one convolution
     run; every Taylor field is compared to it using the grid-normalized $L^2$
-    error (RMS over the saved $t$--$z$ grid).
+    difference (RMS over the saved $t$--$z$ grid):
+
+    $$
+    D_{\mathrm{grid}} = \left[
+    \frac{1}{N_t N_z}\sum_{i=1}^{N_t}\sum_{j=1}^{N_z}
+    \left(\psi_{\mathrm{Taylor}}(t_i, z_j)
+    - \psi_{\mathrm{conv}}(t_i, z_j)\right)^2
+    \right]^{1/2}.
+    $$
+
     Click a heatmap cell to inspect the full fields and their signed difference.
     """)
     return
@@ -69,7 +78,7 @@ def _(Path, mo, sweep_directory_picker):
 
 @app.cell
 def _(RunData, np):
-    def grid_normalized_l2_error(reference_h5: str, comparison_h5: str):
+    def grid_normalized_l2_difference(reference_h5: str, comparison_h5: str):
         """Load two fields and return their strict-grid RMS L2 difference."""
         reference = RunData.from_h5(reference_h5, load_fields=False)
         comparison = RunData.from_h5(comparison_h5, load_fields=False)
@@ -106,12 +115,12 @@ def _(RunData, np):
         grid_size = psi_reference.size
         if grid_size == 0:
             raise ValueError("psi grid is empty.")
-        error = float(
+        difference = float(
             np.linalg.norm(psi_comparison - psi_reference) / np.sqrt(grid_size)
         )
-        return error, psi_reference, psi_comparison, time_reference, z_reference
+        return difference, psi_reference, psi_comparison, time_reference, z_reference
 
-    return (grid_normalized_l2_error,)
+    return (grid_normalized_l2_difference,)
 
 
 @app.cell
@@ -254,7 +263,7 @@ def _(mo, np, pd, scan_sweep, selected_sweep_catalog, ui_sweep_dir):
 
 
 @app.cell
-def _(comparison_df, grid_normalized_l2_error, mo, reference_h5):
+def _(comparison_df, grid_normalized_l2_difference, mo, reference_h5):
     mo.stop(comparison_df is None, mo.md("Select a valid mixed sweep to continue."))
     assert comparison_df is not None
     mo.stop(comparison_df.empty, mo.md("The selected sweep contains no Taylor runs."))
@@ -271,10 +280,10 @@ def _(comparison_df, grid_normalized_l2_error, mo, reference_h5):
                 results.at[index, "comparison_status"] = "Taylor run.h5 is missing"
                 continue
             try:
-                error, _psi_reference, _psi_taylor, _, _ = grid_normalized_l2_error(
+                difference, _psi_reference, _psi_taylor, _, _ = grid_normalized_l2_difference(
                     str(reference_h5), row["run_h5"]
                 )
-                results.at[index, "grid_normalized_l2"] = error
+                results.at[index, "grid_normalized_l2"] = difference
                 results.at[index, "max_difference_pct"] = float(
                     np.max(np.abs(100.0 * (_psi_taylor - _psi_reference)))
                 )
@@ -311,7 +320,7 @@ def _(comparison_results, difference_limit, display_floor, mo, reference_id):
             ),
             mo.callout(
                 mo.md(
-                    "Color encodes grid-normalized $L^2$ error on a logarithmic scale. "
+                    "Color encodes grid-normalized $L^2$ difference on a logarithmic scale. "
                     f"Exact zero is displayed at the positive floor `{display_floor:.3e}` "
                     "but remains zero in the tooltip. The signed-difference plots use "
                     f"the fixed sweep-wide range ±`{difference_limit:.3e}` percentage points."
@@ -331,21 +340,21 @@ def _(alt, comparison_results, mo):
         alt.Chart(comparison_results)
         .mark_rect(stroke="black", strokeWidth=0.5)
         .encode(
-            x=alt.X("NU_label:O", title="ν", sort=alt.SortField(field="NU")),
-            y=alt.Y("MU_label:O", title="μ", sort=alt.SortField(field="MU")),
+            x=alt.X("NU_label:O", title="ν [J m³]", sort=alt.SortField(field="NU")),
+            y=alt.Y("MU_label:O", title="μ [J m⁵]", sort=alt.SortField(field="MU")),
             color=alt.Color(
                 "grid_normalized_l2_for_color:Q",
-                title="grid-normalized L2 error",
+                title="grid-normalized L2 difference",
                 scale=alt.Scale(type="log", scheme="viridis"),
             ),
             opacity=alt.condition(click, alt.value(1.0), alt.value(0.45)),
             tooltip=[
                 alt.Tooltip("run_id:N", title="Taylor run"),
-                alt.Tooltip("NU:Q", title="ν", format=".3e"),
-                alt.Tooltip("MU:Q", title="μ", format=".3e"),
+                alt.Tooltip("NU:Q", title="ν [J m³]", format=".3e"),
+                alt.Tooltip("MU:Q", title="μ [J m⁵]", format=".3e"),
                 alt.Tooltip(
                     "grid_normalized_l2:Q",
-                    title="grid-normalized L2 error",
+                    title="grid-normalized L2 difference",
                     format=".6g",
                 ),
                 alt.Tooltip("comparison_status:N", title="comparison status"),
@@ -356,7 +365,7 @@ def _(alt, comparison_results, mo):
         .properties(
             width=520,
             height=440,
-            title="Taylor vs convolution grid-normalized L2 error",
+            title="Taylor vs convolution grid-normalized L2 difference",
         )
     )
     ui_heatmap = mo.ui.altair_chart(heatmap)
@@ -396,7 +405,7 @@ def _(comparison_results, mo, ui_heatmap):
 @app.cell
 def _(
     reference_h5,
-    grid_normalized_l2_error,
+    grid_normalized_l2_difference,
     selected_row,
     synthetic_reference,
     synthetic_taylor_fields,
@@ -407,7 +416,7 @@ def _(
         psi_taylor = synthetic_taylor_fields[selected_row["run_id"]]
     else:
         assert reference_h5 is not None
-        _, psi_reference, psi_taylor, time, z = grid_normalized_l2_error(
+        _, psi_reference, psi_taylor, time, z = grid_normalized_l2_difference(
             str(reference_h5), selected_row["run_h5"]
         )
     return psi_reference, psi_taylor, time, z
@@ -448,8 +457,9 @@ def _(TwoSlopeNorm, difference_limit, get_rbc_cmap, mo, np, plt, psi_reference, 
         [
             mo.md(
                 f"## Selected Taylor run `{selected_row['run_id']}`\n\n"
-                f"$\\nu={selected_row['NU']:.3e}$, $\\mu={selected_row['MU']:.3e}$, "
-                f"grid-normalized $L^2$ error = "
+                f"$\\nu={selected_row['NU']:.3e}\\,\\mathrm{{J\\,m^3}}$, "
+                f"$\\mu={selected_row['MU']:.3e}\\,\\mathrm{{J\\,m^5}}$, "
+                f"grid-normalized $L^2$ difference = "
                 f"`{selected_row['grid_normalized_l2']:.6g}`."
             ),
             mo.ui.matplotlib(axes[0]),
