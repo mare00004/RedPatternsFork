@@ -6,6 +6,7 @@ app = marimo.App(width="wide")
 
 @app.cell
 def _():
+    from io import BytesIO
     from pathlib import Path
 
     import altair as alt
@@ -26,6 +27,7 @@ def _():
 
     return (
         ConvRun,
+        BytesIO,
         Path,
         RunData,
         SweepCatalog,
@@ -417,7 +419,7 @@ def _(
 
 
 @app.cell
-def _(TwoSlopeNorm, difference_limit, get_rbc_cmap, mo, np, plt, psi_reference, psi_taylor, selected_row, time, z):
+def _(BytesIO, TwoSlopeNorm, difference_limit, get_rbc_cmap, mo, np, plt, psi_reference, psi_taylor, selected_row, time, z):
     difference_pct = 100.0 * (psi_taylor - psi_reference)
     extent = (float(time[0]), float(time[-1]), float(100.0 * z[0]), float(100.0 * z[-1]))
     figure, axes = plt.subplots(1, 3, figsize=(16, 4.8), constrained_layout=True)
@@ -447,6 +449,14 @@ def _(TwoSlopeNorm, difference_limit, get_rbc_cmap, mo, np, plt, psi_reference, 
     )
     figure.colorbar(source_images[0], ax=axes[:2], shrink=0.9, pad=0.02, label=r"$\psi\;[\%]$")
     figure.colorbar(difference_image, ax=axes[2], shrink=0.9, pad=0.02, label=r"$\Delta\psi$ [percentage points]")
+    figure_png = BytesIO()
+    figure.savefig(figure_png, format="png", dpi=300, bbox_inches="tight")
+    download_figure = mo.download(
+        data=figure_png.getvalue(),
+        filename=f"{selected_row['run_id']}_taylor_vs_convolution.png",
+        mimetype="image/png",
+        label="Download selected-run figure (PNG)",
+    )
     mo.vstack(
         [
             mo.md(
@@ -457,6 +467,7 @@ def _(TwoSlopeNorm, difference_limit, get_rbc_cmap, mo, np, plt, psi_reference, 
                 f"`{selected_row['grid_normalized_l2']:.6g}`."
             ),
             mo.ui.matplotlib(axes[0]),
+            download_figure,
         ],
         align="stretch",
     )
