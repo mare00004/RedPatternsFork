@@ -205,21 +205,23 @@ def save_animations(
     plt.close(heatmap)
 
     z_cm = np.asarray(run.z, dtype=np.float64) * 100.0
-    rho_cm = np.asarray(run.rho, dtype=np.float64) * 100.0
+    rho = np.asarray(run.rho, dtype=np.float64)
     z_face_cm = np.asarray(z_face, dtype=np.float64) * 100.0
-    phi_min, phi_max = float(np.nanmin(phi)), float(np.nanmax(phi))
-    if phi_min == phi_max:
-        phi_max = phi_min + 1.0
+    def phi_color_limits(frame):
+        phi_min, phi_max = float(np.nanmin(frame)), float(np.nanmax(frame))
+        return (phi_min, phi_max) if phi_min != phi_max else (phi_min, phi_min + 1.0)
+
+    phi_min, phi_max = phi_color_limits(phi[frame_indices[0]])
     rho_count, face_count = face_flux.shape[1:]
     rho_indices = np.unique(np.linspace(0, rho_count - 1, min(12, rho_count), dtype=int))
-    face_indices = np.unique(np.linspace(0, face_count - 1, min(18, face_count), dtype=int))
-    flux_z, flux_rho = np.meshgrid(z_face_cm[face_indices], rho_cm[rho_indices])
+    face_indices = np.unique(np.linspace(0, face_count - 1, min(16, face_count), dtype=int))
+    flux_rho, flux_z = np.meshgrid(rho[rho_indices], z_face_cm[face_indices])
     sample_spacing = (
         float(np.median(np.diff(z_face_cm[face_indices])))
         if face_indices.size > 1
         else 1.0
     )
-    arrow_length = 0.65 * sample_spacing
+    arrow_length = 0.9 * sample_spacing
 
     animation_path = output_dir / f"{prefix}_phi_flux_psi_z.{extension}"
     animation_figure = plt.figure(figsize=(16, 10.5), constrained_layout=True)
@@ -228,19 +230,18 @@ def save_animations(
     psi_ax = animation_figure.add_subplot(animation_grid[0, 1])
     heatmap_ax = animation_figure.add_subplot(animation_grid[1, :])
     phi_image = phi_ax.imshow(
-        phi[frame_indices[0]],
+        phi[frame_indices[0]].T,
         origin="lower",
         aspect="auto",
-        extent=(z_cm[0], z_cm[-1], rho_cm[0], rho_cm[-1]),
+        extent=(rho[0], rho[-1], z_cm[0], z_cm[-1]),
         vmin=phi_min,
         vmax=phi_max,
-        cmap="magma",
+        cmap="viridis",
     )
-    animation_figure.colorbar(phi_image, ax=phi_ax, label=r"$\varphi$")
-    phi_ax.set(xlabel=r"$z$ [cm]", ylabel=r"$\rho$ [cm]")
-    quiver = phi_ax.quiver(flux_z, flux_rho, np.zeros_like(flux_z), np.zeros_like(flux_z), color="white", width=0.003, scale_units="xy", scale=1)
-    phi_ax.set_xlim(z_cm[0], z_cm[-1])
-    phi_ax.set_ylim(rho_cm[0], rho_cm[-1])
+    phi_ax.set(xlabel=r"$\rho$ [g/L]", ylabel=r"$z$ [cm]")
+    quiver = phi_ax.quiver(flux_rho, flux_z, np.zeros_like(flux_z), np.zeros_like(flux_z), color="white", width=0.005, scale_units="xy", scale=1)
+    phi_ax.set_xlim(rho[0], rho[-1])
+    phi_ax.set_ylim(z_cm[0], z_cm[-1])
     phi_ax.margins(x=0, y=0)
     (psi_line,) = psi_ax.plot(
         z_cm, 100.0 * psi[frame_indices[0]], color="#2563eb", linewidth=1.5
@@ -274,11 +275,12 @@ def save_animations(
     )
 
     def update_animation(frame_index):
-        phi_image.set_data(phi[frame_index])
+        phi_image.set_data(phi[frame_index].T)
+        phi_image.set_clim(*phi_color_limits(phi[frame_index]))
         sampled_flux = face_flux[frame_index][np.ix_(rho_indices, face_indices)]
         max_abs = float(np.max(np.abs(sampled_flux)))
         arrows = np.zeros_like(sampled_flux) if max_abs == 0 else arrow_length * sampled_flux / max_abs
-        quiver.set_UVC(arrows, np.zeros_like(arrows))
+        quiver.set_UVC(np.zeros_like(arrows.T), arrows.T)
         phi_ax.set_title(rf"$\varphi(\rho,z)$ with face flux at $t={run.time[frame_index]:.4g}$ s")
         psi_line.set_ydata(100.0 * psi[frame_index])
         psi_ax.set_title(rf"$\psi(z)$ at $t={run.time[frame_index]:.4g}$ s")

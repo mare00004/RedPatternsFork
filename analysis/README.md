@@ -191,3 +191,54 @@ uv run analysis/phi_init.py export \
   --amplitude 0.001 \
   --mode-number 7
 ```
+
+## Perturbed Gaussian Linear Gradient Diagonal phi
+
+`perturbed_linear_full_gaussian_ridge` maps an initially Gaussian rho
+distribution onto the thin `LINEAR_FULL` neutral-buoyancy diagonal. Its ridge
+weights follow that Gaussian, then a seeded finite longitudinal displacement
+is applied:
+
+\[
+T(z)=z+\xi(z),\qquad
+\varphi_{\rm pert}(\rho,T(z))=\frac{\varphi_0(\rho,z)}{1+\xi'(z)},
+\qquad
+\xi(z)=\epsilon\sum_{n=n_{\min}}^{n_{\max}}b_n\sin(2\pi nz/L).
+\]
+
+Here `epsilon` is a displacement in metres, (L=N\,dz), and the seeded
+coefficients (b_n) are standard normal. The implementation conservatively
+remaps each rho row through the monotone map, preserving each density class's
+total phi and keeping phi nonnegative. It rejects configurations where
+\(1+\xi'(z)\leq0\), because the map would fold over.
+
+```bash
+uv run analysis/phi_init.py export \
+  --output initial_phi.h5 \
+  --phi-type perturbed_linear_full_gaussian_ridge \
+  --psi-avg 0.02 \
+  --gaussian-mu 1100 \
+  --gaussian-sigma 4 \
+  --epsilon 1e-6 \
+  --seed 0 \
+  --mode-min 1 \
+  --mode-max 32
+```
+
+## Perturbed Linear Gradient Diagonal phi
+
+`perturbed_linear_full_ridge` applies the same finite, seeded conservative
+longitudinal displacement to the constant `linear_full_ridge`. It preserves
+each rho row's total phi, remains nonnegative for a monotone displacement map,
+and is available in the Workbench phi picker.
+
+```bash
+uv run analysis/phi_init.py export \
+  --output initial_phi.h5 \
+  --phi-type perturbed_linear_full_ridge \
+  --psi-avg 0.02 \
+  --epsilon 1e-6 \
+  --seed 0 \
+  --mode-min 1 \
+  --mode-max 32
+```

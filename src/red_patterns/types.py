@@ -35,6 +35,8 @@ class PhiType(StrEnum):
     SINGLE_BIN = "single_bin"
     LINEAR_FULL_RIDGE = "linear_full_ridge"
     SINGLE_MODE_LINEAR_FULL_RIDGE = "single_mode_linear_full_ridge"
+    PERTURBED_LINEAR_FULL_RIDGE = "perturbed_linear_full_ridge"
+    PERTURBED_LINEAR_FULL_GAUSSIAN_RIDGE = "perturbed_linear_full_gaussian_ridge"
 
     @property
     def label(self) -> str:
@@ -85,6 +87,10 @@ _PHI_TYPE_LABELS = {
     PhiType.SINGLE_BIN: "Single Bin",
     PhiType.LINEAR_FULL_RIDGE: "Linear Gradient Diagonal",
     PhiType.SINGLE_MODE_LINEAR_FULL_RIDGE: "Single-mode Linear Gradient Diagonal",
+    PhiType.PERTURBED_LINEAR_FULL_RIDGE: "Perturbed Linear Gradient Diagonal",
+    PhiType.PERTURBED_LINEAR_FULL_GAUSSIAN_RIDGE: (
+        "Perturbed Gaussian Linear Gradient Diagonal"
+    ),
 }
 
 _CLOSURE_TYPE_LABELS = {

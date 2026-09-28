@@ -68,6 +68,20 @@ PER_TYPE_ARGS = {
         "amplitude": 1e-3,
         "mode_number": 7,
     },
+    PhiType.PERTURBED_LINEAR_FULL_RIDGE: {
+        "epsilon": 1e-6,
+        "seed": 3,
+        "mode_min": 1,
+        "mode_max": 7,
+    },
+    PhiType.PERTURBED_LINEAR_FULL_GAUSSIAN_RIDGE: {
+        "gaussian_mu": 1100.0,
+        "gaussian_sigma": 4.0,
+        "epsilon": 1e-6,
+        "seed": 3,
+        "mode_min": 1,
+        "mode_max": 7,
+    },
 }
 
 

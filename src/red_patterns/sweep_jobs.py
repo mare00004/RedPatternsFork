@@ -37,6 +37,9 @@ DEFAULT_SINGLE_BIN_IDX = 256
 DEFAULT_PERTURBATION_SEED = 0
 DEFAULT_PERTURBATION_AMPLITUDE = 1e-3
 DEFAULT_SINGLE_MODE_NUMBER = 1
+DEFAULT_DISPLACEMENT_EPSILON = 1e-6
+DEFAULT_PERTURBATION_MODE_MIN = 1
+DEFAULT_PERTURBATION_MODE_MAX = 32
 
 DEFAULT_SIGMA = 5.6e-6
 DEFAULT_G0 = 4.0e7
@@ -97,6 +100,9 @@ class PhiSweep:
     seed: Sequence[int] = (DEFAULT_PERTURBATION_SEED,)
     amplitude: Sequence[float] = (DEFAULT_PERTURBATION_AMPLITUDE,)
     mode_number: Sequence[int] = (DEFAULT_SINGLE_MODE_NUMBER,)
+    epsilon: Sequence[float] = (DEFAULT_DISPLACEMENT_EPSILON,)
+    mode_min: Sequence[int] = (DEFAULT_PERTURBATION_MODE_MIN,)
+    mode_max: Sequence[int] = (DEFAULT_PERTURBATION_MODE_MAX,)
     single_bin_idx: Sequence[int] = (DEFAULT_SINGLE_BIN_IDX,)
 
     def rows(self) -> list[dict[str, Any]]:

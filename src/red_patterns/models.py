@@ -113,6 +113,40 @@ class SingleModeLinearFullRidgePhiParams(PhiParamsBase):
     mode_number: Annotated[int, Field(ge=0)]
 
 
+class PerturbedLinearFullRidgePhiParams(PhiParamsBase):
+    phi_type: Literal[PhiType.PERTURBED_LINEAR_FULL_RIDGE] = (
+        PhiType.PERTURBED_LINEAR_FULL_RIDGE
+    )
+    epsilon: Annotated[float, Field(ge=0)]
+    seed: Annotated[int, Field(ge=0)]
+    mode_min: Annotated[int, Field(ge=1)]
+    mode_max: Annotated[int, Field(ge=1)]
+
+    @model_validator(mode="after")
+    def validate_mode_range(self) -> "PerturbedLinearFullRidgePhiParams":
+        if self.mode_min > self.mode_max:
+            raise ValueError("mode_min must not exceed mode_max.")
+        return self
+
+
+class PerturbedLinearFullGaussianRidgePhiParams(PhiParamsBase):
+    phi_type: Literal[PhiType.PERTURBED_LINEAR_FULL_GAUSSIAN_RIDGE] = (
+        PhiType.PERTURBED_LINEAR_FULL_GAUSSIAN_RIDGE
+    )
+    gaussian_mu: float
+    gaussian_sigma: Annotated[float, Field(gt=0)]
+    epsilon: Annotated[float, Field(ge=0)]
+    seed: Annotated[int, Field(ge=0)]
+    mode_min: Annotated[int, Field(ge=1)]
+    mode_max: Annotated[int, Field(ge=1)]
+
+    @model_validator(mode="after")
+    def validate_mode_range(self) -> "PerturbedLinearFullGaussianRidgePhiParams":
+        if self.mode_min > self.mode_max:
+            raise ValueError("mode_min must not exceed mode_max.")
+        return self
+
+
 PhiParams = Annotated[
     GaussianPhiParams
     | GaussianBlobPhiParams
@@ -122,7 +156,9 @@ PhiParams = Annotated[
     | SingleModeSmoothHomogeneousPhiParams
     | SingleBinPhiParams
     | LinearFullRidgePhiParams
-    | SingleModeLinearFullRidgePhiParams,
+    | SingleModeLinearFullRidgePhiParams
+    | PerturbedLinearFullRidgePhiParams
+    | PerturbedLinearFullGaussianRidgePhiParams,
     Field(discriminator="phi_type"),
 ]
 

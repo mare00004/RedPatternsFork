@@ -46,6 +46,8 @@ from .models import (
     GaussianPhiParams,
     HomogeneousPhiParams,
     LinearFullRidgePhiParams,
+    PerturbedLinearFullRidgePhiParams,
+    PerturbedLinearFullGaussianRidgePhiParams,
     PerturbedSmoothHomogeneousPhiParams,
     PhiParamsBase,
     SingleBinPhiParams,
@@ -75,6 +77,10 @@ DEFAULT_GAUSSIAN_BLOB_MU_Z = 0.035
 DEFAULT_GAUSSIAN_BLOB_SIGMA_Z = 0.01
 DEFAULT_Z_SYSTEM_SIZE = 0.07
 DEFAULT_SINGLE_BIN_IDX = 256
+DEFAULT_DISPLACEMENT_EPSILON = 1e-6
+DEFAULT_PERTURBATION_SEED = 0
+DEFAULT_PERTURBATION_MODE_MIN = 1
+DEFAULT_PERTURBATION_MODE_MAX = 32
 
 
 LABEL_MAP = {t.label: t for t in PhiType}
@@ -304,6 +310,130 @@ def phi_linear_full_ridge(
     phi = np.zeros((N_rho, N_z), dtype=np.float64)
     phi[rho_indices, np.arange(N_z)] = psi_avg
     return phi
+
+
+def _remap_phi_z_by_displacement(
+    phi_0: Array2F,
+    z: Array1F,
+    *,
+    epsilon: float,
+    seed: int,
+    mode_min: int,
+    mode_max: int,
+) -> Array2F:
+    """Conservatively remap each rho row through a seeded monotone z map."""
+    N_rho, N_z = phi_0.shape
+    if N_z <= 1:
+        return phi_0.copy()
+
+    dz = float(z[1] - z[0])
+    length = N_z * dz
+    modes = np.arange(mode_min, mode_max + 1, dtype=np.float64)
+    coefficients = np.random.default_rng(seed).normal(size=modes.size)
+    z_faces = np.arange(N_z + 1, dtype=np.float64) * dz
+    displacement_faces = epsilon * np.sum(
+        coefficients[:, np.newaxis]
+        * np.sin(2.0 * np.pi * modes[:, np.newaxis] * z_faces[np.newaxis, :] / length),
+        axis=0,
+    )
+    mapped_faces = z_faces + displacement_faces
+    if np.any(np.diff(mapped_faces) <= 0.0):
+        raise ValueError("displacement map folds over on the exported z grid.")
+
+    # Treat phi_0 as cellwise constant in z. The overlap weights redistribute
+    # each source cell's mass over its mapped target interval, so each rho row
+    # is conserved exactly while all values remain nonnegative.
+    result = np.zeros((N_rho, N_z), dtype=np.float64)
+    for source_idx in range(N_z):
+        left = mapped_faces[source_idx]
+        right = mapped_faces[source_idx + 1]
+        width = right - left
+        first_target = max(0, int(np.floor(left / dz)))
+        last_target = min(N_z - 1, int(np.ceil(right / dz)) - 1)
+        for target_idx in range(first_target, last_target + 1):
+            target_left = target_idx * dz
+            target_right = target_left + dz
+            overlap = max(0.0, min(right, target_right) - max(left, target_left))
+            if overlap > 0.0:
+                result[:, target_idx] += phi_0[:, source_idx] * (overlap / width)
+    return result
+
+
+def phi_perturbed_linear_full_ridge(
+    rho: Array1F,
+    z: Array1F,
+    psi_avg: float,
+    rho_center: float,
+    epsilon: float,
+    seed: int,
+    mode_min: int,
+    mode_max: int,
+) -> Array2F:
+    """Apply the finite seeded z displacement to the constant LINEAR_FULL ridge."""
+    return _remap_phi_z_by_displacement(
+        phi_linear_full_ridge(rho, z, psi_avg, rho_center),
+        z,
+        epsilon=epsilon,
+        seed=seed,
+        mode_min=mode_min,
+        mode_max=mode_max,
+    )
+
+
+def phi_perturbed_linear_full_gaussian_ridge(
+    rho: Array1F,
+    z: Array1F,
+    psi_avg: float,
+    rho_center: float,
+    gaussian_mu: float,
+    gaussian_sigma: float,
+    epsilon: float,
+    seed: int,
+    mode_min: int,
+    mode_max: int,
+) -> Array2F:
+    r"""Build a Gaussian-weighted LINEAR_FULL ridge with a z displacement.
+
+    The displacement map is ``T(z) = z + xi(z)`` with
+    ``xi = epsilon * sum(b_n sin(2 pi n z / L))``. A conservative overlap
+    remap of every rho row implements ``phi_pert(T(z)) = phi_0(z) / T'(z)``.
+    It keeps every density class's total phi exactly unchanged and is
+    nonnegative when the map is strictly increasing.
+    """
+    N_rho, N_z = rho.shape[0], z.shape[0]
+    if N_z == 0:
+        return np.zeros((N_rho, 0), dtype=np.float64)
+
+    dz = float(z[1] - z[0])
+    length = N_z * dz
+    z_cell = (np.arange(N_z, dtype=np.float64) + 0.5) * dz
+    rho_equilibrium = rho_center + 15.0 - 30.0 * z_cell / length
+    insertion = np.searchsorted(rho, rho_equilibrium, side="left")
+    upper = np.clip(insertion, 0, N_rho - 1)
+    lower = np.clip(insertion - 1, 0, N_rho - 1)
+    rho_indices = np.where(
+        np.abs(rho[lower] - rho_equilibrium)
+        <= np.abs(rho[upper] - rho_equilibrium),
+        lower,
+        upper,
+    )
+
+    gaussian_weights = (
+        psi_avg
+        / (np.sqrt(2.0 * np.pi) * gaussian_sigma)
+        * np.exp(-((rho_equilibrium - gaussian_mu) ** 2) / (2.0 * gaussian_sigma**2))
+    )
+    phi_0 = np.zeros((N_rho, N_z), dtype=np.float64)
+    phi_0[rho_indices, np.arange(N_z)] = gaussian_weights
+
+    return _remap_phi_z_by_displacement(
+        phi_0,
+        z,
+        epsilon=epsilon,
+        seed=seed,
+        mode_min=mode_min,
+        mode_max=mode_max,
+    )
 
 
 def phi_add_wing(phi, wing_z, wing_r):
@@ -1112,6 +1242,339 @@ class SingleModeLinearFullRidgePhi(LinearFullRidgePhi):
         )
 
 
+class PerturbedLinearFullRidgePhi(LinearFullRidgePhi):
+    """Constant LINEAR_FULL ridge under a finite conservative z displacement."""
+
+    phi_type = PhiType.PERTURBED_LINEAR_FULL_RIDGE
+    params_model = PerturbedLinearFullRidgePhiParams
+
+    def __init__(
+        self,
+        *,
+        epsilon: float,
+        seed: int,
+        mode_min: int,
+        mode_max: int,
+        **grid: Any,
+    ) -> None:
+        super().__init__(**grid)
+        self.epsilon = float(epsilon)
+        self.seed = int(seed)
+        self.mode_min = int(mode_min)
+        self.mode_max = int(mode_max)
+
+    @classmethod
+    def _per_type_from_values(cls, values: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "epsilon": values["epsilon"],
+            "seed": values["seed"],
+            "mode_min": values["mode_min"],
+            "mode_max": values["mode_max"],
+        }
+
+    def build(self, rho: Array1F, z: Array1F) -> Array2F:
+        return phi_perturbed_linear_full_ridge(
+            rho,
+            z,
+            self.psi_avg,
+            self.rho_center,
+            self.epsilon,
+            self.seed,
+            self.mode_min,
+            self.mode_max,
+        )
+
+    def validate(self) -> list[str]:
+        length = self.N * self.dz
+        modes = np.arange(self.mode_min, self.mode_max + 1, dtype=np.float64)
+        coefficients = np.random.default_rng(self.seed).normal(size=modes.size)
+        samples = np.linspace(
+            0.0, length, max(1025, 8 * self.mode_max + 1), dtype=np.float64
+        )
+        jacobian = 1.0 + self.epsilon * np.sum(
+            coefficients[:, np.newaxis]
+            * (2.0 * np.pi * modes[:, np.newaxis] / length)
+            * np.cos(2.0 * np.pi * modes[:, np.newaxis] * samples / length),
+            axis=0,
+        )
+        if np.min(jacobian) <= 0.0:
+            return [
+                "epsilon produces a folding displacement map; require "
+                "1 + d_z xi(z) > 0 everywhere."
+            ]
+        return []
+
+    def write_metadata(self, group: h5py.Group) -> None:
+        group.attrs["epsilon"] = self.epsilon
+        group.attrs["seed"] = self.seed
+        group.attrs["mode_min"] = self.mode_min
+        group.attrs["mode_max"] = self.mode_max
+        group.attrs["perturbation_length"] = self.N * self.dz
+        group.attrs["perturbation_method"] = "conservative_monotone_z_remap"
+
+    def summary(self) -> list[str]:
+        return [
+            f"epsilon={self.epsilon:.6e} m",
+            f"seed={self.seed}",
+            f"mode_min={self.mode_min}",
+            f"mode_max={self.mode_max}",
+        ]
+
+    @classmethod
+    def add_parser_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        _add_argument_if_missing(
+            parser, "--epsilon", type=float, default=argparse.SUPPRESS
+        )
+        _add_argument_if_missing(
+            parser, "--seed", type=int, default=argparse.SUPPRESS
+        )
+        _add_argument_if_missing(
+            parser, "--mode-min", type=int, default=argparse.SUPPRESS
+        )
+        _add_argument_if_missing(
+            parser, "--mode-max", type=int, default=argparse.SUPPRESS
+        )
+
+    @classmethod
+    def make_ui_controls(cls) -> dict[str, Any]:
+        import marimo as mo
+
+        return {
+            "epsilon": mo.ui.number(
+                start=0.0,
+                stop=1e-2,
+                step=1e-7,
+                value=DEFAULT_DISPLACEMENT_EPSILON,
+                label="$\\epsilon$ [m]",
+            ),
+            "seed": mo.ui.number(
+                start=0,
+                stop=2**31 - 1,
+                step=1,
+                value=DEFAULT_PERTURBATION_SEED,
+                label="Random seed",
+            ),
+            "mode_min": mo.ui.number(
+                start=1,
+                stop=1023,
+                step=1,
+                value=DEFAULT_PERTURBATION_MODE_MIN,
+                label="Minimum mode",
+            ),
+            "mode_max": mo.ui.number(
+                start=1,
+                stop=1023,
+                step=1,
+                value=DEFAULT_PERTURBATION_MODE_MAX,
+                label="Maximum mode",
+            ),
+        }
+
+    @classmethod
+    def ui_layout(cls, controls: Any) -> Any:
+        import marimo as mo
+
+        return mo.vstack(
+            [mo.md("### Perturbed linear gradient diagonal parameters"), controls]
+        )
+
+    @classmethod
+    def sweep_param_names(cls) -> tuple[str, ...]:
+        return ("epsilon", "seed", "mode_min", "mode_max")
+
+    @classmethod
+    def type_description(cls) -> str:
+        return r"Constant LINEAR_FULL ridge with $\varphi_{pert}(T(z))=\varphi_0(z)/T'(z)$"
+
+
+class PerturbedLinearFullGaussianRidgePhi(PhiField):
+    phi_type = PhiType.PERTURBED_LINEAR_FULL_GAUSSIAN_RIDGE
+    params_model = PerturbedLinearFullGaussianRidgePhiParams
+
+    def __init__(
+        self,
+        *,
+        gaussian_mu: float,
+        gaussian_sigma: float,
+        epsilon: float,
+        seed: int,
+        mode_min: int,
+        mode_max: int,
+        **grid: Any,
+    ) -> None:
+        super().__init__(**grid)
+        self.gaussian_mu = float(gaussian_mu)
+        self.gaussian_sigma = float(gaussian_sigma)
+        self.epsilon = float(epsilon)
+        self.seed = int(seed)
+        self.mode_min = int(mode_min)
+        self.mode_max = int(mode_max)
+
+    @classmethod
+    def _per_type_from_values(cls, values: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "gaussian_mu": values["gaussian_mu"],
+            "gaussian_sigma": values["gaussian_sigma"],
+            "epsilon": values["epsilon"],
+            "seed": values["seed"],
+            "mode_min": values["mode_min"],
+            "mode_max": values["mode_max"],
+        }
+
+    def build(self, rho: Array1F, z: Array1F) -> Array2F:
+        return phi_perturbed_linear_full_gaussian_ridge(
+            rho,
+            z,
+            self.psi_avg,
+            self.rho_center,
+            self.gaussian_mu,
+            self.gaussian_sigma,
+            self.epsilon,
+            self.seed,
+            self.mode_min,
+            self.mode_max,
+        )
+
+    def validate(self) -> list[str]:
+        length = self.N * self.dz
+        modes = np.arange(self.mode_min, self.mode_max + 1, dtype=np.float64)
+        coefficients = np.random.default_rng(self.seed).normal(size=modes.size)
+        samples = np.linspace(
+            0.0, length, max(1025, 8 * self.mode_max + 1), dtype=np.float64
+        )
+        jacobian = 1.0 + self.epsilon * np.sum(
+            coefficients[:, np.newaxis]
+            * (2.0 * np.pi * modes[:, np.newaxis] / length)
+            * np.cos(2.0 * np.pi * modes[:, np.newaxis] * samples / length),
+            axis=0,
+        )
+        if np.min(jacobian) <= 0.0:
+            return [
+                "epsilon produces a folding displacement map; require "
+                "1 + d_z xi(z) > 0 everywhere."
+            ]
+        return []
+
+    def write_metadata(self, group: h5py.Group) -> None:
+        group.attrs["gaussian_mu"] = self.gaussian_mu
+        group.attrs["gaussian_sigma"] = self.gaussian_sigma
+        group.attrs["epsilon"] = self.epsilon
+        group.attrs["seed"] = self.seed
+        group.attrs["mode_min"] = self.mode_min
+        group.attrs["mode_max"] = self.mode_max
+        group.attrs["perturbation_length"] = self.N * self.dz
+        group.attrs["perturbation_method"] = "conservative_monotone_z_remap"
+
+    def summary(self) -> list[str]:
+        return [
+            f"gaussian_mu={self.gaussian_mu:.6e}",
+            f"gaussian_sigma={self.gaussian_sigma:.6e}",
+            f"epsilon={self.epsilon:.6e} m",
+            f"seed={self.seed}",
+            f"mode_min={self.mode_min}",
+            f"mode_max={self.mode_max}",
+        ]
+
+    @classmethod
+    def add_parser_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        _add_argument_if_missing(
+            parser, "--gaussian-mu", type=float, default=argparse.SUPPRESS
+        )
+        _add_argument_if_missing(
+            parser, "--gaussian-sigma", type=float, default=argparse.SUPPRESS
+        )
+        _add_argument_if_missing(
+            parser, "--epsilon", type=float, default=argparse.SUPPRESS
+        )
+        _add_argument_if_missing(
+            parser, "--seed", type=int, default=argparse.SUPPRESS
+        )
+        _add_argument_if_missing(
+            parser, "--mode-min", type=int, default=argparse.SUPPRESS
+        )
+        _add_argument_if_missing(
+            parser, "--mode-max", type=int, default=argparse.SUPPRESS
+        )
+
+    @classmethod
+    def make_ui_controls(cls) -> dict[str, Any]:
+        import marimo as mo
+
+        return {
+            "gaussian_mu": mo.ui.number(
+                start=0.0,
+                stop=2000.0,
+                step=0.1,
+                value=DEFAULT_GAUSSIAN_MU,
+                label="$\\mu_\\rho \\; [\\frac{g}{L}]$",
+            ),
+            "gaussian_sigma": mo.ui.number(
+                start=0.1,
+                stop=15.0,
+                step=0.1,
+                value=DEFAULT_GAUSSIAN_SIGMA,
+                label="$\\sigma_\\rho \\; [\\frac{g}{L}]$",
+            ),
+            "epsilon": mo.ui.number(
+                start=0.0,
+                stop=1e-2,
+                step=1e-7,
+                value=DEFAULT_DISPLACEMENT_EPSILON,
+                label="$\\epsilon$ [m]",
+            ),
+            "seed": mo.ui.number(
+                start=0,
+                stop=2**31 - 1,
+                step=1,
+                value=DEFAULT_PERTURBATION_SEED,
+                label="Random seed",
+            ),
+            "mode_min": mo.ui.number(
+                start=1,
+                stop=1023,
+                step=1,
+                value=DEFAULT_PERTURBATION_MODE_MIN,
+                label="Minimum mode",
+            ),
+            "mode_max": mo.ui.number(
+                start=1,
+                stop=1023,
+                step=1,
+                value=DEFAULT_PERTURBATION_MODE_MAX,
+                label="Maximum mode",
+            ),
+        }
+
+    @classmethod
+    def ui_layout(cls, controls: Any) -> Any:
+        import marimo as mo
+
+        return mo.vstack(
+            [
+                mo.md("### Perturbed Gaussian linear gradient diagonal parameters"),
+                controls,
+            ]
+        )
+
+    @classmethod
+    def sweep_param_names(cls) -> tuple[str, ...]:
+        return (
+            "gaussian_mu",
+            "gaussian_sigma",
+            "epsilon",
+            "seed",
+            "mode_min",
+            "mode_max",
+        )
+
+    @classmethod
+    def type_description(cls) -> str:
+        return (
+            r"Gaussian-weighted LINEAR_FULL ridge with "
+            r"$\varphi_{pert}(T(z))=\varphi_0(z)/T'(z)$"
+        )
+
+
 PHI_FIELD_TYPES: dict[PhiType, type[PhiField]] = {
     PhiType.GAUSSIAN: GaussianPhi,
     PhiType.GAUSSIAN_BLOB: GaussianBlobPhi,
@@ -1122,6 +1585,8 @@ PHI_FIELD_TYPES: dict[PhiType, type[PhiField]] = {
     PhiType.SINGLE_BIN: SingleBinPhi,
     PhiType.LINEAR_FULL_RIDGE: LinearFullRidgePhi,
     PhiType.SINGLE_MODE_LINEAR_FULL_RIDGE: SingleModeLinearFullRidgePhi,
+    PhiType.PERTURBED_LINEAR_FULL_RIDGE: PerturbedLinearFullRidgePhi,
+    PhiType.PERTURBED_LINEAR_FULL_GAUSSIAN_RIDGE: PerturbedLinearFullGaussianRidgePhi,
 }
 
 

@@ -26,6 +26,19 @@ _EXPORTS = {
     "HomogeneousPhiParams": ("models", "HomogeneousPhiParams"),
     "LinearFullRidgePhi": ("phi", "LinearFullRidgePhi"),
     "LinearFullRidgePhiParams": ("models", "LinearFullRidgePhiParams"),
+    "PerturbedLinearFullRidgePhi": ("phi", "PerturbedLinearFullRidgePhi"),
+    "PerturbedLinearFullRidgePhiParams": (
+        "models",
+        "PerturbedLinearFullRidgePhiParams",
+    ),
+    "PerturbedLinearFullGaussianRidgePhi": (
+        "phi",
+        "PerturbedLinearFullGaussianRidgePhi",
+    ),
+    "PerturbedLinearFullGaussianRidgePhiParams": (
+        "models",
+        "PerturbedLinearFullGaussianRidgePhiParams",
+    ),
     "SingleModeLinearFullRidgePhi": ("phi", "SingleModeLinearFullRidgePhi"),
     "SingleModeLinearFullRidgePhiParams": (
         "models",
@@ -110,6 +123,10 @@ __all__ = [
     "HomogeneousPhiParams",
     "LinearFullRidgePhi",
     "LinearFullRidgePhiParams",
+    "PerturbedLinearFullRidgePhi",
+    "PerturbedLinearFullRidgePhiParams",
+    "PerturbedLinearFullGaussianRidgePhi",
+    "PerturbedLinearFullGaussianRidgePhiParams",
     "SingleModeLinearFullRidgePhi",
     "SingleModeLinearFullRidgePhiParams",
     "PerturbedSmoothHomogeneousPhi",

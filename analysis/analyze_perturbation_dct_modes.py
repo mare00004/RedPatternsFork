@@ -40,9 +40,10 @@ def _():
 
     Choose a Taylor sweep directory containing `runs.jsonl` and
     `results/<run_id>/run.h5`. For each selected $(\nu, \mu)$ pair, the notebook
-    subtracts its smooth-homogeneous base run from every seeded perturbed run,
+    subtracts the matching unperturbed base run from every seeded perturbed run,
     computes a spatial orthonormal DCT-II, and averages squared mode magnitudes
-    over seeds.
+    over seeds. Both the smooth-homogeneous and linear-gradient-diagonal phi
+    families are supported.
     """)
     return
 
@@ -70,14 +71,34 @@ def _(SweepCatalog, TaylorRun, pd):
 
             phi_params = run.phi.params.model_dump(mode="json")
             phi_type = str(phi_params.pop("phi_type"))
-            if phi_type not in {
-                PhiType.SMOOTH_HOMOGENEOUS.value,
-                PhiType.PERTURBED_SMOOTH_HOMOGENEOUS.value,
-            }:
+            family_by_type = {
+                PhiType.SMOOTH_HOMOGENEOUS.value: (
+                    PhiType.SMOOTH_HOMOGENEOUS.value,
+                    "amplitude",
+                ),
+                PhiType.PERTURBED_SMOOTH_HOMOGENEOUS.value: (
+                    PhiType.SMOOTH_HOMOGENEOUS.value,
+                    "amplitude",
+                ),
+                PhiType.LINEAR_FULL_RIDGE.value: (
+                    PhiType.LINEAR_FULL_RIDGE.value,
+                    "epsilon",
+                ),
+                PhiType.PERTURBED_LINEAR_FULL_RIDGE.value: (
+                    PhiType.LINEAR_FULL_RIDGE.value,
+                    "epsilon",
+                ),
+            }
+            if phi_type not in family_by_type:
                 continue
 
+            family, perturbation_name = family_by_type[phi_type]
             seed = phi_params.pop("seed", None)
-            amplitude = phi_params.pop("amplitude", None)
+            perturbation = phi_params.pop(perturbation_name, None)
+            # These identify the random displacement, not the shared base setup.
+            # Remove them so a perturbed linear ridge can match its base ridge.
+            phi_params.pop("mode_min", None)
+            phi_params.pop("mode_max", None)
             shared_phi = json.dumps(phi_params, sort_keys=True, separators=(",", ":"))
             result_path = entry.run_h5
             rows.append(
@@ -86,8 +107,10 @@ def _(SweepCatalog, TaylorRun, pd):
                     "NU": float(run.NU),
                     "MU": float(run.MU),
                     "phi_type": phi_type,
+                    "family": family,
                     "seed": None if seed is None else int(seed),
-                    "amplitude": None if amplitude is None else float(amplitude),
+                    "perturbation_name": perturbation_name,
+                    "perturbation": None if perturbation is None else float(perturbation),
                     "shared_phi": shared_phi,
                     "N": int(run.N),
                     "T": float(run.T),
@@ -103,7 +126,10 @@ def _(SweepCatalog, TaylorRun, pd):
 
     def validate_ensembles(sweep_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Return valid pair candidates and diagnostics for every discovered pair."""
-        columns = ["NU", "MU", "base_id", "seed_ids", "seeds", "amplitude"]
+        columns = [
+            "NU", "MU", "family", "base_id", "seed_ids", "seeds",
+            "perturbation_name", "perturbation",
+        ]
         diagnostic_columns = ["NU", "MU", "status", "details"]
         if sweep_df.empty:
             return pd.DataFrame(columns=columns), pd.DataFrame(columns=diagnostic_columns)
@@ -111,86 +137,101 @@ def _(SweepCatalog, TaylorRun, pd):
         candidates: list[dict[str, object]] = []
         diagnostics: list[dict[str, object]] = []
         setup_columns = ["shared_phi", "N", "T", "DT", "storeTime", "gradient"]
+        families = (
+            (
+                PhiType.SMOOTH_HOMOGENEOUS.value,
+                PhiType.PERTURBED_SMOOTH_HOMOGENEOUS.value,
+            ),
+            (
+                PhiType.LINEAR_FULL_RIDGE.value,
+                PhiType.PERTURBED_LINEAR_FULL_RIDGE.value,
+            ),
+        )
         for (nu, mu), pair_df in sweep_df.groupby(["NU", "MU"], sort=True):
-            base_df = pair_df[pair_df["phi_type"] == PhiType.SMOOTH_HOMOGENEOUS.value]
-            seed_df = pair_df[
-                pair_df["phi_type"] == PhiType.PERTURBED_SMOOTH_HOMOGENEOUS.value
-            ]
-            if len(base_df) != 1:
-                diagnostics.append(
-                    {
-                        "NU": nu,
-                        "MU": mu,
-                        "status": "invalid",
-                        "details": f"Expected exactly one smooth base run; found {len(base_df)}.",
-                    }
-                )
-                continue
-            if seed_df.empty:
-                diagnostics.append(
-                    {"NU": nu, "MU": mu, "status": "invalid", "details": "No perturbed seed runs found."}
-                )
-                continue
+            for base_type, perturbed_type in families:
+                family_df = pair_df[pair_df["phi_type"].isin((base_type, perturbed_type))]
+                base_df = family_df[family_df["phi_type"] == base_type]
+                seed_df = family_df[family_df["phi_type"] == perturbed_type]
+                family_label = str(family_df["family"].iloc[0]) if not family_df.empty else base_type
+                if base_df.empty and seed_df.empty:
+                    continue
+                if len(base_df) != 1:
+                    diagnostics.append(
+                        {
+                            "NU": nu,
+                            "MU": mu,
+                            "status": "invalid",
+                            "details": f"{family_label}: expected exactly one base run; found {len(base_df)}.",
+                        }
+                    )
+                    continue
+                if seed_df.empty:
+                    diagnostics.append(
+                        {"NU": nu, "MU": mu, "status": "invalid", "details": f"{family_label}: no perturbed seed runs found."}
+                    )
+                    continue
 
-            base_row = base_df.iloc[0]
-            mismatched = seed_df[
-                (seed_df[setup_columns] != base_row[setup_columns]).any(axis=1)
-            ]
-            if not mismatched.empty:
-                diagnostics.append(
-                    {
-                        "NU": nu,
-                        "MU": mu,
-                        "status": "invalid",
-                        "details": "Seed setup differs from base: " + ", ".join(mismatched["run_id"]),
-                    }
-                )
-                continue
-            if seed_df["amplitude"].nunique(dropna=False) != 1:
-                diagnostics.append(
-                    {
-                        "NU": nu,
-                        "MU": mu,
-                        "status": "invalid",
-                        "details": "Perturbation amplitudes differ across seeds.",
-                    }
-                )
-                continue
-            if seed_df["seed"].isna().any() or seed_df["seed"].duplicated().any():
-                diagnostics.append(
-                    {
-                        "NU": nu,
-                        "MU": mu,
-                        "status": "invalid",
-                        "details": "Seeds must be present and unique.",
-                    }
-                )
-                continue
+                base_row = base_df.iloc[0]
+                mismatched = seed_df[
+                    (seed_df[setup_columns] != base_row[setup_columns]).any(axis=1)
+                ]
+                if not mismatched.empty:
+                    diagnostics.append(
+                        {
+                            "NU": nu,
+                            "MU": mu,
+                            "status": "invalid",
+                            "details": f"{family_label}: seed setup differs from base: " + ", ".join(mismatched["run_id"]),
+                        }
+                    )
+                    continue
+                if seed_df["perturbation"].nunique(dropna=False) != 1:
+                    diagnostics.append(
+                        {
+                            "NU": nu,
+                            "MU": mu,
+                            "status": "invalid",
+                            "details": f"{family_label}: perturbation magnitude differs across seeds.",
+                        }
+                    )
+                    continue
+                if seed_df["seed"].isna().any() or seed_df["seed"].duplicated().any():
+                    diagnostics.append(
+                        {
+                            "NU": nu,
+                            "MU": mu,
+                            "status": "invalid",
+                            "details": f"{family_label}: seeds must be present and unique.",
+                        }
+                    )
+                    continue
 
-            missing = pair_df[~pair_df["h5_exists"]]["run_id"].tolist()
-            if missing:
-                diagnostics.append(
+                missing = family_df[~family_df["h5_exists"]]["run_id"].tolist()
+                if missing:
+                    diagnostics.append(
+                        {
+                            "NU": nu,
+                            "MU": mu,
+                            "status": "incomplete",
+                            "details": f"{family_label}: missing run.h5 for " + ", ".join(missing),
+                        }
+                    )
+                    continue
+
+                sorted_seeds = seed_df.sort_values("seed", kind="stable")
+                candidates.append(
                     {
-                        "NU": nu,
-                        "MU": mu,
-                        "status": "incomplete",
-                        "details": "Missing run.h5 for: " + ", ".join(missing),
+                        "NU": float(nu),
+                        "MU": float(mu),
+                        "family": family_label,
+                        "base_id": str(base_row["run_id"]),
+                        "seed_ids": tuple(sorted_seeds["run_id"].tolist()),
+                        "seeds": tuple(int(seed) for seed in sorted_seeds["seed"].tolist()),
+                        "perturbation_name": str(sorted_seeds["perturbation_name"].iloc[0]),
+                        "perturbation": float(sorted_seeds["perturbation"].iloc[0]),
                     }
                 )
-                continue
-
-            sorted_seeds = seed_df.sort_values("seed", kind="stable")
-            candidates.append(
-                {
-                    "NU": float(nu),
-                    "MU": float(mu),
-                    "base_id": str(base_row["run_id"]),
-                    "seed_ids": tuple(sorted_seeds["run_id"].tolist()),
-                    "seeds": tuple(int(seed) for seed in sorted_seeds["seed"].tolist()),
-                    "amplitude": float(sorted_seeds["amplitude"].iloc[0]),
-                }
-            )
-            diagnostics.append({"NU": nu, "MU": mu, "status": "ready", "details": "Compatible ensemble."})
+                diagnostics.append({"NU": nu, "MU": mu, "status": "ready", "details": f"{family_label}: compatible ensemble."})
 
         return pd.DataFrame(candidates, columns=columns), pd.DataFrame(diagnostics, columns=diagnostic_columns)
 
@@ -229,7 +270,7 @@ def _(mo, pd, scan_sweep, selected_sweep_catalog, ui_sweep_dir, validate_ensembl
 
 @app.cell
 def _(diagnostics_df, mo):
-    mo.stop(diagnostics_df.empty, mo.md("No smooth-homogeneous candidate runs found."))
+    mo.stop(diagnostics_df.empty, mo.md("No supported smooth or linear-gradient-diagonal candidate runs found."))
     mo.ui.table(data=diagnostics_df, selection=None, pagination=True)
     return
 
@@ -238,7 +279,7 @@ def _(diagnostics_df, mo):
 def _(ensemble_df, mo):
     mo.stop(ensemble_df.empty, mo.md("No complete, compatible ensembles are available yet."))
     options = {
-        f"ν={row.NU:.6e}, μ={row.MU:.6e}": index
+        f"{row.family}: ν={row.NU:.6e}, μ={row.MU:.6e}": index
         for index, row in ensemble_df.iterrows()
     }
     pair_selector = mo.ui.dropdown(
@@ -340,7 +381,7 @@ def _(amplitudes, mo, selected_ensemble, z):
         f"$\\nu={selected_ensemble['NU']:.6e}$, $\\mu={selected_ensemble['MU']:.6e}$  \n"
         f"Base: `{selected_ensemble['base_id']}`  \n"
         f"Seeds ({amplitudes.shape[0]}): {seed_labels}  \n"
-        f"Perturbation amplitude: `{selected_ensemble['amplitude']:.6g}`; "
+        f"Perturbation {selected_ensemble['perturbation_name']}: `{selected_ensemble['perturbation']:.6g}`; "
         f"spatial points: `{z.size}`."
     )
     return
