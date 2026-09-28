@@ -356,6 +356,124 @@ def _(dct, delta_psi_by_seed, np):
 
 
 @app.cell
+def _(np):
+    def fit_log_power(
+        time: np.ndarray, power: np.ndarray, min_samples: int = 10
+    ) -> dict[str, object]:
+        """Fit early log power to ``a min(t, tau) + b``.
+
+        For a modal amplitude proportional to ``exp(gamma * t)``, its power
+        grows as ``exp(2 * gamma * t)``. Thus the early-time slope is ``2γ``.
+        """
+        if time.ndim != 1 or power.ndim != 1 or time.shape != power.shape:
+            return {"success": False, "message": "Time and power arrays must be one-dimensional and equal length."}
+        if not np.all(np.isfinite(time)) or not np.all(np.isfinite(power)):
+            return {"success": False, "message": "Time or power values are non-finite."}
+        if power[0] <= 0.0:
+            return {"success": False, "message": "Initial modal power must be positive."}
+        if time.size < 2 * min_samples + 1:
+            return {"success": False, "message": f"Need at least {2 * min_samples + 1} saved frames."}
+
+        with np.errstate(divide="ignore", invalid="ignore"):
+            log_relative_power = np.log(power / power[0])
+        if not np.all(np.isfinite(log_relative_power)):
+            return {"success": False, "message": "Log-relative power is non-finite."}
+
+        best: dict[str, object] | None = None
+        for tau_index in range(min_samples - 1, time.size - min_samples):
+            tau = float(time[tau_index])
+            design = np.column_stack((np.minimum(time, tau), np.ones_like(time)))
+            coefficients, _, _, _ = np.linalg.lstsq(design, log_relative_power, rcond=None)
+            fitted = design @ coefficients
+            residual_ss = float(np.sum((log_relative_power - fitted) ** 2))
+            if best is None or residual_ss < best["residual_ss"]:
+                best = {
+                    "tau": tau,
+                    "slope": float(coefficients[0]),
+                    "fitted": fitted,
+                    "residual_ss": residual_ss,
+                }
+
+        assert best is not None
+        total_ss = float(np.sum((log_relative_power - np.mean(log_relative_power)) ** 2))
+        best["r_squared"] = np.nan if np.isclose(total_ss, 0.0) else 1.0 - best["residual_ss"] / total_ss
+        best["gamma"] = 0.5 * best["slope"]
+        best["success"] = True
+        best["message"] = ""
+        return best
+
+    return (fit_log_power,)
+
+
+@app.cell
+def _(fit_log_power, mean_powers, np, pd, time):
+    growth_fits = [
+        fit_log_power(time, mean_powers[:, mode])
+        for mode in range(mean_powers.shape[1])
+    ]
+    growth_fit_table = pd.DataFrame(
+        [
+            {
+                "m": mode,
+                "success": fit["success"],
+                "gamma [s^-1]": fit.get("gamma", np.nan),
+                "log-power slope [s^-1]": fit.get("slope", np.nan),
+                "tau [s]": fit.get("tau", np.nan),
+                "R²": fit.get("r_squared", np.nan),
+                "message": fit["message"],
+            }
+            for mode, fit in enumerate(growth_fits)
+        ]
+    )
+    return growth_fit_table, growth_fits
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Early-time growth-rate estimates
+
+    Each mode's seed-averaged power is fit as
+    \(\ln[P_m(t)/P_m(0)] = a_m\min(t,\tau_m)+b_m\). Since
+    \(P_m\propto |A_m|^2\), the reported modal growth rate is
+    \(\gamma_m=a_m/2\). Treat this as an ensemble screening diagnostic: modes
+    seeded at very low power or affected by mode coupling can yield unreliable
+    fits.
+    """)
+    return
+
+
+@app.cell
+def _(growth_fit_table, mo):
+    mo.ui.table(data=growth_fit_table, selection=None, pagination=True)
+    return
+
+
+@app.cell
+def _(growth_fit_table, plt):
+    _figure, _axis = plt.subplots(figsize=(9, 4.5), constrained_layout=True)
+    _valid = growth_fit_table[growth_fit_table["success"]]
+    _axis.plot(
+        _valid["m"],
+        _valid["gamma [s^-1]"],
+        marker="o",
+        linewidth=1.6,
+        label="ensemble-power estimate",
+    )
+    _axis.axhline(0.0, color="black", linewidth=0.8, alpha=0.6)
+    _axis.set(
+        xlabel="DCT-II mode m",
+        ylabel=r"$\gamma_m\;[\mathrm{s}^{-1}]$",
+        title="Early-time growth-rate dispersion from seeded multi-mode ensemble",
+    )
+    _axis.grid(True, alpha=0.3)
+    if not _valid.empty:
+        _axis.legend()
+    _figure
+    return
+
+
+@app.cell
 def _(mean_powers, mo):
     mode_selector = mo.ui.slider(
         start=0,
@@ -401,7 +519,7 @@ def _(mean_powers, mode_selector, plt, time):
 
 
 @app.cell
-def _(mean_powers, mode_selector, np, plt, time):
+def _(growth_fits, mean_powers, mode_selector, np, plt, time):
     _mode = int(mode_selector.value)
     _initial_power = mean_powers[0, _mode]
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -411,11 +529,23 @@ def _(mean_powers, mode_selector, np, plt, time):
 
     _figure, _axis = plt.subplots(figsize=(8, 4), constrained_layout=True)
     _axis.plot(time, _log_relative_power, linewidth=1.8)
+    _fit = growth_fits[_mode]
+    if _fit["success"]:
+        _axis.plot(
+            time,
+            _fit["fitted"],
+            color="#dc2626",
+            linestyle="--",
+            linewidth=2.0,
+            label=rf"early-time fit: $\gamma={_fit['gamma']:.4e}\,\mathrm{{s}}^{{-1}}$",
+        )
     _axis.axhline(0.0, color="black", linewidth=0.8, alpha=0.6)
     _axis.set_xlabel(r"$t\;[\mathrm{s}]$")
     _axis.set_ylabel(rf"$\ln\!\\left(P_{{{_mode}}}(t) / P_{{{_mode}}}(0)\\right)$")
     _axis.set_title(rf"Log relative seed-averaged power, mode $m={_mode}$")
     _axis.grid(True, alpha=0.3)
+    if _fit["success"]:
+        _axis.legend()
     _figure
     return
 
