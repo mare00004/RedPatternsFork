@@ -4,6 +4,204 @@ The `red_patterns` package provides notebook, CLI, and sweep helpers around
 the CUDA simulation.  Initial phi distributions are implemented in
 `red_patterns.phi`.
 
+## Cosine eigenmode dispersion relation
+
+```bash
+uv run marimo edit analysis/analyze_dct_dispersion.py
+```
+
+Select an unperturbed equilibrium and its perturbed `run.h5` under the same
+dynamics. The notebook displays their saved ψ heatmaps side by side with a
+shared color scale. Select the end of the linear regime with the saved-time
+slider, then choose an inclusive DCT-II mode range. It subtracts the first
+equilibrium ψ profile, held fixed, and fits signed modal coefficients to
+`A exp(gamma (t-t0)) + C` using the original saved times. The endpoint is included.
+For independently evolving cosine eigenmodes, these rates give the perturbation
+dispersion relation, plotted against both wavenumber and wavelength.
+
+The full stored grid defines `L = N * dz`, `k_m = pi*m/L`, and the DCT-II cosine
+wavelength `lambda_m = 2*L/m`. Mode 0 has no finite wavelength. The notebook
+reports the fastest **measured** growing wavelength among resolved selected
+modes. Short-wave cutoffs require adjacent resolved modes to cross from growth
+to decay as k increases; their zero crossing is interpolated linearly in k.
+It reports every bracket and retains long-wave band edges for multiple unstable
+bands. A missing bracket leaves the cutoff unresolved, without extrapolation.
+Unexcited, flat, poorly fitted, or unresolved modes do not determine these
+features. A selected-mode explorer plots signed traces, fits, and residuals.
+Tables and downloads include modal rates, fit diagnostics, wavelengths,
+crossings, and an NPZ of coefficients, fits, and selection metadata.
+
+The synthetic validation pair excites independent cosines with known rates,
+a maximum at mode 5, and a short-wave cutoff between modes 7 and 8. It can be
+enabled interactively and is used automatically when running the notebook as
+a script:
+
+```bash
+uv run analysis/analyze_dct_dispersion.py
+```
+
+## Equilibrium dynamic modes and linear growth rates
+
+Launch the marimo notebook from the repository root:
+
+```bash
+uv run marimo edit analysis/analyze_linear_growth.py
+```
+
+Select a **perturbed equilibrium** `run.h5` and an **unperturbed equilibrium**
+`run.h5` under the same dynamics. The notebook checks model type, gradient,
+interaction parameters (Taylor NU/MU or the saved convolution kernel), and
+spatial grids. The initial phi fields should differ by the perturbation.
+The workbench's interaction/no-interaction pair uses different dynamics and
+is unsuitable for this equilibrium analysis.
+
+Both heatmaps use the shared RBC colormap with the same physical color scale.
+The reference panel shows the first saved equilibrium profile held fixed over
+the perturbed run's times. The notebook reports measured equilibrium psi drift
+(and first-to-last phi drift when saved), warning if it exceeds 1e-6 relative
+norm. Verify stationarity before interpreting the modes. The equilibrium run
+can have a different cadence or duration. The saved-time slider marks the end
+of the linear regime and includes that frame in analysis.
+The notebook preserves float64 precision and computes
+`delta_psi(z,t) = psi_perturbed(z,t) - psi_equilibrium(z,t0)`, followed by
+an orthonormal DCT-II for every selected saved frame and spatial mode,
+including mode 0 and wing points.
+
+Use **DCT mode range to analyze** to choose the inclusive mode interval, for
+example `[5, 32]` if those are the modes you perturbed. The table, growth-rate
+plot, individual-mode inspection slider, and ESPRIT analysis use only
+those modes, preserving their original mode numbers. A single-mode interval is
+also supported. The amplitude plot compares the selected-mode norm with the
+full-field norm. The heatmaps and full stored DCT arrays retain the complete
+field. The range defaults to all modes.
+
+Two distinct growth-rate plots are shown: diagnostic exponential-fit rates
+versus spatial DCT mode number, and ESPRIT rates versus extracted component
+number. They are labelled separately. Each signed
+coefficient is fitted as `A_m * exp(gamma_m * (t - t0)) + C_m`, using the original
+saved times, including irregular saves. The constant offset accommodates a
+difference signal starting at zero. Positive `gamma_m` means a growing
+exponential component; negative means a decaying component approaching the
+constant. The mode selector shows the measured coefficient, its fit, and the
+residual; the summary plot shows growth rate versus DCT mode number.
+
+The rate table includes relative fit error, R-squared, approximate rate standard
+error, and status. Constant/weak, nearly linear, uncertain, or search-limit fits
+have no reported rate. Other poor fits are marked explicitly. `ok` requires
+relative error at most 10% and rate curvature resolved relative to the fit
+uncertainty; it does not establish independent modal evolution. The search
+allows `abs(gamma_m * window_duration) <= 50`. The standard error assumes
+uncorrelated residuals. A cosine coefficient mixing several eigenmodes or
+oscillating need not have one well-defined growth rate.
+
+Main downloads provide the selected window/settings as JSON, the rate table as
+`dct_mode_growth_rates.csv`, and raw time, difference/DCT arrays, fitted traces,
+rates, and statuses as `dct_mode_growth_analysis.npz`. No interpolation is used
+for individual-mode fitting. These downloads work independently of the SVD.
+Both analysis archives record the inclusive mode bounds and `selected_modes`.
+In the individual-mode archive, `selected_dct_vectors` and
+`mode_fitted_coefficients` have one column per entry in `selected_modes`, in
+that order; the rate/status arrays use the same ordering. `dct_vectors` still
+contains all original spatial modes.
+
+**Compute ESPRIT growth rates (Hankel / SVD)** is enabled by default and can be
+disabled while inspecting DCT coefficient fits. ESPRIT extracts the shared
+temporal exponents in `c_m(t) ≈ sum_q b_mq exp((gamma_q + i omega_q) (t-t0))`.
+One component can mix several spatial DCT modes; its growth rate describes the
+entire observed pattern. Component numbers are sorting labels, not DCT mode
+numbers, and can change with the fit window or rank. A component's “dominant DCT mode” does
+not assign that rate to one cosine mode. Choose delay count and SVD rank to
+inspect the singular values, shift residual, and global exponential
+reconstruction. Growth rates
+are `log(abs(lambda)) / saved_dt`, in inverse seconds; oscillatory components
+also report angular frequency. The fit requires uniform spatial coordinates
+and checks matching spatial grids and model parameters, including interaction
+coefficients/kernel. Different initial conditions are expected; changing the
+operator between runs is rejected.
+The simulation's elapsed-time saving threshold can produce intervals differing
+by one solver step (for example, 1.00 and 1.01 seconds). For irregular saved
+times, the notebook linearly interpolates a copy of the DCT vectors onto a
+uniform grid with the same sample count and endpoints before forming the Hankel
+matrix. It reports the original interval range and interpolation. This is an
+approximation, particularly for fast oscillations or large sampling gaps.
+Uniformly sampled data is used directly.
+Changing rank reuses the existing Hankel SVD. Hankel matrices over 512 MiB are
+blocked before allocation; reduce the delay count or selected time window.
+
+Read the ESPRIT growth plot as follows: positive growth means an increasing
+envelope, negative means a decaying envelope, and near zero means an
+approximately steady envelope. An envelope at `gamma = 0.02 s^-1` doubles in
+34.7 s. Nonzero `omega` adds oscillation with period `2*pi/abs(omega)`;
+conjugate exponents with equal growth and opposite frequency together represent
+one real oscillating pattern. The table reports frequencies and periods.
+
+The adjacent DCT-content heatmap plots `abs(b_mq)^2 / sum_m abs(b_mq)^2`,
+normalized separately for each component over the selected modes. It connects
+each ESPRIT rate to its observed spatial cosine content. Normalization removes
+overall excitation strength, and the map omits complex phase; it is not a
+measure of reliability or an additive energy partition across components.
+Complex fitted amplitudes are retained in the archive. These are fitted
+coefficient vectors for the extracted poles, not full phi eigenvectors.
+
+The **dynamic-mode explorer** lets you select an ESPRIT component and a time.
+It displays its normalized complex spatial psi structure (real and imaginary
+quadratures), DCT weights, the fitted contribution at that time, and the
+growing envelope. Conjugate partners are included together in the real
+contribution; choosing either member displays the same pattern. Each recovered
+structure has one shared exponent: `delta_psi ≈ sum_q a_q*u_q(z)*exp(s_q*(t-t0))`.
+Shapes have unit Euclidean norm, with their largest spatial entry real and
+positive; the complex initial amplitude retains excitation and phase.
+
+The wavelength table reports the strongest DCT contributions with
+`wavelength = 2*M*dz/m`; mode 0 is constant with infinite wavelength.
+The entire stored z grid, including wings, sets this length. Per-component CSV
+exports contain normalized complex DCT and psi structures, wavelengths, and
+the selected-time contribution. The inverse DCT zero pads outside the selected
+mode range, so widening that range may recover additional structure. These
+are observable psi projections of dynamic modes; psi alone cannot identify the
+full phi eigenfunctions. Repeated eigenvalues only identify their combined
+excited projection in a single trajectory.
+
+Check stability of the extracted exponents and DCT content across nearby
+endpoints, delay counts, ranks, and observed DCT ranges. Low reconstruction and
+shift residuals support the exponential model, but high retained singular-value
+energy alone does not establish reliable equilibrium eigenvalues. Unexcited
+or unobserved dynamics cannot be recovered.
+
+ESPRIT downloads provide the selected endpoint/settings as JSON,
+component rates as `hankel_component_growth_rates.csv`, and the difference,
+DCT vectors, singular values, exponents, and fitted arrays as
+`hankel_growth_analysis.npz` with embedded metadata. With `numpy.load`, access
+`metadata_json` as a string using `.item()`; no pickle is required.
+`time`, `delta_psi`, and `dct_vectors` preserve the original saved observations;
+`hankel_time` and `hankel_vectors` contain the uniform input used by the SVD.
+The reconstruction uses `hankel_time`. Metadata records whether interpolation
+was applied and the interval deviation; `saved_dt_s` is the Hankel time step.
+The `esprit_dct_weights` array uses rows ordered by `selected_modes` and columns
+ordered by the exponents, matching the plotted components. `spatial_amplitudes`
+preserves their complex fitted coefficient vectors. `dynamic_dct_shapes` and
+`dynamic_psi_shapes` have components as columns; `dynamic_initial_amplitudes`
+contains their complex initial amplitudes. `dynamic_time_factors` uses
+`hankel_time`. The spatial reconstruction is
+`(dynamic_time_factors * dynamic_initial_amplitudes) @ dynamic_psi_shapes.T`.
+`dynamic_conjugate_partners` contains zero-based partner indices, or -1 if
+unpaired. `equilibrium_psi_profile` stores the fixed reference.
+
+Both methods estimate observed difference-signal rates. The reference is held
+fixed. A biased equilibrium profile or a conserved direction can contribute a
+constant component. Interpreting rates as eigenvalues
+of the perturbed equilibrium's phi linearization requires an appropriate
+reference and modes observable through psi. Check stability across endpoints,
+delay counts, and ranks. A synthetic validation pair is available in the UI
+and used automatically in script mode. It mixes DCT modes 3, 5, and 7 in two
+growing dynamic structures with shared rates +0.12 and +0.06 s^-1; ESPRIT rank 2
+recovers both despite mixed individual DCT traces:
+
+
+```bash
+uv run analysis/analyze_linear_growth.py
+```
+
 ## Initial phi flow
 
 Every entry point produces the same validated Pydantic payload, constructs a
