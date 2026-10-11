@@ -31,19 +31,29 @@ You need to have the following dependencies installed to run the simulation.
 - [CUDA](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/)
 - [HDF5](https://www.hdfgroup.org/download-hdf5/)
 
-You can either install those manually or via [mamba](https://mamba.readthedocs.io/en/latest/) with the given `environments.yml` file, by running `mamba actiave cuda-dev` from inside the project directory.
+You can either install those manually or via [mamba](https://mamba.readthedocs.io/en/latest/) with the given `environment.yml` file:
+
+```bash
+mamba env create -f environment.yml  # only when creating the environment
+mamba activate cuda-dev
+```
+
+Keep `cuda-dev` active while configuring and compiling so CUDA uses the
+environment's compatible host compiler and HDF5 libraries. Java is not required;
+the build discovers only the HDF5 C and high-level libraries.
 
 To build the project run:
 
 ```bash
-mkdir build
-cd build
-
-cmake ..
-cmake --build .
+cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES=120
+cmake --build build --parallel
 ```
 
-This will build a binary called `red-patterns` for Ampere type NVIDIA GPUs assuming you have all the necessary dependencies installed on your `PATH` ([see](<https://en.wikipedia.org/wiki/PATH_(variable)>)) which will be the case when using [mamba]. If you do not have CUDA (or nvcc) and HDF5 on your `PATH` , then you need to tell CMake where they live
+This builds `build/red-patterns` for an RTX 5070 (`120`). Use `86` for Ampere
+GPUs, or choose the architecture of your target GPU. The `release` and
+`dev-debug` presets default to `86`; override that with
+`-DCMAKE_CUDA_ARCHITECTURES=120` when configuring for an RTX 5070.
+If you do not have CUDA (or nvcc) and HDF5 on your `PATH`, tell CMake where they live:
 
 ```bash
 mkdir build
@@ -51,7 +61,7 @@ cd build
 
 cmake .. \
     -DCMAKE_CUDA_COMPILER=<path-to-nvcc> \
-    -DHDF5_ROOT=<path-to-nvcc>
+    -DHDF5_ROOT=<path-to-hdf5-installation>
 
 cmake --build .
 ```
@@ -70,7 +80,7 @@ cd build
 cmake .. \
     -DCMAKE_CUDA_ARCHITECTURES=<arch> \
     -DCMAKE_CUDA_COMPILER=<path-to-nvcc> \
-    -DHDF5_ROOT=<path-to-nvcc>
+    -DHDF5_ROOT=<path-to-hdf5-installation>
 
 cmake --build .
 ```

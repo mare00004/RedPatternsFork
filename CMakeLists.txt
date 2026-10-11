@@ -50,7 +50,11 @@ target_compile_options(argtable3 PRIVATE -Wall -Wextra)
 # HDF5
 # ------------------------------------------------------------------------------------------------
 
-find_package(HDF5 COMPONENTS C HL REQUIRED)
+# Use FindHDF5's C-library discovery instead of importing every target from
+# hdf5-config.cmake (which can require unrelated Java/Fortran installations).
+# This also lets the active environment's h5cc select its matching HDF5.
+set(HDF5_NO_FIND_PACKAGE_CONFIG_FILE TRUE)
+find_package(HDF5 MODULE COMPONENTS C HL REQUIRED)
 
 if(TARGET hdf5::hdf5)
     set(HDF5_LIB_TARGETS hdf5::hdf5 hdf5::hdf5_hl)
