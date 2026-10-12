@@ -168,6 +168,8 @@ int deriveAndValidateOrDie(SimConfig *c) {
     } else if (c->model.gradientType == SIGMOID) {
         c->model.alpha = 2.0e-04;
     } else if (c->model.gradientType == ZERO) {
+        // ZERO disables the entire buoyancy velocity -alpha * (rho - p),
+        // in addition to storing a constant Percoll profile p = P0.
         c->model.alpha = 0.0;
     } else if (c->model.gradientType == LINEAR_FULL) {
         c->model.alpha = 2.0e-05;
