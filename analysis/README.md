@@ -4,6 +4,33 @@ The `red_patterns` package provides notebook, CLI, and sweep helpers around
 the CUDA simulation.  Initial phi distributions are implemented in
 `red_patterns.phi`.
 
+## Local Taylor runs without buoyancy
+
+Use `uv run marimo edit analysis/workbench.py` to generate and run initial
+conditions. Select **Taylor** and gradient **zero**. In the current simulator,
+`ZERO` sets **alpha = 0**, removing the entire buoyancy contribution
+`-alpha * (rho - p)` from the face velocity. It also stores a constant physical
+Percoll density `p = P0`; it does not merely flatten the profile while retaining
+sedimentation. The interaction contribution `-beta * I_face` remains active.
+The equivalent CLI options are `--use-taylor --gradient=zero` with your NU/MU.
+Rebuild your selected binary after source changes; the saved
+`/config/model` attribute `alpha` must be zero.
+
+For a dispersion measurement about a spatially uniform state, set **wing_z = 0**
+and use **Smooth Homogeneous** as the unperturbed initial condition. Run it,
+then run **Perturbed Smooth Homogeneous** with a small amplitude (for example
+`1e-4`) and otherwise identical parameters, including NU/MU, grid, and mean
+concentration. Save both interaction runs' `run.h5` files and load them in
+`analysis/analyze_dct_dispersion.py`. The workbench's automatically generated
+no-interaction comparison is not the equilibrium reference: it changes NU/MU.
+
+Check that the reference stays stationary, fit only the early linear regime,
+and check stability of the rates as you reduce perturbation amplitude and time
+step. Cosine fits describe a dispersion relation when the observed cosines
+evolve independently; inspect residuals and mode mixing from the finite-domain
+stencils. `analysis/analyze_linear_growth.py` provides joint dynamic-mode
+analysis when several spatial cosines mix.
+
 ## Cosine eigenmode dispersion relation
 
 ```bash
@@ -14,10 +41,32 @@ Select an unperturbed equilibrium and its perturbed `run.h5` under the same
 dynamics. The notebook displays their saved ψ heatmaps side by side with a
 shared color scale. Select the end of the linear regime with the saved-time
 slider, then choose an inclusive DCT-II mode range. It subtracts the first
-equilibrium ψ profile, held fixed, and fits signed modal coefficients to
-`A exp(gamma (t-t0)) + C` using the original saved times. The endpoint is included.
+equilibrium ψ profile, held fixed, and fits `ln|c_m| = b_m + gamma_m (t-t0)`
+by unweighted linear least squares using the original saved times through the
+selected endpoint. There is no additive offset in the coefficient model.
+Negative coefficients are supported; modes with resolved sign changes are
+rejected. Samples at or below the precision floor are excluded without adding
+epsilon, and at least five samples must remain. Fit errors and R² refer to log
+amplitude, and downloads include the above-floor sample masks. This assumes
+directly excited exponential modes; accumulated signals such as
+`A (exp(gamma t) - 1)` require the offset-capable fits in
+`analyze_linear_growth.py` instead.
 For independently evolving cosine eigenmodes, these rates give the perturbation
 dispersion relation, plotted against both wavenumber and wavelength.
+
+For saved Taylor runs, the wavenumber plot overlays the continuum prediction
+`sigma(k) = -beta * AVG_PSI * NU * k^2 + beta * AVG_PSI * MU * k^4`.
+Coefficients come from the run metadata; `AVG_PSI` is the spatial mean of the
+first equilibrium ψ profile over the full stored grid, in fraction units.
+The caption shows these values, which are also saved in the NPZ metadata.
+For `LINEAR_FULL`, the overlay automatically includes the buoyancy shift
+`-alpha*g`, with saved `alpha` and `g = 30/(N*dz)` matching the simulator's
+full-domain density gradient. This is the continuum prediction for
+displacements of a constant-weight equilibrium ridge; the caption and NPZ
+metadata include `alpha`, `g`, and the decay rate `alpha*g`.
+For other gradients, the curve remains the uniform-state prediction without
+buoyancy. The overlay is omitted for the synthetic validation pair and
+convolution runs.
 
 The full stored grid defines `L = N * dz`, `k_m = pi*m/L`, and the DCT-II cosine
 wavelength `lambda_m = 2*L/m`. Mode 0 has no finite wavelength. The notebook
@@ -27,7 +76,8 @@ to decay as k increases; their zero crossing is interpolated linearly in k.
 It reports every bracket and retains long-wave band edges for multiple unstable
 bands. A missing bracket leaves the cutoff unresolved, without extrapolation.
 Unexcited, flat, poorly fitted, or unresolved modes do not determine these
-features. A selected-mode explorer plots signed traces, fits, and residuals.
+features. A selected-mode explorer plots log magnitudes, fitted lines, and
+log residuals, marking excluded samples and the precision floor.
 Tables and downloads include modal rates, fit diagnostics, wavelengths,
 crossings, and an NPZ of coefficients, fits, and selection metadata.
 
@@ -37,8 +87,12 @@ enabled interactively and is used automatically when running the notebook as
 a script:
 
 ```bash
-uv run analysis/analyze_dct_dispersion.py
+uv run python analysis/analyze_dct_dispersion.py
 ```
+
+Invoking `python` keeps the repository's installed `red_patterns` package
+available; invoking this file directly with `uv run` uses its isolated script
+dependencies, which do not include the local package.
 
 ## Equilibrium dynamic modes and linear growth rates
 
@@ -401,7 +455,7 @@ is applied:
 T(z)=z+\xi(z),\qquad
 \varphi_{\rm pert}(\rho,T(z))=\frac{\varphi_0(\rho,z)}{1+\xi'(z)},
 \qquad
-\xi(z)=\epsilon\sum_{n=n_{\min}}^{n_{\max}}b_n\sin(2\pi nz/L).
+\xi(z)=\epsilon\sum_{n=n_{\min}}^{n_{\max}}b_n\sin(\pi nz/L).
 \]
 
 Here `epsilon` is a displacement in metres, (L=N\,dz), and the seeded
@@ -429,6 +483,19 @@ uv run analysis/phi_init.py export \
 longitudinal displacement to the constant `linear_full_ridge`. It preserves
 each rho row's total phi, remains nonnegative for a monotone displacement map,
 and is available in the Workbench phi picker.
+
+Mode numbers now match the DCT-II cosine indices: for a constant marginal
+`C`, `delta_psi = -C * xi'` excites `cos(n*pi*z/L)` to first order.
+Set **mode_min = mode_max = 50** to excite cosine mode 50. The displacement
+uses sines so both boundaries stay fixed and each density class is conserved.
+Finite amplitudes can also generate harmonics. Set both wing sizes to zero
+for comparison with full-domain cosine modes. The Gaussian-weighted variant
+uses the same displacement basis, but its nonuniform marginal also mixes modes.
+
+Previously the displacement used `sin(2*pi*n*z/L)`, so index 25 excited
+DCT mode 50. Regenerate initial phi files to use the new convention; new
+exports record `displacement_basis = sin(n*pi*z/L)`. To reproduce an old
+single-mode displacement with the same seed and epsilon, double its index.
 
 ```bash
 uv run analysis/phi_init.py export \

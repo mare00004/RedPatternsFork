@@ -233,7 +233,11 @@ def cell_sim_controls():
         {
             "sigmoid": mo.md("Sigmoid pressure gradient."),
             "linear": mo.md("Linear pressure gradient."),
-            "zero": mo.md("Zero pressure gradient (no driving term)."),
+            "zero": mo.md(
+                "Buoyancy disabled: α = 0 removes the entire −α(ρ − p) "
+                "velocity contribution. The stored Percoll density is constant "
+                "p = P0; interactions remain active."
+            ),
             "linear-full": mo.md(
                 "Linear pressure gradient over the whole domain (no wings)."
             ),

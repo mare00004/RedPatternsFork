@@ -321,7 +321,11 @@ def _remap_phi_z_by_displacement(
     mode_min: int,
     mode_max: int,
 ) -> Array2F:
-    """Conservatively remap each rho row through a seeded monotone z map."""
+    """Conservatively displace each rho row with sin(n*pi*z/L) modes.
+
+    For a constant marginal C, delta psi = -C * xi' is a sum of the
+    corresponding DCT-II cosine modes to first order in the displacement.
+    """
     N_rho, N_z = phi_0.shape
     if N_z <= 1:
         return phi_0.copy()
@@ -333,9 +337,11 @@ def _remap_phi_z_by_displacement(
     z_faces = np.arange(N_z + 1, dtype=np.float64) * dz
     displacement_faces = epsilon * np.sum(
         coefficients[:, np.newaxis]
-        * np.sin(2.0 * np.pi * modes[:, np.newaxis] * z_faces[np.newaxis, :] / length),
+        * np.sin(np.pi * modes[:, np.newaxis] * z_faces[np.newaxis, :] / length),
         axis=0,
     )
+    # The sine basis fixes both domain boundaries exactly, including roundoff.
+    displacement_faces[[0, -1]] = 0.0
     mapped_faces = z_faces + displacement_faces
     if np.any(np.diff(mapped_faces) <= 0.0):
         raise ValueError("displacement map folds over on the exported z grid.")
@@ -395,7 +401,7 @@ def phi_perturbed_linear_full_gaussian_ridge(
     r"""Build a Gaussian-weighted LINEAR_FULL ridge with a z displacement.
 
     The displacement map is ``T(z) = z + xi(z)`` with
-    ``xi = epsilon * sum(b_n sin(2 pi n z / L))``. A conservative overlap
+    ``xi = epsilon * sum(b_n sin(pi n z / L))``. A conservative overlap
     remap of every rho row implements ``phi_pert(T(z)) = phi_0(z) / T'(z)``.
     It keeps every density class's total phi exactly unchanged and is
     nonnegative when the map is strictly increasing.
@@ -1293,8 +1299,8 @@ class PerturbedLinearFullRidgePhi(LinearFullRidgePhi):
         )
         jacobian = 1.0 + self.epsilon * np.sum(
             coefficients[:, np.newaxis]
-            * (2.0 * np.pi * modes[:, np.newaxis] / length)
-            * np.cos(2.0 * np.pi * modes[:, np.newaxis] * samples / length),
+            * (np.pi * modes[:, np.newaxis] / length)
+            * np.cos(np.pi * modes[:, np.newaxis] * samples / length),
             axis=0,
         )
         if np.min(jacobian) <= 0.0:
@@ -1311,6 +1317,7 @@ class PerturbedLinearFullRidgePhi(LinearFullRidgePhi):
         group.attrs["mode_max"] = self.mode_max
         group.attrs["perturbation_length"] = self.N * self.dz
         group.attrs["perturbation_method"] = "conservative_monotone_z_remap"
+        group.attrs["displacement_basis"] = "sin(n*pi*z/L)"
 
     def summary(self) -> list[str]:
         return [
@@ -1359,14 +1366,14 @@ class PerturbedLinearFullRidgePhi(LinearFullRidgePhi):
                 stop=1023,
                 step=1,
                 value=DEFAULT_PERTURBATION_MODE_MIN,
-                label="Minimum mode",
+                label="Minimum mode (nπ/L)",
             ),
             "mode_max": mo.ui.number(
                 start=1,
                 stop=1023,
                 step=1,
                 value=DEFAULT_PERTURBATION_MODE_MAX,
-                label="Maximum mode",
+                label="Maximum mode (nπ/L)",
             ),
         }
 
@@ -1384,7 +1391,10 @@ class PerturbedLinearFullRidgePhi(LinearFullRidgePhi):
 
     @classmethod
     def type_description(cls) -> str:
-        return r"Constant LINEAR_FULL ridge with $\varphi_{pert}(T(z))=\varphi_0(z)/T'(z)$"
+        return (
+            r"Constant LINEAR_FULL ridge with conservative sine displacements; "
+            r"mode $n$ excites $\cos(n\pi z/L)$ in $\psi$ to first order."
+        )
 
 
 class PerturbedLinearFullGaussianRidgePhi(PhiField):
@@ -1444,8 +1454,8 @@ class PerturbedLinearFullGaussianRidgePhi(PhiField):
         )
         jacobian = 1.0 + self.epsilon * np.sum(
             coefficients[:, np.newaxis]
-            * (2.0 * np.pi * modes[:, np.newaxis] / length)
-            * np.cos(2.0 * np.pi * modes[:, np.newaxis] * samples / length),
+            * (np.pi * modes[:, np.newaxis] / length)
+            * np.cos(np.pi * modes[:, np.newaxis] * samples / length),
             axis=0,
         )
         if np.min(jacobian) <= 0.0:
@@ -1464,6 +1474,7 @@ class PerturbedLinearFullGaussianRidgePhi(PhiField):
         group.attrs["mode_max"] = self.mode_max
         group.attrs["perturbation_length"] = self.N * self.dz
         group.attrs["perturbation_method"] = "conservative_monotone_z_remap"
+        group.attrs["displacement_basis"] = "sin(n*pi*z/L)"
 
     def summary(self) -> list[str]:
         return [
@@ -1534,14 +1545,14 @@ class PerturbedLinearFullGaussianRidgePhi(PhiField):
                 stop=1023,
                 step=1,
                 value=DEFAULT_PERTURBATION_MODE_MIN,
-                label="Minimum mode",
+                label="Minimum mode (nπ/L)",
             ),
             "mode_max": mo.ui.number(
                 start=1,
                 stop=1023,
                 step=1,
                 value=DEFAULT_PERTURBATION_MODE_MAX,
-                label="Maximum mode",
+                label="Maximum mode (nπ/L)",
             ),
         }
 

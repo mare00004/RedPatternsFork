@@ -9,9 +9,73 @@ from red_patterns.dct_dispersion import (
     analyze_modes,
     demo_pair,
     dispersion_features,
+    fit_log_mode,
     read_run,
     validate_pair,
 )
+
+
+@pytest.mark.parametrize("sign", [-1, 1])
+@pytest.mark.parametrize("rate", [-0.7, 0.4])
+def test_log_fit_signed_exponentials_on_irregular_times(sign, rate):
+    time = np.array([10., 10.1, 10.7, 11.5, 12., 13.2, 15.])
+    values = sign * 1e-8 * np.exp(rate * (time - time[0]))
+    fit = fit_log_mode(values, time)
+    assert fit.status == "ok"
+    assert fit.rate == pytest.approx(rate, abs=1e-12)
+    assert fit.rate_std < 1e-12
+    np.testing.assert_allclose(fit.fitted, values)
+    np.testing.assert_allclose(fit.log_fitted, np.log(np.abs(values)))
+
+
+def test_log_fit_uses_equal_log_weights_and_log_diagnostics():
+    time = np.linspace(0, 10, 31)
+    log_noise = 0.015 * np.sin(4 * time)
+    values = -1e-9 * np.exp(0.8 * time + log_noise)
+    fit = fit_log_mode(values, time)
+    expected_rate, intercept = np.polyfit(time, np.log(np.abs(values)), 1)
+    residual = np.log(np.abs(values)) - (intercept + expected_rate * time)
+    ss = residual @ residual
+    total_ss = np.sum((np.log(np.abs(values)) - np.mean(np.log(np.abs(values)))) ** 2)
+    assert fit.status == "ok"
+    assert fit.rate == pytest.approx(expected_rate)
+    assert fit.relative_rmse == pytest.approx(np.sqrt(ss / total_ss))
+    assert fit.r_squared == pytest.approx(1 - ss / total_ss)
+    assert fit.rate_std == pytest.approx(np.sqrt(ss / (len(time) - 2) / np.sum((time - np.mean(time)) ** 2)))
+
+
+def test_log_fit_excludes_zero_and_subfloor_samples_without_clipping():
+    time = np.arange(10.)
+    values = 1e-6 * np.exp(-time)
+    values[0] = 0
+    values[-1] = -1e-20  # Unresolved sign is excluded, not a resolved crossing.
+    fit = fit_log_mode(values, time, amplitude_floor=1e-9)
+    np.testing.assert_array_equal(fit.used_samples, (np.abs(values) > 1e-9))
+    assert np.count_nonzero(fit.used_samples) == 6
+    assert fit.rate == pytest.approx(-1.)
+    assert fit.status == "ok"
+    assert np.all(np.isnan(fit.fitted[~fit.used_samples]))
+
+
+def test_log_fit_rejects_resolved_sign_changes_and_weak_signals():
+    time = np.arange(8.)
+    values = 1e-6 * np.exp(0.1 * time)
+    values[4:] *= -1
+    fit = fit_log_mode(values, time)
+    assert "sign change" in fit.status
+    assert np.isnan(fit.rate)
+    for signal in (np.zeros(8), np.full(8, 1e-20), np.r_[np.ones(4), np.zeros(4)]):
+        fit = fit_log_mode(signal, time, amplitude_floor=1e-10)
+        assert "fewer than five" in fit.status
+        assert np.isnan(fit.rate)
+    assert "constant" in fit_log_mode(np.ones(8), time).status
+
+
+def test_log_fit_flags_curved_log_amplitude():
+    time = np.linspace(0, 4, 41)
+    fit = fit_log_mode(np.exp(time**2), time)
+    assert fit.status == "poor log-linear fit"
+    assert fit.relative_rmse > 0.1
 
 
 def test_known_cosine_dispersion_and_wavelengths():

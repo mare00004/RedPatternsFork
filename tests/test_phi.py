@@ -5,7 +5,10 @@ from __future__ import annotations
 import unittest
 
 import numpy as np
+import h5py
+import pytest
 from pydantic import ValidationError
+from scipy.fft import dct
 
 from red_patterns.models import PHI_PARAMS_ADAPTER
 from red_patterns.phi import (
@@ -163,6 +166,58 @@ class PerturbedLinearFullRidgePhiTests(unittest.TestCase):
         self.assertFalse(np.array_equal(raw_base, raw_perturbed))
         self.assertTrue(np.all(raw_perturbed >= 0.0))
         np.testing.assert_allclose(raw_perturbed.sum(axis=1), raw_base.sum(axis=1))
+
+
+@pytest.mark.parametrize("mode", [1, 7, 50])
+def test_displacement_index_excites_matching_dct_cosine(mode):
+    params = {
+        **COMMON_PARAMS, "N": 256, "dz": 0.07 / 256,
+        "wing_z": 0, "wing_r": 0,
+        "phi_type": PhiType.PERTURBED_LINEAR_FULL_RIDGE.value,
+        "epsilon": 1e-8, "seed": 0, "mode_min": mode, "mode_max": mode,
+    }
+    field = phi_field_from_params(params)
+    result = field.compute()
+    baseline = phi_field_from_params({**params, "epsilon": 0}).compute()
+    coefficients = dct((result.phi_values - baseline.phi_values).sum(axis=0), norm="ortho")
+    assert np.argmax(np.abs(coefficients)) == mode
+    # Linearized conservative face displacement gives this cell-averaged cosine.
+    b = np.random.default_rng(params["seed"]).normal()
+    expected = (-params["psi_avg"] * params["epsilon"] * b
+                * 2 * np.sin(np.pi * mode / (2 * params["N"])) / params["dz"]
+                * np.sqrt(params["N"] / 2))
+    assert coefficients[mode] == pytest.approx(expected, rel=2e-4)
+    assert np.linalg.norm(np.delete(coefficients, mode)) < 1e-3 * abs(expected)
+    assert np.all(result.phi_values >= 0)
+    np.testing.assert_allclose(result.phi_values.sum(axis=1), baseline.phi_values.sum(axis=1), rtol=1e-11)
+
+
+@pytest.mark.parametrize("phi_type,extras", [
+    (PhiType.PERTURBED_LINEAR_FULL_RIDGE, {}),
+    (PhiType.PERTURBED_LINEAR_FULL_GAUSSIAN_RIDGE, {"gaussian_mu": 1100., "gaussian_sigma": 4.}),
+])
+def test_displacement_folding_check_and_export_use_pi_basis(tmp_path, phi_type, extras):
+    mode, seed = 3, 0
+    length = COMMON_PARAMS["N"] * COMMON_PARAMS["dz"]
+    b = abs(np.random.default_rng(seed).normal())
+    critical_epsilon = length / (np.pi * mode * b)
+    params = {
+        **COMMON_PARAMS, **extras, "phi_type": phi_type.value,
+        "wing_z": 0, "wing_r": 0,
+        "epsilon": 0.75 * critical_epsilon,
+        "seed": seed, "mode_min": mode, "mode_max": mode,
+    }
+    field = phi_field_from_params(params)
+    assert not field.validate()  # The old 2*pi check would incorrectly reject this.
+    result = field.compute()
+    baseline = phi_field_from_params({**params, "epsilon": 0}).compute()
+    np.testing.assert_allclose(result.phi_values.sum(axis=1), baseline.phi_values.sum(axis=1), rtol=1e-12)
+    field.write_phi_h5(tmp_path / "phi.h5", result)
+    with h5py.File(tmp_path / "phi.h5") as handle:
+        assert handle["phi"].attrs["displacement_basis"] == "sin(n*pi*z/L)"
+    folded = phi_field_from_params({**params, "epsilon": 1.1 * critical_epsilon})
+    with pytest.raises(ValueError, match="folding"):
+        folded.compute()
 
 
 if __name__ == "__main__":

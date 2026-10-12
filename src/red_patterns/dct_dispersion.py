@@ -1,5 +1,6 @@
 """Growth dispersion of independently evolving spatial DCT-II modes."""
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import h5py
@@ -7,7 +8,79 @@ import numpy as np
 import pandas as pd
 from scipy.fft import dct, idct
 
-from red_patterns.linear_growth import fit_dct_mode
+
+@dataclass(frozen=True)
+class LogModeFit:
+    rate: float
+    rate_std: float
+    r_squared: float
+    relative_rmse: float
+    fitted: np.ndarray
+    log_fitted: np.ndarray
+    used_samples: np.ndarray
+    max_abs_coefficient: float
+    status: str
+
+
+def fit_log_mode(values, time, *, amplitude_floor=0.0):
+    """Unweighted least squares of ln|c| = b + gamma*(t-t0), without offset.
+
+    Use original times and only amplitudes strictly above the precision floor.
+    Never replace zeros with epsilon or fit across resolved sign changes.
+    Errors and R² refer to log amplitude; the slope standard error assumes
+    independent, equal-variance log residuals (multiplicative amplitude noise).
+    """
+    values, time = np.asarray(values, dtype=float), np.asarray(time, dtype=float)
+    if values.ndim != 1 or time.shape != values.shape or time.size < 5:
+        raise ValueError("Each log-mode fit needs at least five matching coefficients and saved times.")
+    if not np.all(np.isfinite(values)) or not np.all(np.isfinite(time)) or np.any(np.diff(time) <= 0):
+        raise ValueError("DCT coefficients must be finite and saved times must increase strictly.")
+    if not np.isfinite(amplitude_floor) or amplitude_floor < 0:
+        raise ValueError("The coefficient precision floor must be finite and nonnegative.")
+    max_abs = float(np.max(np.abs(values)))
+    floor = max(amplitude_floor, 100 * np.finfo(float).eps * max_abs)
+    used = np.abs(values) > floor
+
+    def unresolved(status):
+        return LogModeFit(np.nan, np.nan, np.nan, np.nan,
+                          np.full_like(values, np.nan), np.full_like(values, np.nan),
+                          used, max_abs, status)
+
+    if np.count_nonzero(used) < 5:
+        return unresolved("fewer than five samples above precision")
+    signs = np.sign(values[used])
+    if np.any(signs != signs[0]):
+        return unresolved("sign change; not a single exponential")
+    if np.ptp(values[used]) <= floor:
+        return unresolved("constant or below precision")
+
+    duration = float(time[-1] - time[0])
+    x_all = (time - time[0]) / duration
+    x = x_all[used]
+    y = np.log(np.abs(values[used]))
+    dx, dy = x - np.mean(x), y - np.mean(y)
+    sxx = float(dx @ dx)
+    slope = float(dx @ dy / sxx)
+    log_fitted = np.mean(y) + slope * (x_all - np.mean(x))
+    residual = y - log_fitted[used]
+    ss, total_ss = float(residual @ residual), float(dy @ dy)
+    if total_ss == 0:
+        return unresolved("constant or below precision")
+    relative_rmse = float(np.sqrt(ss / total_ss))
+    rate_std = float(np.sqrt(ss / (len(x) - 2) / sxx) / duration)
+    rate = slope / duration
+    if abs(rate) <= 2 * rate_std:
+        status = "uncertain log slope; rate unresolved"
+        rate = np.nan
+    elif relative_rmse > 0.1:
+        status = "poor log-linear fit"
+    else:
+        status = "ok"
+    # Only reconstruct fitted samples; excluded points are not extrapolated.
+    fitted = np.full_like(values, np.nan)
+    fitted[used] = signs[0] * np.exp(log_fitted[used])
+    return LogModeFit(rate, rate_std, 1 - ss / total_ss, relative_rmse,
+                      fitted, log_fitted, used, max_abs, status)
 
 
 def read_run(path):
@@ -77,7 +150,7 @@ def validate_pair(perturbed, equilibrium):
 
 
 def analyze_modes(perturbed, equilibrium, end_index, mode_min, mode_max):
-    """Fit signed coefficients on original times, including the selected endpoint."""
+    """Fit log magnitudes on original times through the selected endpoint."""
     validate_pair(perturbed, equilibrium)
     n = len(perturbed["z"])
     if not 4 <= end_index < len(perturbed["time"]):
@@ -91,7 +164,7 @@ def analyze_modes(perturbed, equilibrium, end_index, mode_min, mode_max):
     floor = (100 * np.finfo(float).eps * np.sqrt(n)
              * max(float(np.max(np.abs(field))), float(np.max(np.abs(reference)))))
     modes = np.arange(mode_min, mode_max + 1)
-    fits = [fit_dct_mode(coefficients[:, m], time, amplitude_floor=floor) for m in modes]
+    fits = [fit_log_mode(coefficients[:, m], time, amplitude_floor=floor) for m in modes]
     length = n * float(np.mean(np.diff(perturbed["z"])))
     wavenumber = np.pi * modes / length
     wavelength = np.full(len(modes), np.inf)
@@ -100,8 +173,10 @@ def analyze_modes(perturbed, equilibrium, end_index, mode_min, mode_max):
         "mode": modes, "wavenumber_rad_m": wavenumber, "wavelength_m": wavelength,
         "growth_rate_s^-1": [fit.rate for fit in fits],
         "rate_std_s^-1": [fit.rate_std for fit in fits],
-        "relative_fit_error": [fit.relative_rmse for fit in fits],
-        "R_squared": [fit.r_squared for fit in fits],
+        "log_relative_fit_error": [fit.relative_rmse for fit in fits],
+        "log_R_squared": [fit.r_squared for fit in fits],
+        "fit_sample_count": [int(np.count_nonzero(fit.used_samples)) for fit in fits],
+        "excluded_sample_count": [int(np.count_nonzero(~fit.used_samples)) for fit in fits],
         "max_abs_coefficient": [fit.max_abs_coefficient for fit in fits],
         "status": [fit.status for fit in fits],
     })
@@ -153,9 +228,9 @@ def demo_pair():
     rates = 0.16 - 0.02 * (modes - 5) ** 2
     coefficients = np.zeros((len(time), n))
     excited = np.arange(1, 13)
-    # Integrated exponential observable: offsets allow initially zero δψ.
+    # Directly excited eigenmodes, with both positive and negative coefficients.
     coefficients[:, excited] = (2e-5 * (-1.0) ** excited
-                                * np.expm1(time[:, None] * rates[excited]))
+                                * np.exp(time[:, None] * rates[excited]))
     equilibrium = np.full((len(time), n), 0.02)
     common = {"time": time, "z": z, "rho": np.arange(n),
               "model": {"modelType": "TAYL", "gradientType": "LINEAR_FULL",

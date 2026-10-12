@@ -51,10 +51,18 @@ def _():
 
     We subtract the first equilibrium profile, held fixed,
     $\delta\psi(z,t)=\psi_{\mathrm{perturbed}}(z,t)-\psi_{\mathrm{eq}}(z,t_0)$,
-    and fit each **signed** orthonormal DCT-II coefficient to
-    $c_m(t)=A_m\exp[\gamma_m(t-t_0)]+C_m$. The offset accommodates observables
-    that start at zero and accumulate the perturbation. Fits use every saved
-    frame from the first through the selected endpoint, at its original time.
+    and fit each orthonormal DCT-II coefficient in **log-amplitude space**:
+    $\ln|c_m(t)|=b_m+\gamma_m(t-t_0)$, with no additive offset in $c_m$.
+    Unweighted least squares gives every retained saved frame equal weight
+    in log space, using its original time through the selected endpoint.
+    Positive and negative coefficients are supported, but a resolved sign
+    change rejects the mode. Samples at or below the coefficient precision
+    floor are excluded, never replaced by an artificial epsilon; at least
+    five samples must remain.
+
+    This model assumes a directly excited exponential mode. An accumulated
+    observable such as $A(\exp[\gamma t]-1)$ is not log-linear; use the
+    offset-capable fits in `analyze_linear_growth.py` for that case.
 
     For your independently evolving cosine eigenmodes, $\gamma_m$ is the
     perturbation growth rate: positive grows, negative decays. Wavelength means
@@ -254,11 +262,64 @@ def _(crossings, dct_length, fastest, mode_max, mode_min, rate_table):
 
 
 @app.cell
-def _(crossings, fastest, rate_table):
+def _(dct_length, demo_toggle, equilibrium_run, perturbed_run):
+    taylor_prediction = None
+    if demo_toggle.value:
+        prediction_note = "The synthetic pair has prescribed rates; the Taylor continuum overlay is available for saved Taylor runs."
+    elif perturbed_run["model"].get("modelType") not in ("TAYL", b"TAYL"):
+        prediction_note = "The continuum overlay requires a Taylor run with saved NU and MU."
+    else:
+        _beta = perturbed_run["model"].get("beta")
+        _nu = perturbed_run["variant"].get("NU")
+        _mu = perturbed_run["variant"].get("MU")
+        _linear_full = perturbed_run["model"].get("gradientType") in ("LINEAR_FULL", b"LINEAR_FULL")
+        _alpha = perturbed_run["model"].get("alpha") if _linear_full else 0.0
+        if any(_value is None or not np.isfinite(float(_value)) for _value in (_beta, _nu, _mu, _alpha)):
+            prediction_note = "The continuum overlay requires finite beta, NU, and MU metadata, plus alpha for LINEAR_FULL."
+        else:
+            # CuKernelGradLinearFull uses a fixed density drop of 30 over N*DZ.
+            _g = 30.0 / dct_length if _linear_full else 0.0
+            taylor_prediction = {
+                "beta": float(_beta), "nu": float(_nu), "mu": float(_mu),
+                "avg_psi": float(np.mean(equilibrium_run["psi"][0])),
+                "alpha": float(_alpha), "g": _g,
+                "buoyancy_decay_rate_s^-1": float(_alpha) * _g,
+                "g_definition": "30/(N*dz), matching CuKernelGradLinearFull" if _linear_full else "no buoyancy correction",
+            }
+            _formula = (r"$\sigma(k)=-\alpha g-\beta\langle\psi\rangle\nu k^2"
+                        r"+\beta\langle\psi\rangle\mu k^4$. " if _linear_full else
+                        r"$\sigma(k)=-\beta\langle\psi\rangle\nu k^2"
+                        r"+\beta\langle\psi\rangle\mu k^4$. ")
+            _assumption = (
+                f"LINEAR_FULL: α = {float(_alpha):.6g}, g = {_g:.6g}, "
+                f"αg = {float(_alpha) * _g:.6g} s⁻¹. "
+                "This is the continuum prediction for displacements of a constant-weight equilibrium ridge. "
+                if _linear_full else "This is the uniform-state continuum prediction without buoyancy. "
+            )
+            prediction_note = (
+                "Dashed curve: " + _formula +
+                f"β = {float(_beta):.6g}, ν = {float(_nu):.6g}, μ = {float(_mu):.6g}; "
+                f"AVG_PSI = {taylor_prediction['avg_psi']:.6g} "
+                "(fraction, spatial mean of the first equilibrium profile over the full stored grid). "
+                + _assumption + "Finite-grid rates may differ."
+            )
+    return prediction_note, taylor_prediction
+
+
+@app.cell
+def _(crossings, fastest, prediction_note, rate_table, taylor_prediction):
     _fig, _axes = plt.subplots(1, 2, figsize=(13, 4.5), constrained_layout=True)
     _finite = rate_table["mode"] > 0
     _ok = _finite & (rate_table["status"] == "ok")
     _poor = _finite & np.isfinite(rate_table["growth_rate_s^-1"]) & ~_ok
+    if taylor_prediction is not None:
+        _k = np.linspace(0, float(rate_table["wavenumber_rad_m"].max()), 512)
+        _prefactor = taylor_prediction["beta"] * taylor_prediction["avg_psi"]
+        _sigma = (-taylor_prediction["buoyancy_decay_rate_s^-1"]
+                  - _prefactor * taylor_prediction["nu"] * _k**2
+                  + _prefactor * taylor_prediction["mu"] * _k**4)
+        _axes[0].plot(_k, _sigma, "--", color="tab:purple", linewidth=2,
+                      label="Taylor continuum prediction")
     for _ax, _key, _scale, _label in zip(
         _axes, ("wavenumber_rad_m", "wavelength_m"), (1, 100),
         ("DCT-II wavenumber k [rad/m]", "DCT-II wavelength λ [cm]"),
@@ -282,16 +343,19 @@ def _(crossings, fastest, rate_table):
         _ax.legend(fontsize=8)
     _output = mo.as_html(_fig)
     plt.close(_fig)
-    _output
+    mo.vstack([_output, mo.md(prediction_note)])
     return
 
 
 @app.cell
 def _(crossings, rate_table):
     mo.vstack([
-        mo.md("**Fit diagnostics.** `ok` requires resolved exponential curvature and relative fit error ≤ 10%. "
-              "Flat, weak, nearly linear, or poorly described coefficients cannot establish a rate. "
-              "Fit standard errors assume uncorrelated residuals. Inspect traces and vary the endpoint to check stability."),
+        mo.md("**Log-space fit diagnostics.** `ok` requires |γ| > 2 fit standard errors and "
+              "log relative fit error ≤ 0.1 (residual norm divided by centered log-amplitude norm). "
+              "R² and errors refer to log amplitude. Counts report samples above/below the precision floor. "
+              "Sign-changing, flat, or weak coefficients cannot establish a rate. "
+              "Standard errors assume independent, equal-variance log residuals; the precision floor is not a noise estimate. "
+              "Inspect traces and vary the endpoint to check stability."),
         mo.ui.table(rate_table, selection=None, show_download=True, label="DCT-II modal rates and wavelengths"),
         mo.ui.table(crossings, selection=None, show_download=True, label="Resolved zero crossings and wavelength brackets"),
     ])
@@ -310,17 +374,25 @@ def _(coefficients, mode_max, mode_min):
 
 
 @app.cell
-def _(coefficients, fit_time, fits, inspect_mode, mode_min):
+def _(coefficient_floor, coefficients, fit_time, fits, inspect_mode, mode_min):
     _m = int(inspect_mode.value)
     _fit = fits[_m - mode_min]
     _fig, _axes = plt.subplots(1, 2, figsize=(13, 4), constrained_layout=True)
-    _axes[0].plot(fit_time, coefficients[:, _m], label="Signed measured coefficient")
-    _axes[0].plot(fit_time, _fit.fitted, "--", label="A exp(γ(t−t₀)) + C")
-    _axes[0].set(xlabel="t [s]", ylabel=f"c{_m}(t)", title=f"m={_m}: γ={_fit.rate:.7g} s⁻¹; {_fit.status}")
+    _amplitude = np.abs(coefficients[:, _m])
+    _log_values = np.full_like(_amplitude, np.nan)
+    np.log(_amplitude, out=_log_values, where=_amplitude > 0)
+    _used = _fit.used_samples
+    _axes[0].plot(fit_time, _log_values, color="grey", alpha=0.4)
+    _axes[0].scatter(fit_time[_used], _log_values[_used], s=12, label="Above precision floor")
+    _axes[0].scatter(fit_time[~_used], _log_values[~_used], marker="x", color="grey", label="Excluded (zeros omitted)")
+    _axes[0].plot(fit_time[_used], _fit.log_fitted[_used], "--", label="b + γ(t−t₀)")
+    if coefficient_floor > 0:
+        _axes[0].axhline(np.log(coefficient_floor), color="grey", linestyle=":", label="Precision floor")
+    _axes[0].set(xlabel="t [s]", ylabel=f"ln|c{_m}(t)|", title=f"m={_m}: γ={_fit.rate:.7g} s⁻¹; {_fit.status}")
     _axes[0].legend()
-    _axes[1].plot(fit_time, coefficients[:, _m] - _fit.fitted)
+    _axes[1].plot(fit_time[_used], _log_values[_used] - _fit.log_fitted[_used])
     _axes[1].axhline(0, color="grey", linewidth=1)
-    _axes[1].set(xlabel="t [s]", ylabel="Measured − fitted", title=f"Residual; relative fit error={_fit.relative_rmse:.3g}")
+    _axes[1].set(xlabel="t [s]", ylabel="ln|c| − fitted log amplitude", title=f"Log residual; relative error={_fit.relative_rmse:.3g}")
     for _ax in _axes:
         _ax.grid(alpha=0.25)
     _output = mo.as_html(_fig)
@@ -330,7 +402,7 @@ def _(coefficients, fit_time, fits, inspect_mode, mode_min):
 
 
 @app.cell
-def _(coefficient_floor, coefficients, crossings, dct_length, end_index, equilibrium_run, fastest, fit_time, fits, mode_max, mode_min, perturbed_run, rate_table):
+def _(coefficient_floor, coefficients, crossings, dct_length, end_index, equilibrium_run, fastest, fit_time, fits, mode_max, mode_min, perturbed_run, rate_table, taylor_prediction):
     _metadata = {
         "perturbed_file": perturbed_run["path"], "equilibrium_file": equilibrium_run["path"],
         "reference": "fixed_first_saved_equilibrium_psi", "dct_type": 2, "dct_norm": "ortho",
@@ -338,8 +410,14 @@ def _(coefficient_floor, coefficients, crossings, dct_length, end_index, equilib
         "linear_start_time_s": float(fit_time[0]), "linear_end_time_s": float(fit_time[-1]),
         "linear_end_frame": end_index, "endpoint_included": True,
         "mode_min": mode_min, "mode_max": mode_max, "mode_range_inclusive": True,
-        "fit_model": "A*exp(gamma*(t-t0))+C", "uses_original_saved_times": True,
+        "fit_model": "ln(abs(c)) = b + gamma*(t-t0)", "uses_original_saved_times": True,
+        "fit_method": "unweighted_linear_least_squares_in_log_amplitude",
+        "coefficient_offset": 0.0, "fit_diagnostics_space": "natural_log_amplitude",
+        "sample_policy": "abs(c) > precision floor; at least five samples; reject resolved sign changes",
         "coefficient_precision_floor": coefficient_floor,
+        "taylor_continuum_prediction": taylor_prediction,
+        "taylor_continuum_formula": "-alpha*g - beta*avg_psi*nu*k**2 + beta*avg_psi*mu*k**4",
+        "avg_psi_definition": "spatial mean of first equilibrium psi over full stored grid, as fraction",
         "cutoff_method": "zero crossing linearly interpolated in k between adjacent resolved modes",
         "fastest_measured_mode": None if fastest is None else int(fastest["mode"]),
         "fastest_measured_wavelength_m": None if fastest is None else float(fastest["wavelength_m"]),
@@ -351,6 +429,8 @@ def _(coefficient_floor, coefficients, crossings, dct_length, end_index, equilib
         _buffer, time=fit_time, z=perturbed_run["z"], modes=rate_table["mode"].to_numpy(),
         coefficients=coefficients[:, mode_min:mode_max + 1],
         fitted_coefficients=np.column_stack([_fit.fitted for _fit in fits]),
+        fitted_log_amplitudes=np.column_stack([_fit.log_fitted for _fit in fits]),
+        above_precision_floor=np.column_stack([_fit.used_samples for _fit in fits]),
         metadata_json=json.dumps(_metadata, indent=2),
     )
     mo.hstack([
