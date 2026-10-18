@@ -33,6 +33,30 @@ analysis when several spatial cosines mix.
 
 ## Cosine eigenmode dispersion relation
 
+For a complete paired Taylor `LINEAR_FULL` sweep, use the compact browser:
+
+```bash
+uv run marimo edit analysis/analyze_stability_sweep.py
+```
+
+Select the directory containing `runs.jsonl` and `results/<run_id>/run.h5`.
+The browser matches `perturbed_linear_full_ridge` runs to `linear_full_ridge`
+references using identical shared simulation and initial-grid settings, including
+exact NU/MU values. Missing files and ambiguous references remain visible.
+Choose a pair for shared-scale ψ heatmaps, a perturbation heatmap, modal rates
+and wavelengths, the saved-parameter continuum prediction, cutoff diagnostics,
+and individual log-amplitude fits with residuals. Pair CSV/NPZ downloads preserve
+the selected window, modes, coefficients, fit masks, and metadata.
+
+The optional **Whole-sweep growth map** analyzes each available pair sequentially
+using a common fit endpoint (default 100 s) and mode range (default 1–100).
+It plots the maximum resolved rate and continuum boundary, with a downloadable
+summary table. Unresolved fits or reference drift are not labelled stable;
+decay only describes the selected modes. Check the linear window individually,
+especially far from the boundary. **Refresh results** rescans an ongoing sweep.
+The synthetic checkbox supplies analytic validation data; script mode enables it
+automatically (`uv run python analysis/analyze_stability_sweep.py`).
+
 ```bash
 uv run marimo edit analysis/analyze_dct_dispersion.py
 ```
