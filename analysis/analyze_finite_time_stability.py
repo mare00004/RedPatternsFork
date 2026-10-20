@@ -205,7 +205,9 @@ def _(axis_titles, coordinates, phase_data, summary):
         if metric == "lambda_eff_s_inv":
             _limit = max(float(_valid[metric].abs().max()), 1e-12) if len(_valid) else 1.0
             _scale = alt.Scale(scheme="redblue", domain=[-_limit, _limit], domainMid=0, reverse=True)
-        _cells = alt.Chart(_visible).mark_rect(stroke="#333", strokeWidth=0.5).encode(
+        _cells = alt.Chart(_visible).mark_rect(
+            stroke="#333", strokeWidth=0.5, invalid=None,
+        ).encode(
             x=alt.X("x_low:Q", title=axis_titles[0], scale=alt.Scale(zero=False)),
             x2="x_high:Q",
             y=alt.Y("y_low:Q", title=axis_titles[1], scale=alt.Scale(zero=False)),
@@ -217,7 +219,7 @@ def _(axis_titles, coordinates, phase_data, summary):
             ),
             opacity=alt.condition(_click, alt.value(1.0), alt.value(0.35)),
             tooltip=_tooltips,
-        ).properties(name=metric)
+        ).properties(name=metric).add_params(_click)
         if coordinates.value == "normalized":
             _boundary = alt.Chart(pd.DataFrame({"onset": [1.0]})).mark_rule(
                 color="black", strokeDash=[6, 4], strokeWidth=2,
@@ -233,16 +235,14 @@ def _(axis_titles, coordinates, phase_data, summary):
             _chart = _cells
         return _chart.properties(width=470, height=360, title=title)
 
-    # A single shared selection lets either heatmap drive the same inspector
-    # and highlights the corresponding cell in both maps.
+    # Attach the shared selection to the unit marks above before layering the
+    # boundary. Altair then scopes it to the actual compiled views; manually
+    # specifying top-level view names breaks when a unit becomes a layer.
     _heatmaps = alt.hconcat(
         phase_chart("fastest_wavelength_cm", "Fastest growing wavelength: perturbed ψ",
                     "Wavelength [cm]", "wavelength_status"),
         phase_chart("lambda_eff_s_inv", "Paired finite-time effective growth",
                     "λ_eff [s⁻¹]", "norm_status"),
-        params=[alt.TopLevelSelectionParameter(
-            **_click.param.to_dict(), views=["fastest_wavelength_cm", "lambda_eff_s_inv"],
-        )],
     ).resolve_scale(color="independent")
     phase_heatmap = mo.ui.altair_chart(
         _heatmaps, chart_selection=False, legend_selection=False,
