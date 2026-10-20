@@ -21,12 +21,23 @@ def prepare_pair(perturbed, reference):
     notes = [note for note in notes if not note.startswith("Equilibrium ψ drift")]
     field, base = perturbed["psi"], reference["psi"]
     n = field.shape[1]
+    length = n * float(np.mean(np.diff(perturbed["z"])))
     scale = np.maximum(np.max(np.abs(field), axis=1), np.max(np.abs(base), axis=1))
+    model = perturbed["model"]
+    alpha, beta = float(model.get("alpha", np.nan)), float(model.get("beta", np.nan))
+    mean_psi = float(np.mean(base[0]))
+    # ν_c² = C (-μ), for the negative ν, μ branch and continuous k > 0.
+    boundary_coefficient = np.nan
+    if (model.get("modelType") in ("TAYL", b"TAYL")
+            and model.get("gradientType") in ("LINEAR_FULL", b"LINEAR_FULL")
+            and np.isfinite([alpha, beta, mean_psi]).all()
+            and alpha > 0 and beta > 0 and mean_psi > 0):
+        boundary_coefficient = 4 * alpha * (30 / length) / (beta * mean_psi)
     return dict(
         time=perturbed["time"].copy(),
         raw=dct(field, type=2, norm="ortho", axis=1),
         difference=dct(field - base, type=2, norm="ortho", axis=1),
-        length=n * float(np.mean(np.diff(perturbed["z"]))),
+        length=length, boundary_coefficient=boundary_coefficient,
         floor=100 * np.finfo(float).eps * np.sqrt(n) * scale,
         reference_drift=drift, notes=notes,
     )
@@ -96,9 +107,73 @@ def analyze_window(prepared, start, end, mode_min, mode_max):
         D_start=float(distance[0]), D_end=float(distance[-1]),
         lambda_eff_s_inv=rate, norm_status=norm_status,
         reference_drift=prepared["reference_drift"],
+        boundary_coefficient=prepared["boundary_coefficient"],
     )
     return dict(summary=summary, table=table, fits=fits, time=time, modes=modes,
                 raw=raw, difference=difference, distance=distance, norm_floor=norm_floor)
+
+
+def phase_coordinates(summary, coordinates):
+    """Numeric heatmap coordinates and midpoint cell edges, without aggregation.
+
+    Squaring is restricted to the negative branch to avoid folding positive ν
+    onto negative ν. Normalization uses saved per-pair physical parameters.
+    Cell edges are a visualization convention, not interpolation of measurements.
+    """
+    frame = summary.copy()
+    nu, mu = frame["NU"], frame["MU"]
+    coefficient = frame["boundary_coefficient"]
+    frame["nu_critical"] = np.nan
+    valid_theory = (mu < 0) & (coefficient > 0) & np.isfinite(coefficient)
+    frame.loc[valid_theory, "nu_critical"] = -np.sqrt(
+        coefficient[valid_theory] * -mu[valid_theory]
+    )
+    frame["critical_ratio"] = np.nan
+    negative = (nu < 0) & (mu < 0)
+    frame.loc[negative, "critical_ratio"] = nu[negative] / frame.loc[negative, "nu_critical"]
+    if coordinates == "raw":
+        frame["phase_x"], frame["phase_y"] = nu / 1e-30, mu / 1e-37
+        titles = ("ν / 10⁻³⁰", "μ / 10⁻³⁷")
+    elif coordinates == "squared":
+        frame["phase_x"] = (nu / 1e-30) ** 2
+        frame["phase_y"] = -mu / 1e-37
+        frame.loc[~negative, ["phase_x", "phase_y"]] = np.nan
+        titles = ("ν² / 10⁻⁶⁰", "−μ / 10⁻³⁷")
+    elif coordinates == "normalized":
+        frame["phase_x"], frame["phase_y"] = frame["critical_ratio"], -mu / 1e-37
+        frame.loc[~negative, ["phase_x", "phase_y"]] = np.nan
+        titles = ("|ν| / |ν_c(μ)|", "−μ / 10⁻³⁷")
+    else:
+        raise ValueError("Unknown phase coordinates.")
+
+    def bounds(values):
+        unique = np.unique(values)
+        if len(unique) == 1:
+            half = max(abs(unique[0]) * 0.025, 0.025)
+            edges = np.array([unique[0] - half, unique[0] + half])
+        else:
+            mid = (unique[:-1] + unique[1:]) / 2
+            edges = np.r_[unique[0] - (mid[0] - unique[0]),
+                          mid, unique[-1] + (unique[-1] - mid[-1])]
+        index = np.searchsorted(unique, values)
+        return edges[index], edges[index + 1]
+
+    valid = np.isfinite(frame[["phase_x", "phase_y"]]).all(axis=1)
+    for column in ("x_low", "x_high", "y_low", "y_high"):
+        frame[column] = np.nan
+    if valid.any():
+        frame.loc[valid, "y_low"], frame.loc[valid, "y_high"] = bounds(frame.loc[valid, "phase_y"])
+        # ν values depend on μ in this sweep; compute x edges within each row.
+        for _, group in frame[valid].groupby("phase_y"):
+            # Round only for cell geometry: equal prescribed factors can differ
+            # at floating point precision after normalization. IDs stay exact.
+            values = group["phase_x"].to_numpy()
+            if coordinates == "normalized":
+                values = np.round(values, 12)
+            low, high = bounds(values)
+            frame.loc[group.index, "x_low"] = low
+            frame.loc[group.index, "x_high"] = high
+    return frame, titles
 
 
 def demo_sweep():

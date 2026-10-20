@@ -1,11 +1,12 @@
 """Analytic checks of the distinct raw-field and paired-norm measurements."""
 
 import numpy as np
+import pandas as pd
 import pytest
 from scipy.fft import idct
 
 from red_patterns.dct_dispersion import demo_pair
-from red_patterns.finite_time_stability import analyze_window, prepare_pair
+from red_patterns.finite_time_stability import analyze_window, demo_sweep, phase_coordinates, prepare_pair
 
 
 def test_fastest_raw_mode_wavelength_and_mixed_norm_endpoint_rate():
@@ -98,3 +99,43 @@ def test_mismatched_time_and_dynamics_and_invalid_selections_rejected():
         analyze_window(data, 6, 6, 1, 9)
     with pytest.raises(ValueError, match="saved times"):
         analyze_window(data, 0, 6.01, 1, 9)
+
+
+def test_saved_continuum_boundary_and_normalized_sweep_factors():
+    pairs, prepared = demo_sweep()
+    summary = pd.DataFrame([
+        dict(pair, boundary_coefficient=prepared[pair["run_id"]]["boundary_coefficient"])
+        for pair in pairs
+    ])
+    coefficient = 4 * 2e-5 * (30 / 0.07) / (7.4e23 * 0.03)
+    np.testing.assert_allclose(summary["boundary_coefficient"], coefficient, rtol=1e-12, atol=0)
+    frame, _ = phase_coordinates(summary, "normalized")
+    np.testing.assert_allclose(frame["phase_x"], np.tile([0.8, 1, 1.2, 1.5], 3))
+    assert (frame["x_low"] < frame["phase_x"]).all()
+    assert (frame["phase_x"] < frame["x_high"]).all()
+    assert (frame["y_low"] < frame["phase_y"]).all()
+    assert (frame["phase_y"] < frame["y_high"]).all()
+    squared, _ = phase_coordinates(summary, "squared")
+    boundary_rows = np.isclose(frame["phase_x"], 1)
+    np.testing.assert_allclose(
+        squared.loc[boundary_rows, "phase_x"],
+        coefficient * 1e23 * squared.loc[boundary_rows, "phase_y"],
+    )
+    np.testing.assert_array_equal(frame["run_id"], summary["run_id"])
+
+
+def test_transforms_do_not_fold_wrong_signs_or_invent_missing_metadata():
+    frame = pd.DataFrame({
+        "NU": [-1e-30, 1e-30, -1e-30, -1e-30],
+        "MU": [-4e-37, -4e-37, 4e-37, -4e-37],
+        "boundary_coefficient": [1e-24, 1e-24, 1e-24, np.nan],
+    })
+    normalized, _ = phase_coordinates(frame, "normalized")
+    assert np.isfinite(normalized.loc[0, "phase_x"])
+    assert normalized.loc[1:, "phase_x"].isna().all()
+    squared, _ = phase_coordinates(frame, "squared")
+    assert squared.loc[[1, 2], "phase_x"].isna().all()
+    assert squared.loc[3, "phase_x"] == 1
+    raw, _ = phase_coordinates(frame, "raw")
+    np.testing.assert_allclose(raw["phase_x"], [-1, 1, -1, -1])
+    assert np.isfinite(raw[["x_low", "x_high", "y_low", "y_high"]]).all().all()

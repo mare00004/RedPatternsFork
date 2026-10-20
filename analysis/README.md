@@ -55,6 +55,21 @@ identical perturbed/reference saved-time and spatial grids; no interpolation is
 performed. Missing or incompatible pairs remain in the availability table.
 HDF5 loading and DCT computation are cached between slider changes.
 
+Click a cell in either Altair heatmap to select a ν, μ pair and highlight it in
+both maps; double-click to clear the selection. The run selector lists matching
+seeds when a cell contains multiple runs. Grey cells are unresolved or unavailable;
+numeric cell edges lie halfway between samples within each row.
+The coordinate selector offers the original `(ν, μ)` view, `(ν², −μ)`, and
+the default `(|ν|/|ν_c(μ)|, −μ)` view. For the saved Taylor model, optimizing
+over continuous wavenumber gives `ν_c² = C*(-μ)`, where
+`C = 4*alpha*(30/L)/(beta*mean_psi)`. This is a straight boundary in the squared
+view and the vertical line at 1 in the normalized view. Dashed lines show this
+continuum prediction using each loaded pair's saved parameters and initial
+reference mean. Numeric axis spacing preserves the transformed boundary shape.
+Transformed views restrict to ν < 0 and μ < 0; normalization also requires
+valid saved parameters with positive alpha, beta, and mean psi. Omitted rows
+remain in the table and CSV, which include the transformed coordinates.
+These predictions do not impose the selected discrete DCT mode band.
 Inspect individual pairs using the full-time logarithmic norm plot with window
 markers and endpoint secant, modal fit table, and selected-mode log-amplitude
 plot. Download the phase-map summary and selected-window norm as CSV. Refresh

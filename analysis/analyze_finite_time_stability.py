@@ -13,7 +13,7 @@ with app.setup:
     import pandas as pd
 
     from red_patterns.dct_dispersion import read_run
-    from red_patterns.finite_time_stability import analyze_window, demo_sweep, prepare_pair
+    from red_patterns.finite_time_stability import analyze_window, demo_sweep, phase_coordinates, prepare_pair
     from red_patterns.stability_sweep import ridge_pairs
     from red_patterns.sweep_catalog import selected_sweep_catalog, sweep_directory_picker
 
@@ -133,13 +133,68 @@ def _(modes, pairs, prepared, window):
 
 
 @app.cell
-def _(summary):
+def _():
+    coordinates = mo.ui.dropdown(
+        options={
+            "Normalized onset: |ν| / |ν_c(μ)| versus −μ": "normalized",
+            "Squared onset: ν² versus −μ": "squared",
+            "Original parameters: ν versus μ": "raw",
+        },
+        value="Normalized onset: |ν| / |ν_c(μ)| versus −μ",
+        label="Phase-space coordinates",
+    )
+    mo.vstack([coordinates, mo.md(r"""
+    For the saved Taylor model,
+    $\sigma(k)=-\alpha g-\beta\bar\psi\nu k^2+\beta\bar\psi\mu k^4$.
+    A fixed mode is neutral at
+    $\nu=-\alpha g/(\beta\bar\psi k^2)+\mu k^2$.
+    Maximizing over continuous $k>0$, for $\nu,\mu<0$, gives
+    $\nu_c^2=C(-\mu)$ with $C=4\alpha g/(\beta\bar\psi)$ and $g=30/L$.
+
+    Thus **ν² versus −μ has a straight predicted boundary** when C is fixed.
+    **|ν|/|ν_c| has its predicted boundary at 1**: values above 1 predict
+    instability. These are continuum predictions; the selected discrete DCT
+    band and finite-time norm can have different apparent boundaries.
+    """)])
+    return (coordinates,)
+
+
+@app.cell
+def _(coordinates, summary):
+    phase_data, axis_titles = phase_coordinates(summary, coordinates.value)
+    return axis_titles, phase_data
+
+
+@app.cell
+def _(axis_titles, coordinates, phase_data, summary):
+    _click = alt.selection_point(
+        name="phase_pair", fields=["nu_scaled", "mu_scaled"], toggle=False, clear="dblclick",
+    )
+    _visible = phase_data[np.isfinite(phase_data[["phase_x", "phase_y"]]).all(axis=1)]
+    _omitted = len(phase_data) - len(_visible)
+    _boundary_rows = []
+    for _coefficient, _group in phase_data[
+        (phase_data["boundary_coefficient"] > 0) & (phase_data["MU"] < 0)
+    ].groupby("boundary_coefficient"):
+        for _mu in np.linspace(_group["MU"].min(), _group["MU"].max(), 100):
+            _critical = -np.sqrt(_coefficient * -_mu)
+            if coordinates.value == "raw":
+                _x, _y = _critical / 1e-30, _mu / 1e-37
+            else:
+                _x, _y = (_critical / 1e-30) ** 2, -_mu / 1e-37
+            _boundary_rows.append(dict(
+                phase_x=_x, phase_y=_y, coefficient=f"{_coefficient:.12e}",
+            ))
+    _boundary_frame = pd.DataFrame(_boundary_rows)
+
     def phase_chart(metric, title, color_title, status):
-        _valid = summary[np.isfinite(summary[metric])]
-        _missing = summary[~np.isfinite(summary[metric])]
+        _valid = _visible[np.isfinite(_visible[metric])]
         _tooltips = [
             alt.Tooltip("run_id:N"), alt.Tooltip("reference_id:N"),
             alt.Tooltip("NU:Q", format=".6e"), alt.Tooltip("MU:Q", format=".6e"),
+            alt.Tooltip("phase_x:Q", title=axis_titles[0], format=".6g"),
+            alt.Tooltip("phase_y:Q", title=axis_titles[1], format=".6g"),
+            alt.Tooltip("critical_ratio:Q", title="|ν| / |ν_c|", format=".6g"),
             alt.Tooltip("seed:Q"), alt.Tooltip("epsilon:Q", format=".3e"),
             alt.Tooltip("start_s:Q"), alt.Tooltip("end_s:Q"),
             alt.Tooltip("mode_min:Q"), alt.Tooltip("mode_max:Q"),
@@ -150,31 +205,60 @@ def _(summary):
         if metric == "lambda_eff_s_inv":
             _limit = max(float(_valid[metric].abs().max()), 1e-12) if len(_valid) else 1.0
             _scale = alt.Scale(scheme="redblue", domain=[-_limit, _limit], domainMid=0, reverse=True)
-        _xy = dict(x=alt.X("nu_scaled:Q", title="ν / 10⁻³⁰", scale=alt.Scale(zero=False)),
-                   y=alt.Y("mu_scaled:Q", title="μ / 10⁻³⁷", scale=alt.Scale(zero=False)))
-        _points = alt.Chart(_valid).mark_circle(size=115, stroke="#333", strokeWidth=0.5).encode(
-            **_xy, color=alt.Color(metric + ":Q", title=color_title, scale=_scale), tooltip=_tooltips,
-        )
-        _unresolved = alt.Chart(_missing).mark_point(shape="cross", size=100, color="#777").encode(
-            **_xy, tooltip=_tooltips,
-        )
-        return (_points + _unresolved).properties(width=470, height=360, title=title).interactive()
+        _cells = alt.Chart(_visible).mark_rect(stroke="#333", strokeWidth=0.5).encode(
+            x=alt.X("x_low:Q", title=axis_titles[0], scale=alt.Scale(zero=False)),
+            x2="x_high:Q",
+            y=alt.Y("y_low:Q", title=axis_titles[1], scale=alt.Scale(zero=False)),
+            y2="y_high:Q",
+            color=alt.condition(
+                alt.expr.isValid(alt.datum[metric]),
+                alt.Color(metric + ":Q", title=color_title, scale=_scale),
+                alt.value("#bdbdbd"),
+            ),
+            opacity=alt.condition(_click, alt.value(1.0), alt.value(0.35)),
+            tooltip=_tooltips,
+        ).properties(name=metric)
+        if coordinates.value == "normalized":
+            _boundary = alt.Chart(pd.DataFrame({"onset": [1.0]})).mark_rule(
+                color="black", strokeDash=[6, 4], strokeWidth=2,
+            ).encode(x="onset:Q")
+            _chart = _cells + _boundary
+        elif not _boundary_frame.empty:
+            _boundary = alt.Chart(_boundary_frame).mark_line(
+                color="black", strokeDash=[6, 4], strokeWidth=2,
+            ).encode(x="phase_x:Q", y="phase_y:Q", detail="coefficient:N",
+                     order="phase_y:Q", tooltip=alt.Tooltip("coefficient:N", title="C"))
+            _chart = _cells + _boundary
+        else:
+            _chart = _cells
+        return _chart.properties(width=470, height=360, title=title)
 
-    wavelength_chart = mo.ui.altair_chart(
-        phase_chart("fastest_wavelength_cm", "Fastest growing wavelength: perturbed ψ", "Wavelength [cm]", "wavelength_status"),
-        chart_selection=False,
+    # A single shared selection lets either heatmap drive the same inspector
+    # and highlights the corresponding cell in both maps.
+    _heatmaps = alt.hconcat(
+        phase_chart("fastest_wavelength_cm", "Fastest growing wavelength: perturbed ψ",
+                    "Wavelength [cm]", "wavelength_status"),
+        phase_chart("lambda_eff_s_inv", "Paired finite-time effective growth",
+                    "λ_eff [s⁻¹]", "norm_status"),
+        params=[alt.TopLevelSelectionParameter(
+            **_click.param.to_dict(), views=["fastest_wavelength_cm", "lambda_eff_s_inv"],
+        )],
+    ).resolve_scale(color="independent")
+    phase_heatmap = mo.ui.altair_chart(
+        _heatmaps, chart_selection=False, legend_selection=False,
     )
-    norm_chart = mo.ui.altair_chart(
-        phase_chart("lambda_eff_s_inv", "Paired finite-time effective growth", "λ_eff [s⁻¹]", "norm_status"),
-        chart_selection=False,
-    )
-    mo.vstack([mo.hstack([wavelength_chart, norm_chart], wrap=True),
-               mo.md("**Grey crosses:** unavailable or unresolved estimates. Hover for details; scroll to zoom. "
+    mo.vstack([phase_heatmap,
+               mo.md("**Click a cell in either heatmap** to inspect that ν, μ pair below; "
+                     "double-click to clear the selection. **Grey cells:** unavailable or unresolved estimates. "
+                     "**Dashed black:** continuum prediction. Axes use numeric spacing; cell edges lie "
+                     "halfway between samples in each row and do not imply interpolated measurements. "
+                     f"**{_omitted} rows omitted** from this view because its coordinates are undefined "
+                     "(nonnegative ν/μ in transformed views, or unavailable normalization metadata). "
                      "The rate color scale is centered on zero: red = growth, blue = decay. "
-                     "Multiple seeds at the same coordinates overlap; use the run selector and table below."),
-               mo.ui.table(summary, selection=None, page_size=10),
-               mo.download(summary.to_csv(index=False).encode(), filename="finite_time_stability.csv")])
-    return
+                     "Multiple seeds at the same coordinates overlap; the selector below lists the runs in the clicked cell."),
+               mo.ui.table(phase_data, selection=None, page_size=10),
+               mo.download(phase_data.to_csv(index=False).encode(), filename="finite_time_stability.csv")])
+    return (phase_heatmap,)
 
 
 @app.cell(hide_code=True)
@@ -194,12 +278,19 @@ def _():
 
 
 @app.cell
-def _(pairs, results):
+def _(phase_heatmap, results, summary):
+    _selected_rows = phase_heatmap.apply_selection(summary)
+    _available = _selected_rows[_selected_rows["run_id"].isin(results)]
+    mo.stop(_available.empty, mo.callout(
+        "This cell has no loaded pair to inspect. See its availability status above, "
+        "or click another heatmap cell.", kind="warn"))
     _options = {
         f"{_p['run_id']} · ν={_p['NU']:.6e}, μ={_p['MU']:.6e} · seed={_p['seed']}": _p["run_id"]
-        for _p in pairs if _p["run_id"] in results
+        for _p in _available.to_dict("records")
     }
-    inspect_pair = mo.ui.dropdown(options=_options, value=next(iter(_options)), label="Inspect a pair")
+    inspect_pair = mo.ui.dropdown(
+        options=_options, value=next(iter(_options)), label="Inspect a run (filtered by heatmap selection)",
+    )
     inspect_pair
     return (inspect_pair,)
 
