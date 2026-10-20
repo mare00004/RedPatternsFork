@@ -71,7 +71,22 @@ reference mean. Numeric axis spacing preserves the transformed boundary shape.
 Transformed views restrict to ν < 0 and μ < 0; normalization also requires
 valid saved parameters with positive alpha, beta, and mean psi. Omitted rows
 remain in the table and CSV, which include the transformed coordinates.
-These predictions do not impose the selected discrete DCT mode band.
+The dashed black curve is this unrestricted continuum onset. A solid black
+curve additionally shows the onset among the selected positive DCT modes:
+`nu_onset = max_m(mu*k_m^2 - C/(4*k_m^2))`, with `k_m = pi*m/L`.
+Growth is predicted for ν below this threshold. The two curves can nearly
+coincide when the band resolves the continuous optimum.
+
+Use **Predicted fastest-wavelength contours** to choose labelled orange curves
+of `nu = 2*mu*(2*pi/wavelength)^2`. These describe the continuous optimum
+`k_star = sqrt(nu/(2*mu))`; only growing segments with this optimum inside
+the selected band are drawn. Requested contours with no visible growing segment
+are listed below the maps. Tooltips and the CSV report the exact fastest
+**selected discrete mode**, its wavelength, growing-mode count, and maximum
+predicted rate. The per-pair readout compares measured and predicted wavelengths,
+and the modal table includes each mode's theoretical rate.
+These predictions sample the continuum dispersion at DCT wavenumbers and do not
+include finite-difference stencil corrections.
 Inspect individual pairs using the full-time logarithmic norm plot with window
 markers and endpoint secant, modal fit table, and selected-mode log-amplitude
 plot. Download the phase-map summary and selected-window norm as CSV. Refresh

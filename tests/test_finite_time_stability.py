@@ -6,7 +6,10 @@ import pytest
 from scipy.fft import idct
 
 from red_patterns.dct_dispersion import demo_pair
-from red_patterns.finite_time_stability import analyze_window, demo_sweep, phase_coordinates, prepare_pair
+from red_patterns.finite_time_stability import (
+    analyze_window, demo_sweep, phase_coordinates, prepare_pair,
+    predict_selected_modes, theory_overlays,
+)
 
 
 def test_fastest_raw_mode_wavelength_and_mixed_norm_endpoint_rate():
@@ -139,3 +142,84 @@ def test_transforms_do_not_fold_wrong_signs_or_invent_missing_metadata():
     raw, _ = phase_coordinates(frame, "raw")
     np.testing.assert_allclose(raw["phase_x"], [-1, 1, -1, -1])
     assert np.isfinite(raw[["x_low", "x_high", "y_low", "y_high"]]).all().all()
+
+
+def test_discrete_onset_is_neutral_and_restricting_modes_changes_prediction():
+    pairs, prepared = demo_sweep()
+    pair = pairs[6]  # μ=-4.5e-37, |ν|=1.2 |ν_c|.
+    data = prepared[pair["run_id"]]
+    arguments = (pair["NU"], pair["MU"], data["length"], data["boundary_coefficient"])
+    broad = predict_selected_modes(*arguments, 1, 100, mobility=data["theory_mobility"])
+    narrow = predict_selected_modes(*arguments, 14, 14, mobility=data["theory_mobility"])
+    assert broad["growing_modes"] > 0
+    assert narrow["growing_modes"] == 0
+    assert np.isnan(narrow["fastest_wavelength_cm"])
+    assert narrow["onset_nu"] < broad["onset_nu"]
+    continuous_onset = -np.sqrt(data["boundary_coefficient"] * -pair["MU"])
+    assert broad["onset_nu"] <= continuous_onset
+    k = np.pi * 14 / data["length"]
+    assert narrow["onset_nu"] == pytest.approx(
+        pair["MU"] * k**2 - data["boundary_coefficient"] / (4 * k**2), rel=1e-12, abs=0,
+    )
+    neutral = predict_selected_modes(
+        narrow["onset_nu"], *arguments[1:], 14, 14, mobility=data["theory_mobility"],
+    )
+    assert neutral["max_rate"] == 0
+    assert neutral["growing_modes"] == 0
+    growing = predict_selected_modes(
+        1.01 * narrow["onset_nu"], *arguments[1:], 14, 14, mobility=data["theory_mobility"],
+    )
+    assert growing["fastest_mode"] == 14
+    assert growing["fastest_wavelength_cm"] == pytest.approx(1.0)
+
+
+def test_selected_mode_predictions_match_analytic_synthetic_growth_rates():
+    pairs, prepared = demo_sweep()
+    for pair in pairs:
+        data = prepared[pair["run_id"]]
+        result = analyze_window(data, 0, 5, 1, 100)
+        table = result["table"]
+        k = np.pi * table["mode"].to_numpy() / data["length"]
+        expected = (-2e-5 * 30 / data["length"]
+                    - 7.4e23 * .03 * pair["NU"] * k**2
+                    + 7.4e23 * .03 * pair["MU"] * k**4)
+        np.testing.assert_allclose(table["theory_rate_s_inv"], expected, atol=1e-12)
+        summary = result["summary"]
+        if summary["theory_growing_modes"]:
+            assert summary["theory_fastest_mode"] == summary["fastest_mode"]
+            assert summary["theory_fastest_wavelength_cm"] == pytest.approx(summary["fastest_wavelength_cm"])
+        else:
+            assert np.isnan(summary["theory_fastest_wavelength_cm"])
+    # A selection containing only the mean has no wavelength or onset prediction.
+    assert np.isnan(predict_selected_modes(-1e-30, -4e-37, .07, 1e-24, 0, 0)["onset_nu"])
+
+
+@pytest.mark.parametrize("coordinates", ["raw", "squared", "normalized"])
+def test_overlay_curves_obey_onset_and_wavelength_equations_in_every_view(coordinates):
+    pairs, prepared = demo_sweep()
+    summary = pd.DataFrame([
+        dict(pair, boundary_coefficient=prepared[pair["run_id"]]["boundary_coefficient"],
+             dct_length_m=prepared[pair["run_id"]]["length"])
+        for pair in pairs
+    ])
+    frame, _ = phase_coordinates(summary, coordinates)
+    curves = theory_overlays(frame, coordinates, 1, 100, [.3, .5, .7, 1.0])
+    assert set(curves["kind"]) == {"onset", "wavelength"}
+    assert {"Continuum onset", "Selected-mode onset"} <= set(curves["curve"])
+    coefficient = curves["boundary_coefficient"].to_numpy()
+    mu = curves["phase_y"].to_numpy() * (1e-37 if coordinates == "raw" else -1e-37)
+    nu = (curves["phase_x"].to_numpy() * 1e-30 if coordinates == "raw" else
+          -np.sqrt(curves["phase_x"].to_numpy()) * 1e-30 if coordinates == "squared" else
+          -curves["phase_x"].to_numpy() * np.sqrt(coefficient * -mu))
+    modes = np.arange(1, 101)
+    k2 = (np.pi * modes / .07) ** 2
+    selected_onset = np.max(mu[:, None] * k2 - coefficient[:, None] / (4 * k2), axis=1)
+    mask = curves["curve"] == "Selected-mode onset"
+    np.testing.assert_allclose(nu[mask], selected_onset[mask], rtol=1e-12, atol=0)
+    mask = curves["kind"] == "wavelength"
+    k = 2 * np.pi / (curves.loc[mask, "wavelength_cm"].to_numpy() / 100)
+    np.testing.assert_allclose(nu[mask], 2 * mu[mask] * k**2, rtol=1e-12, atol=0)
+    assert np.all(nu[mask] < selected_onset[mask])
+    assert curves["phase_x"].between(frame["x_low"].min(), frame["x_high"].max()).all()
+    # No 1 cm or 0.3 cm growing contour is predicted inside this synthetic view.
+    assert not set(curves.loc[mask, "wavelength_cm"]) & {.3, 1.0}

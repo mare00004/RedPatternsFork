@@ -39,6 +39,9 @@ def prepare_pair(perturbed, reference):
         raw=dct(field, type=2, norm="ortho", axis=1),
         difference=dct(field - base, type=2, norm="ortho", axis=1),
         length=length, boundary_coefficient=boundary_coefficient,
+        theory_mobility=beta * mean_psi,
+        theory_nu=float(perturbed["variant"].get("NU", np.nan)),
+        theory_mu=float(perturbed["variant"].get("MU", np.nan)),
         floor=100 * np.finfo(float).eps * np.sqrt(n) * scale,
         reference_drift=drift, notes=notes,
     )
@@ -97,6 +100,13 @@ def analyze_window(prepared, start, end, mode_min, mode_max):
     else:
         rate = float((np.log(distance[-1]) - np.log(distance[0])) / (time[-1] - time[0]))
         norm_status = "net growth" if rate > 0 else "net decay" if rate < 0 else "neutral"
+    prediction = predict_selected_modes(
+        prepared["theory_nu"], prepared["theory_mu"], prepared["length"],
+        prepared["boundary_coefficient"], mode_min, mode_max,
+        mobility=prepared["theory_mobility"],
+    )
+    table["theory_rate_s_inv"] = np.nan
+    table.loc[table["mode"] > 0, "theory_rate_s_inv"] = prediction["rates"]
     summary = dict(
         start_s=float(time[0]), end_s=float(time[-1]), samples=len(time),
         mode_min=int(mode_min), mode_max=int(mode_max),
@@ -109,9 +119,102 @@ def analyze_window(prepared, start, end, mode_min, mode_max):
         lambda_eff_s_inv=rate, norm_status=norm_status,
         reference_drift=prepared["reference_drift"],
         boundary_coefficient=prepared["boundary_coefficient"],
+        dct_length_m=prepared["length"],
+        theory_onset_nu=prediction["onset_nu"],
+        theory_max_rate_s_inv=prediction["max_rate"],
+        theory_growing_modes=prediction["growing_modes"],
+        theory_fastest_mode=prediction["fastest_mode"],
+        theory_fastest_wavelength_cm=prediction["fastest_wavelength_cm"],
     )
     return dict(summary=summary, table=table, fits=fits, time=time, modes=modes,
                 raw=raw, difference=difference, distance=distance, norm_floor=norm_floor)
+
+
+def predict_selected_modes(nu, mu, length, coefficient, mode_min, mode_max, *, mobility=1.0):
+    """Evaluate the continuum dispersion on selected positive DCT wavenumbers.
+
+    C = 4 alpha g / (beta mean_psi), so the reduced dispersion is
+    -C/4 - nu*k² + mu*k⁴. The first growing mode appears as nu drops below
+    max_m(mu*k_m² - C/(4*k_m²)). This samples the continuum model, rather
+    than computing eigenvalues of the simulator's finite-difference operator.
+    """
+    modes = np.arange(max(1, mode_min), mode_max + 1)
+    result = dict(rates=np.full(len(modes), np.nan), onset_nu=np.nan,
+                  max_rate=np.nan, growing_modes=np.nan,
+                  fastest_mode=np.nan, fastest_wavelength_cm=np.nan)
+    if (not len(modes) or not np.isfinite([nu, mu, length, coefficient, mobility]).all()
+            or length <= 0 or coefficient <= 0 or mobility <= 0 or mu >= 0):
+        return result
+    k2 = (np.pi * modes / length) ** 2
+    reduced = -coefficient / 4 - nu * k2 + mu * k2**2
+    precision = 64 * np.finfo(float).eps * (coefficient / 4 + abs(nu) * k2 + abs(mu) * k2**2)
+    reduced[np.abs(reduced) <= precision] = 0
+    rates = mobility * reduced
+    fastest = int(np.argmax(rates))
+    growing = int(np.count_nonzero(rates > 0))
+    result.update(rates=rates, onset_nu=float(np.max(mu * k2 - coefficient / (4 * k2))),
+                  max_rate=float(rates[fastest]), growing_modes=growing)
+    if growing:
+        result.update(fastest_mode=int(modes[fastest]),
+                      fastest_wavelength_cm=float(200 * length / modes[fastest]))
+    return result
+
+
+def theory_overlays(phase_data, coordinates, mode_min, mode_max, wavelengths_cm):
+    """Sample onset curves and continuum fastest-wavelength isolines in view.
+
+    Wavelength contours use nu = 2 mu (2 pi / wavelength)². Retain only
+    growing segments with k* inside the selected positive mode band. Physical
+    configurations with different C or lengths remain separate curves.
+    """
+    columns = ["phase_x", "phase_y", "curve", "kind", "curve_id", "point_order",
+               "wavelength_cm", "dct_length_m", "boundary_coefficient"]
+    visible = phase_data[np.isfinite(phase_data[["x_low", "x_high", "y_low", "y_high"]]).all(axis=1)]
+    if visible.empty:
+        return pd.DataFrame(columns=columns)
+    x_low, x_high = visible["x_low"].min(), visible["x_high"].max()
+    y_low, y_high = visible["y_low"].min(), visible["y_high"].max()
+    mu_low, mu_high = ((y_low * 1e-37, y_high * 1e-37) if coordinates == "raw"
+                       else (-y_high * 1e-37, -y_low * 1e-37))
+    if mu_low >= 0:
+        return pd.DataFrame(columns=columns)
+    mus = np.linspace(mu_low, min(mu_high, -np.finfo(float).tiny), 401)
+    valid = visible[(visible["boundary_coefficient"] > 0) & (visible["dct_length_m"] > 0)]
+    rows = []
+    for group_index, ((coefficient, length), _) in enumerate(valid.groupby(["boundary_coefficient", "dct_length_m"])):
+        critical = -np.sqrt(coefficient * -mus)
+        modes = np.arange(max(1, mode_min), mode_max + 1)
+        k2 = (np.pi * modes / length) ** 2
+        discrete = (np.max(mus[:, None] * k2 - coefficient / (4 * k2), axis=1)
+                    if len(modes) else None)
+        curves = [("Continuum onset", "onset", critical, np.nan)]
+        if discrete is not None:
+            curves.append(("Selected-mode onset", "onset", discrete, np.nan))
+        for wavelength in wavelengths_cm:
+            k = 2 * np.pi / (wavelength / 100)
+            if discrete is None or not k2[0] <= k**2 <= k2[-1]:
+                continue
+            nus = 2 * mus * k**2
+            # A continuous optimum can lie inside the band while every sampled
+            # mode still decays, particularly near onset for a narrow band.
+            nus = np.where(nus < discrete, nus, np.nan)
+            curves.append((f"ℓ* = {wavelength:g} cm", "wavelength", nus, float(wavelength)))
+        for curve, kind, nus, wavelength in curves:
+            xs = (nus / 1e-30 if coordinates == "raw" else (nus / 1e-30) ** 2
+                  if coordinates == "squared" else nus / critical)
+            ys = mus / 1e-37 if coordinates == "raw" else -mus / 1e-37
+            # Preserve gaps as separate segments so no line bridges excluded
+            # stable regions or excursions outside the displayed domain.
+            keep = np.isfinite(xs) & (xs >= x_low) & (xs <= x_high)
+            segment = np.cumsum(np.r_[True, keep[1:] != keep[:-1]])
+            for index in np.flatnonzero(keep):
+                rows.append(dict(
+                    phase_x=float(xs[index]), phase_y=float(ys[index]),
+                    curve=curve, kind=kind, curve_id=f"{group_index}:{curve}:{segment[index]}",
+                    point_order=int(index), wavelength_cm=wavelength,
+                    dct_length_m=float(length), boundary_coefficient=float(coefficient),
+                ))
+    return pd.DataFrame(rows, columns=columns)
 
 
 def phase_coordinates(summary, coordinates):

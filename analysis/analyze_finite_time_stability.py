@@ -1,7 +1,7 @@
 import marimo
 
 __generated_with = "0.23.16"
-app = marimo.App(width="wide")
+app = marimo.App(width="full")
 
 
 with app.setup:
@@ -16,7 +16,9 @@ with app.setup:
 
     from red_patterns import get_rbc_cmap
     from red_patterns.dct_dispersion import read_run
-    from red_patterns.finite_time_stability import analyze_window, demo_sweep, phase_coordinates, prepare_pair
+    from red_patterns.finite_time_stability import (
+        analyze_window, demo_sweep, phase_coordinates, prepare_pair, theory_overlays,
+    )
     from red_patterns.stability_sweep import ridge_pairs
     from red_patterns.sweep_catalog import selected_sweep_catalog, sweep_directory_picker
 
@@ -169,35 +171,66 @@ def _(coordinates, summary):
 
 
 @app.cell
-def _(axis_titles, coordinates, phase_data, summary):
+def _():
+    contour_levels = mo.ui.multiselect(
+        options={f"{_value:g} cm": _value for _value in
+                 [0.1, 0.14, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 1.0, 1.4, 2.0, 3.0, 5.0, 10.0, 14.0]},
+        value=["0.3 cm", "0.5 cm", "0.7 cm", "1 cm"],
+        label="Predicted fastest-wavelength contours",
+    )
+    contour_levels
+    return (contour_levels,)
+
+
+@app.cell
+def _(contour_levels, coordinates, modes, phase_data):
+    overlay_data = theory_overlays(
+        phase_data, coordinates.value, *map(int, modes.value), contour_levels.value,
+    )
+    return (overlay_data,)
+
+
+@app.cell
+def _(axis_titles, contour_levels, overlay_data, phase_data):
     _click = alt.selection_point(
         name="phase_pair", fields=["nu_scaled", "mu_scaled"], toggle=False, clear="dblclick",
     )
     _visible = phase_data[np.isfinite(phase_data[["phase_x", "phase_y"]]).all(axis=1)]
     _omitted = len(phase_data) - len(_visible)
-    _boundary_rows = []
-    for _coefficient, _group in phase_data[
-        (phase_data["boundary_coefficient"] > 0) & (phase_data["MU"] < 0)
-    ].groupby("boundary_coefficient"):
-        for _mu in np.linspace(_group["MU"].min(), _group["MU"].max(), 100):
-            _critical = -np.sqrt(_coefficient * -_mu)
-            if coordinates.value == "raw":
-                _x, _y = _critical / 1e-30, _mu / 1e-37
-            else:
-                _x, _y = (_critical / 1e-30) ** 2, -_mu / 1e-37
-            _boundary_rows.append(dict(
-                phase_x=_x, phase_y=_y, coefficient=f"{_coefficient:.12e}",
-            ))
-    _boundary_frame = pd.DataFrame(_boundary_rows)
+    _onsets = overlay_data[overlay_data["kind"] == "onset"]
+    _contours = overlay_data[overlay_data["kind"] == "wavelength"]
+    _labels = _contours[
+        _contours.groupby("curve_id").cumcount()
+        == _contours.groupby("curve_id")["curve"].transform("size") // 2
+    ]
+    _shown_levels = set(_contours["wavelength_cm"].dropna())
+    _hidden_levels = [f"{_level:g} cm" for _level in contour_levels.value if _level not in _shown_levels]
+    _x_scale = alt.Scale(zero=False)
+    _y_scale = alt.Scale(zero=False)
+    if not _visible.empty:
+        _x_scale = alt.Scale(domain=[float(_visible["x_low"].min()), float(_visible["x_high"].max())], nice=False)
+        _y_scale = alt.Scale(domain=[float(_visible["y_low"].min()), float(_visible["y_high"].max())], nice=False)
 
     def phase_chart(metric, title, color_title, status):
         _valid = _visible[np.isfinite(_visible[metric])]
+        # Vega's invalid-color handling can override a conditional fallback.
+        # Give only the color scale a finite placeholder inside its valid range;
+        # unresolved measurements retain NaN in tables/tooltips and draw grey.
+        _plot_data = _visible.assign(
+            measurement_available=np.isfinite(_visible[metric]),
+            render_value=_visible[metric].fillna(float(_valid[metric].min()) if len(_valid) else 0.0),
+        )
         _tooltips = [
             alt.Tooltip("run_id:N"), alt.Tooltip("reference_id:N"),
             alt.Tooltip("NU:Q", format=".6e"), alt.Tooltip("MU:Q", format=".6e"),
             alt.Tooltip("phase_x:Q", title=axis_titles[0], format=".6g"),
             alt.Tooltip("phase_y:Q", title=axis_titles[1], format=".6g"),
             alt.Tooltip("critical_ratio:Q", title="|ν| / |ν_c|", format=".6g"),
+            alt.Tooltip("theory_onset_nu:Q", title="Selected-mode onset ν", format=".6e"),
+            alt.Tooltip("theory_growing_modes:Q", title="Predicted growing modes"),
+            alt.Tooltip("theory_fastest_mode:Q", title="Predicted fastest mode"),
+            alt.Tooltip("theory_fastest_wavelength_cm:Q", title="Predicted fastest wavelength [cm]", format=".5g"),
+            alt.Tooltip("theory_max_rate_s_inv:Q", title="Predicted maximum rate [s⁻¹]", format=".5g"),
             alt.Tooltip("seed:Q"), alt.Tooltip("epsilon:Q", format=".3e"),
             alt.Tooltip("start_s:Q"), alt.Tooltip("end_s:Q"),
             alt.Tooltip("mode_min:Q"), alt.Tooltip("mode_max:Q"),
@@ -208,34 +241,44 @@ def _(axis_titles, coordinates, phase_data, summary):
         if metric == "lambda_eff_s_inv":
             _limit = max(float(_valid[metric].abs().max()), 1e-12) if len(_valid) else 1.0
             _scale = alt.Scale(scheme="redblue", domain=[-_limit, _limit], domainMid=0, reverse=True)
-        _cells = alt.Chart(_visible).mark_rect(
+        _cells = alt.Chart(_plot_data).mark_rect(
             stroke="#333", strokeWidth=0.5, invalid=None,
         ).encode(
-            x=alt.X("x_low:Q", title=axis_titles[0], scale=alt.Scale(zero=False)),
+            x=alt.X("x_low:Q", title=axis_titles[0], scale=_x_scale),
             x2="x_high:Q",
-            y=alt.Y("y_low:Q", title=axis_titles[1], scale=alt.Scale(zero=False)),
+            y=alt.Y("y_low:Q", title=axis_titles[1], scale=_y_scale),
             y2="y_high:Q",
             color=alt.condition(
-                alt.expr.isValid(alt.datum[metric]),
-                alt.Color(metric + ":Q", title=color_title, scale=_scale),
+                alt.datum.measurement_available,
+                alt.Color("render_value:Q", title=color_title, scale=_scale),
                 alt.value("#bdbdbd"),
             ),
             opacity=alt.condition(_click, alt.value(1.0), alt.value(0.35)),
             tooltip=_tooltips,
         ).properties(name=metric)
-        if coordinates.value == "normalized":
-            _boundary = alt.Chart(pd.DataFrame({"onset": [1.0]})).mark_rule(
-                color="black", strokeDash=[6, 4], strokeWidth=2,
-            ).encode(x="onset:Q")
-            _chart = _cells + _boundary
-        elif not _boundary_frame.empty:
-            _boundary = alt.Chart(_boundary_frame).mark_line(
-                color="black", strokeDash=[6, 4], strokeWidth=2,
-            ).encode(x="phase_x:Q", y="phase_y:Q", detail="coefficient:N",
-                     order="phase_y:Q", tooltip=alt.Tooltip("coefficient:N", title="C"))
-            _chart = _cells + _boundary
-        else:
-            _chart = _cells
+        _chart = _cells
+        if not _onsets.empty:
+            _boundary = alt.Chart(_onsets).mark_line(
+                color="black", strokeWidth=2, clip=True,
+            ).encode(
+                x="phase_x:Q", y="phase_y:Q", detail="curve_id:N", order="point_order:Q",
+                strokeDash=alt.StrokeDash("curve:N", title="Predicted onset", scale=alt.Scale(
+                    domain=["Continuum onset", "Selected-mode onset"], range=[[6, 4], [1, 0]],
+                )),
+                tooltip=[alt.Tooltip("curve:N"), alt.Tooltip("dct_length_m:Q", title="L [m]"),
+                         alt.Tooltip("boundary_coefficient:Q", title="C", format=".5e")],
+            )
+            _chart = _chart + _boundary
+        if not _contours.empty:
+            _iso = alt.Chart(_contours).mark_line(
+                color="#f97316", strokeWidth=2, strokeDash=[3, 3], clip=True,
+            ).encode(x="phase_x:Q", y="phase_y:Q", detail="curve_id:N", order="point_order:Q",
+                     tooltip=[alt.Tooltip("curve:N"), alt.Tooltip("dct_length_m:Q", title="L [m]")])
+            _text = alt.Chart(_labels).mark_text(
+                color="#f97316", fontWeight="bold", fontSize=11,
+                align="right", baseline="bottom", dx=-4, dy=-4, clip=True,
+            ).encode(x="phase_x:Q", y="phase_y:Q", text="curve:N")
+            _chart = _chart + _iso + _text
         return _chart.properties(width=470, height=360, title=title)
 
     # Compose first: Altair renames unit views when concatenating layers.
@@ -260,12 +303,17 @@ def _(axis_titles, coordinates, phase_data, summary):
     mo.vstack([phase_heatmap,
                mo.md("**Click a cell in either heatmap** to inspect that ν, μ pair below; "
                      "double-click to clear the selection. **Grey cells:** unavailable or unresolved estimates. "
-                     "**Dashed black:** continuum prediction. Axes use numeric spacing; cell edges lie "
+                     "**Dashed black:** continuum onset. **Solid black:** onset among selected positive DCT modes. "
+                     "**Orange dotted:** labelled continuum fastest-wavelength contours, shown where the "
+                     "optimum is inside the selected band and at least one selected mode grows. "
+                     "The two onset curves can overlap closely. Axes use numeric spacing; cell edges lie "
                      "halfway between samples in each row and do not imply interpolated measurements. "
                      f"**{_omitted} rows omitted** from this view because its coordinates are undefined "
                      "(nonnegative ν/μ in transformed views, or unavailable normalization metadata). "
                      "The rate color scale is centered on zero: red = growth, blue = decay. "
                      "Multiple seeds at the same coordinates overlap; the selector below lists the runs in the clicked cell."),
+               mo.md("Contours with no growing segment inside this view: " + ", ".join(_hidden_levels))
+               if _hidden_levels else mo.md("All requested wavelength contours have a growing segment in this view."),
                mo.ui.table(phase_data, selection=None, page_size=10),
                mo.download(phase_data.to_csv(index=False).encode(), filename="finite_time_stability.csv")])
     return (phase_heatmap,)
@@ -367,6 +415,16 @@ def _(prepared, results, selected_run_id):
     )
     _rules = alt.Chart(_bounds).mark_rule(color="firebrick", strokeDash=[5, 3]).encode(x="time_s:Q")
     _s = selected["summary"]
+    _measured = (
+        f"mode {_s['fastest_mode']:g}, wavelength {_s['fastest_wavelength_cm']:.5g} cm"
+        if np.isfinite(_s["fastest_mode"]) else "no resolved growing mode"
+    )
+    _predicted = (
+        f"mode {_s['theory_fastest_mode']:g}, wavelength {_s['theory_fastest_wavelength_cm']:.5g} cm"
+        if np.isfinite(_s["theory_fastest_mode"])
+        else "no growing selected mode" if np.isfinite(_s["theory_max_rate_s_inv"])
+        else "unavailable for this run"
+    )
     _endpoints = pd.DataFrame({"time_s": selected["time"][[0, -1]], "D": selected["distance"][[0, -1]]})
     _endpoints = _endpoints[_endpoints["D"] > 0]
     _secant = alt.Chart(_endpoints).mark_line(color="firebrick", point=True).encode(x="time_s:Q", y="D:Q")
@@ -374,6 +432,11 @@ def _(prepared, results, selected_run_id):
         mo.md(f"**{selected_run_id}: {_s['norm_status']}**, λ_eff = "
               f"**{_s['lambda_eff_s_inv']:.6g} s⁻¹**. "
               f"D(start) = {_s['D_start']:.6e}, D(end) = {_s['D_end']:.6e}."),
+        mo.md(f"**Measured fastest:** {_measured}.  \n"
+              f"**Predicted fastest in the selected band:** {_predicted}.  \n"
+              f"Predicted maximum modal rate: {_s['theory_max_rate_s_inv']:.6g} s⁻¹. "
+              "Predictions evaluate the continuum dispersion at the selected DCT wavenumbers; "
+              "they do not include finite-difference stencil corrections."),
         mo.ui.altair_chart((_norm + _rules + _secant).properties(
             width=950, height=280, title=f"{selected_run_id}: paired norm; red endpoint secant defines λ_eff"
         ), chart_selection=False),
