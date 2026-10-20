@@ -219,7 +219,7 @@ def _(axis_titles, coordinates, phase_data, summary):
             ),
             opacity=alt.condition(_click, alt.value(1.0), alt.value(0.35)),
             tooltip=_tooltips,
-        ).properties(name=metric).add_params(_click)
+        ).properties(name=metric)
         if coordinates.value == "normalized":
             _boundary = alt.Chart(pd.DataFrame({"onset": [1.0]})).mark_rule(
                 color="black", strokeDash=[6, 4], strokeWidth=2,
@@ -235,15 +235,22 @@ def _(axis_titles, coordinates, phase_data, summary):
             _chart = _cells
         return _chart.properties(width=470, height=360, title=title)
 
-    # Attach the shared selection to the unit marks above before layering the
-    # boundary. Altair then scopes it to the actual compiled views; manually
-    # specifying top-level view names breaks when a unit becomes a layer.
+    # Compose first: Altair renames unit views when concatenating layers.
+    # Register the selection once against those final names, avoiding duplicate
+    # definitions and stale pre-composition names.
     _heatmaps = alt.hconcat(
         phase_chart("fastest_wavelength_cm", "Fastest growing wavelength: perturbed ψ",
                     "Wavelength [cm]", "wavelength_status"),
         phase_chart("lambda_eff_s_inv", "Paired finite-time effective growth",
                     "λ_eff [s⁻¹]", "norm_status"),
     ).resolve_scale(color="independent")
+    _views = [
+        _panel.layer[0].name if isinstance(_panel, alt.LayerChart) else _panel.name
+        for _panel in _heatmaps.hconcat
+    ]
+    _heatmaps.params = [
+        alt.TopLevelSelectionParameter(**_click.param.to_dict(), views=_views),
+    ]
     phase_heatmap = mo.ui.altair_chart(
         _heatmaps, chart_selection=False, legend_selection=False,
     )
@@ -288,17 +295,28 @@ def _(phase_heatmap, results, summary):
         f"{_p['run_id']} · ν={_p['NU']:.6e}, μ={_p['MU']:.6e} · seed={_p['seed']}": _p["run_id"]
         for _p in _available.to_dict("records")
     }
+    available_run_ids = _available["run_id"].tolist()
     inspect_pair = mo.ui.dropdown(
         options=_options, value=next(iter(_options)), label="Inspect a run (filtered by heatmap selection)",
     )
     inspect_pair
-    return (inspect_pair,)
+    return available_run_ids, inspect_pair
 
 
 @app.cell
-def _(inspect_pair, prepared, results):
-    selected = results[inspect_pair.value]
-    _data = prepared[inspect_pair.value]
+def _(available_run_ids, inspect_pair):
+    # A heatmap click directly changes this plain reactive value. The dropdown
+    # only disambiguates multiple seeds, and cannot retain an unrelated run.
+    selected_run_id = (
+        inspect_pair.value if inspect_pair.value in available_run_ids else available_run_ids[0]
+    )
+    return (selected_run_id,)
+
+
+@app.cell
+def _(prepared, results, selected_run_id):
+    selected = results[selected_run_id]
+    _data = prepared[selected_run_id]
     _modes = selected["modes"]
     _distance = np.hypot.reduce(np.abs(_data["difference"][:, _modes]), axis=1)
     _curve = pd.DataFrame({"time_s": _data["time"], "D": _distance})
@@ -315,16 +333,16 @@ def _(inspect_pair, prepared, results):
     _endpoints = _endpoints[_endpoints["D"] > 0]
     _secant = alt.Chart(_endpoints).mark_line(color="firebrick", point=True).encode(x="time_s:Q", y="D:Q")
     mo.vstack([
-        mo.md(f"**{inspect_pair.value}: {_s['norm_status']}**, λ_eff = "
+        mo.md(f"**{selected_run_id}: {_s['norm_status']}**, λ_eff = "
               f"**{_s['lambda_eff_s_inv']:.6g} s⁻¹**. "
               f"D(start) = {_s['D_start']:.6e}, D(end) = {_s['D_end']:.6e}."),
         mo.ui.altair_chart((_norm + _rules + _secant).properties(
-            width=950, height=280, title="Paired norm; red endpoint secant defines λ_eff"
+            width=950, height=280, title=f"{selected_run_id}: paired norm; red endpoint secant defines λ_eff"
         ), chart_selection=False),
         mo.ui.table(selected["table"], selection=None, page_size=10),
         mo.download(pd.DataFrame({"time_s": selected["time"], "D": selected["distance"],
                                   "numerical_floor": selected["norm_floor"]}).to_csv(index=False).encode(),
-                    filename=f"{inspect_pair.value}_distance.csv"),
+                    filename=f"{selected_run_id}_distance.csv"),
     ])
     return (selected,)
 
@@ -342,7 +360,7 @@ def _(selected):
 
 
 @app.cell
-def _(inspect_mode, selected):
+def _(inspect_mode, selected, selected_run_id):
     _index = int(inspect_mode.value - selected["modes"][0])
     _amplitude = np.abs(selected["raw"][:, _index])
     _log = np.full_like(_amplitude, np.nan)
@@ -355,7 +373,10 @@ def _(inspect_mode, selected):
     _chart = alt.Chart(_frame).mark_line().encode(
         x=alt.X("time_s:Q", title="Time [s]"), y=alt.Y("log_amplitude:Q", title="ln|c_m|"),
         color="series:N",
-    ).properties(width=950, height=250, title=f"Mode {inspect_mode.value}: {selected['table'].iloc[_index]['status']}")
+    ).properties(
+        width=950, height=250,
+        title=f"{selected_run_id} · mode {inspect_mode.value}: {selected['table'].iloc[_index]['status']}",
+    )
     mo.ui.altair_chart(_chart, chart_selection=False)
     return
 
