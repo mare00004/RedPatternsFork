@@ -35,6 +35,7 @@ def prepare_pair(perturbed, reference):
         boundary_coefficient = 4 * alpha * (30 / length) / (beta * mean_psi)
     return dict(
         time=perturbed["time"].copy(),
+        z=perturbed["z"].copy(),
         raw=dct(field, type=2, norm="ortho", axis=1),
         difference=dct(field - base, type=2, norm="ortho", axis=1),
         length=length, boundary_coefficient=boundary_coefficient,

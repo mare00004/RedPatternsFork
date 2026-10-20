@@ -56,7 +56,7 @@ performed. Missing or incompatible pairs remain in the availability table.
 HDF5 loading and DCT computation are cached between slider changes.
 
 Click a cell in either Altair heatmap to select a ν, μ pair and highlight it in
-both maps. The norm curve, modal table, mode plot, and selected-run download
+both maps. The ψ(z, t) heatmap, norm curve, modal table, mode plot, and selected-run download
 update automatically; no dropdown confirmation is needed. Double-click to clear
 the selection. The run selector lists matching
 seeds when a cell contains multiple runs. Grey cells are unresolved or unavailable;

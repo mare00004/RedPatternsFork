@@ -9,9 +9,12 @@ with app.setup:
 
     import altair as alt
     import marimo as mo
+    import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd
+    from scipy.fft import idct
 
+    from red_patterns import get_rbc_cmap
     from red_patterns.dct_dispersion import read_run
     from red_patterns.finite_time_stability import analyze_window, demo_sweep, phase_coordinates, prepare_pair
     from red_patterns.stability_sweep import ridge_pairs
@@ -311,6 +314,41 @@ def _(available_run_ids, inspect_pair):
         inspect_pair.value if inspect_pair.value in available_run_ids else available_run_ids[0]
     )
     return (selected_run_id,)
+
+
+@app.cell
+def _(prepared, selected_run_id, window):
+    _data = prepared[selected_run_id]
+    _time_indices = np.unique(np.linspace(
+        0, len(_data["time"]) - 1, min(2400, len(_data["time"])), dtype=int,
+    ))
+    _z_indices = np.unique(np.linspace(
+        0, len(_data["z"]) - 1, min(1200, len(_data["z"])), dtype=int,
+    ))
+    # The cache retains every spatial DCT coefficient. Inverting all modes
+    # recovers the full perturbed field independently of the analysis band.
+    _psi = idct(_data["raw"][_time_indices], type=2, norm="ortho", axis=1)[:, _z_indices]
+    psi_figure, _axis = plt.subplots(figsize=(12, 4.5), constrained_layout=True)
+    _image = _axis.pcolormesh(
+        _data["time"][_time_indices], 100 * _data["z"][_z_indices], 100 * _psi.T,
+        shading="nearest", cmap=get_rbc_cmap(), vmin=0, vmax=100, rasterized=True,
+    )
+    psi_figure.colorbar(_image, ax=_axis, label="ψ [%]")
+    for _endpoint in window.value:
+        _axis.axvline(_endpoint, color="firebrick", linestyle="--", linewidth=1.5)
+    _axis.set(
+        title=f"{selected_run_id}: perturbed ψ(z, t)",
+        xlabel="Time [s]", ylabel="z [cm]",
+        xlim=(_data["time"][0], _data["time"][-1]),
+    )
+    _output = mo.as_html(psi_figure)
+    plt.close(psi_figure)
+    mo.vstack([
+        _output,
+        mo.md("Full saved evolution of the selected perturbed run. Dashed red lines mark "
+              "the shared linear window; the field includes all spatial modes."),
+    ])
+    return (psi_figure,)
 
 
 @app.cell
