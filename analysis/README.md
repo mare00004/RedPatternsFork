@@ -31,6 +31,48 @@ evolve independently; inspect residuals and mode mixing from the finite-domain
 stencils. `analysis/analyze_linear_growth.py` provides joint dynamic-mode
 analysis when several spatial cosines mix.
 
+## Shared-window wavelength and paired-norm phase maps
+
+```bash
+uv run marimo edit analysis/analyze_finite_time_stability.py
+```
+
+Select the sweep directory containing `runs.jsonl` and `results/`. This notebook
+matches Taylor `LINEAR_FULL_RIDGE` / `PERTURBED_LINEAR_FULL_RIDGE` runs by their
+shared settings, including exact NU/MU, and provides two Altair phase-space maps:
+
+- The fastest resolved growing wavelength from log-amplitude fits of the
+  **perturbed field's own DCT-II coefficients**, with wavelength `2*N*dz/m`.
+- The finite-time rate of the **time-matched paired difference**,
+  `D(t) = sqrt(sum_m |DCT_m(psi_perturbed(t) - psi_unperturbed(t))|^2)`,
+  `lambda_eff = (ln D(end) - ln D(start)) / (end - start)`.
+
+One time range slider selects the linear window for every loaded pair; leave its
+start at zero for `lambda_eff(0, end)`. One inclusive mode range controls both
+maps and the norm, defaulting to the seeded band (1–100 for the example sweep).
+Endpoints come from saved times common to all loaded pairs. Each pair must have
+identical perturbed/reference saved-time and spatial grids; no interpolation is
+performed. Missing or incompatible pairs remain in the availability table.
+HDF5 loading and DCT computation are cached between slider changes.
+
+Inspect individual pairs using the full-time logarithmic norm plot with window
+markers and endpoint secant, modal fit table, and selected-mode log-amplitude
+plot. Download the phase-map summary and selected-window norm as CSV. Refresh
+saved results to rescan an ongoing sweep.
+
+The first map uses raw perturbed coefficients, so background evolution can
+affect it. The second cancels the evolving reference. Its zero crossing is a
+finite-time, selected-band diagnostic, not automatically the asymptotic
+instability boundary: a growing mode can coexist with a decaying total norm.
+Compare nearby windows and bands. Unresolved modal fits, zero norm endpoints,
+and norms below numerical precision are flagged rather than labelled stable.
+
+To exercise all cells with an analytic synthetic sweep:
+
+```bash
+uv run python analysis/analyze_finite_time_stability.py
+```
+
 ## Cosine eigenmode dispersion relation
 
 For a complete paired Taylor `LINEAR_FULL` sweep, use the compact browser:
