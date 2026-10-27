@@ -17,7 +17,7 @@ with app.setup:
     from red_patterns import get_rbc_cmap
     from red_patterns.dct_dispersion import read_run
     from red_patterns.finite_time_stability import (
-        analyze_window, demo_sweep, phase_coordinates, prepare_pair, theory_overlays,
+        analyze_adaptive, demo_sweep, phase_coordinates, prepare_pair, theory_overlays,
     )
     from red_patterns.stability_sweep import ridge_pairs
     from red_patterns.sweep_catalog import selected_sweep_catalog, sweep_directory_picker
@@ -26,24 +26,21 @@ with app.setup:
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    # Paired ν, μ sweep: wavelengths and finite-time growth
+    # Paired ν, μ sweep: adaptive modal growth and wavelengths
 
-    Select a sweep containing **runs.jsonl** and **results/**. One time window and
-    one inclusive DCT-II mode range apply to every loaded pair (default modes 1–100).
+    Select a sweep containing **runs.jsonl** and **results/**. Subtract the matching
+    unperturbed field at each saved time and transform along z with an orthonormal
+    DCT-II: $A_m(t)=\mathrm{DCT}_m[\psi_\mathrm{perturbed}(t)-\psi_\mathrm{reference}(t)]$.
+    Fit $\ln|A_m(t)|=b_m+\gamma_m(t-t_0)$ using the **same adaptive initial-prefix
+    method as `analyze_paired_mode_growth.py`**, independently for every mode and pair.
 
-    **Wavelength map:** fit $\ln|\mathrm{DCT}_m(\psi_\mathrm{perturbed})|$
-    against time and show $\ell_m=2N\Delta z/m$ for the fastest resolved growing
-    mode. This uses the perturbed field directly, so an evolving background can
-    affect its modal fits.
+    **Wavelength map:** $\ell_m=2N\Delta z/m$ for the fastest resolved growing mode.
+    **Growth map:** the maximum accepted modal slope $\gamma_m$ in the selected
+    positive-mode band, including negative maxima when the resolved modes decay.
 
-    **Paired growth map:** subtract the unperturbed field at each saved time,
-    then compute
-    $D(t)=\sqrt{\sum_{m=m_\min}^{m_\max}|\mathrm{DCT}_m[
-    \psi_\mathrm{perturbed}(t)-\psi_\mathrm{unperturbed}(t)]|^2}$ and
-    $\lambda_\mathrm{eff}=[\ln D(t_\mathrm{end})-\ln D(t_\mathrm{start})]/
-    (t_\mathrm{end}-t_\mathrm{start})$.
-    Leave the start at 0 for the requested $\lambda_\mathrm{eff}(0,t_\mathrm{end})$.
-    Positive values mean net growth; negative values mean net decay over this window.
+    This sweep contains perturbed/reference pairs, so the response is one-sided;
+    the local notebook uses ±ε central differences. Dividing by a constant ε
+    changes amplitudes but leaves these growth rates unchanged.
     """)
     return
 
@@ -84,39 +81,33 @@ def _(demo, directory, refresh):
 @app.cell
 def _(pairs, prepared):
     mo.stop(not prepared, mo.md("Select a sweep with complete Taylor LINEAR_FULL ridge pairs."))
-    common_time = next(iter(prepared.values()))["time"]
-    for _data in prepared.values():
-        common_time = np.intersect1d(common_time, _data["time"])
-    mo.stop(len(common_time) < 2, mo.callout(
-        "Loaded pairs need at least two common saved times for a shared window. "
-        "No time interpolation or endpoint substitution is performed.", kind="warn"))
     _max_mode = min(_data["raw"].shape[1] - 1 for _data in prepared.values())
     _ready = [_p for _p in pairs if _p["run_id"] in prepared]
     _low = min(max(1, min(_p["mode_min"] for _p in _ready)), _max_mode)
     _high = min(max(_p["mode_max"] for _p in _ready), _max_mode)
-    _default_end = common_time[min(len(common_time) - 1, max(1, np.searchsorted(common_time, 5.0)))]
-    window = mo.ui.range_slider(
-        steps=common_time.tolist(), value=[float(common_time[0]), float(_default_end)],
-        label="Shared linear regime [s]: start → end", show_value=True, full_width=True, debounce=True,
-    )
+    tolerance_ui = mo.ui.number(start=0.001, value=0.05, step=0.005,
+                                label="Maximum absolute log residual for automatic early window")
+    min_samples_ui = mo.ui.number(start=5, value=8, step=1, label="Minimum early-fit samples")
     modes = mo.ui.range_slider(
         start=0, stop=_max_mode, step=1, value=[_low, max(_low, _high)],
-        label="Inclusive DCT mode range (both maps and D(t))",
+        label="Inclusive DCT mode range (both maps)",
         show_value=True, full_width=True, debounce=True,
     )
-    mo.vstack([window, modes, mo.md(
-        "Slider endpoints are saved times shared by all loaded pairs. "
-        "All saved frames inside the window enter each modal fit. "
+    mo.vstack([mo.hstack([tolerance_ui, min_samples_ui]), modes, mo.md(
+        "Each mode gets its own early window starting at its pair's first saved frame. "
+        "The table and downloads report every fitted endpoint and sample count. "
         "DCTs are cached, so changing these sliders does not reread HDF5 files."
     )])
-    return modes, window
+    return min_samples_ui, modes, tolerance_ui
 
 
 @app.cell
-def _(modes, pairs, prepared, window):
-    mo.stop(window.value[0] >= window.value[1], mo.md("Choose distinct start and end times."))
+def _(min_samples_ui, modes, pairs, prepared, tolerance_ui):
+    mo.stop(min_samples_ui.value is None or tolerance_ui.value is None,
+            mo.md("Enter the minimum sample count and log-residual tolerance."))
     results = {
-        _id: analyze_window(_data, *window.value, *map(int, modes.value))
+        _id: analyze_adaptive(_data, *map(int, modes.value),
+                              min_samples=int(min_samples_ui.value), log_tolerance=tolerance_ui.value)
         for _id, _data in prepared.items()
     }
     _rows = []
@@ -125,8 +116,8 @@ def _(modes, pairs, prepared, window):
         # Do not confuse the seeded band with the selected analysis band.
         _row["seeded_mode_min"] = _row.pop("mode_min")
         _row["seeded_mode_max"] = _row.pop("mode_max")
-        _row.update(dict(fastest_wavelength_cm=np.nan, lambda_eff_s_inv=np.nan,
-                         wavelength_status=_pair["status"], norm_status=_pair["status"]))
+        _row.update(dict(fastest_wavelength_cm=np.nan, max_growth_s_inv=np.nan,
+                         wavelength_status=_pair["status"], growth_status=_pair["status"]))
         if _pair["run_id"] in results:
             _row.update(results[_pair["run_id"]]["summary"])
             _row["notes"] = "; ".join(prepared[_pair["run_id"]]["notes"])
@@ -134,7 +125,12 @@ def _(modes, pairs, prepared, window):
     summary = pd.DataFrame(_rows)
     summary["nu_scaled"] = summary["NU"] / 1e-30
     summary["mu_scaled"] = summary["MU"] / 1e-37
-    return results, summary
+    modal_summary = pd.concat([
+        _result["table"].assign(run_id=_id) for _id, _result in results.items()
+    ], ignore_index=True).merge(
+        summary[["run_id", "reference_id", "NU", "MU", "epsilon", "seed"]], on="run_id", validate="many_to_one",
+    )
+    return modal_summary, results, summary
 
 
 @app.cell
@@ -159,7 +155,7 @@ def _():
     Thus **ν² versus −μ has a straight predicted boundary** when C is fixed.
     **|ν|/|ν_c| has its predicted boundary at 1**: values above 1 predict
     instability. These are continuum predictions; the selected discrete DCT
-    band and finite-time norm can have different apparent boundaries.
+    band and adaptive fits can have different apparent boundaries.
     """)])
     return (coordinates,)
 
@@ -191,7 +187,7 @@ def _(contour_levels, coordinates, modes, phase_data):
 
 
 @app.cell
-def _(axis_titles, contour_levels, overlay_data, phase_data):
+def _(axis_titles, contour_levels, modal_summary, overlay_data, phase_data):
     _click = alt.selection_point(
         name="phase_pair", fields=["nu_scaled", "mu_scaled"], toggle=False, clear="dblclick",
     )
@@ -232,13 +228,15 @@ def _(axis_titles, contour_levels, overlay_data, phase_data):
             alt.Tooltip("theory_fastest_wavelength_cm:Q", title="Predicted fastest wavelength [cm]", format=".5g"),
             alt.Tooltip("theory_max_rate_s_inv:Q", title="Predicted maximum rate [s⁻¹]", format=".5g"),
             alt.Tooltip("seed:Q"), alt.Tooltip("epsilon:Q", format=".3e"),
-            alt.Tooltip("start_s:Q"), alt.Tooltip("end_s:Q"),
+            alt.Tooltip("max_growth_fit_end_s:Q", title="Max-rate mode fit end [s]"),
+            alt.Tooltip("max_growth_fit_samples:Q", title="Max-rate mode fit samples"),
+            alt.Tooltip("resolved_modes:Q"), alt.Tooltip("unresolved_modes:Q"),
             alt.Tooltip("mode_min:Q"), alt.Tooltip("mode_max:Q"),
             alt.Tooltip("fastest_mode:Q"), alt.Tooltip(metric + ":Q", format=".6g"),
             alt.Tooltip(status + ":N"),
         ]
         _scale = alt.Scale(scheme="viridis")
-        if metric == "lambda_eff_s_inv":
+        if metric == "max_growth_s_inv":
             _limit = max(float(_valid[metric].abs().max()), 1e-12) if len(_valid) else 1.0
             _scale = alt.Scale(scheme="redblue", domain=[-_limit, _limit], domainMid=0, reverse=True)
         _cells = alt.Chart(_plot_data).mark_rect(
@@ -285,10 +283,10 @@ def _(axis_titles, contour_levels, overlay_data, phase_data):
     # Register the selection once against those final names, avoiding duplicate
     # definitions and stale pre-composition names.
     _heatmaps = alt.hconcat(
-        phase_chart("fastest_wavelength_cm", "Fastest growing wavelength: perturbed ψ",
+        phase_chart("fastest_wavelength_cm", "Fastest growing wavelength: adaptive paired modes",
                     "Wavelength [cm]", "wavelength_status"),
-        phase_chart("lambda_eff_s_inv", "Paired finite-time effective growth",
-                    "λ_eff [s⁻¹]", "norm_status"),
+        phase_chart("max_growth_s_inv", "Maximum adaptive modal growth rate",
+                    "max γₘ [s⁻¹]", "growth_status"),
     ).resolve_scale(color="independent")
     _views = [
         _panel.layer[0].name if isinstance(_panel, alt.LayerChart) else _panel.name
@@ -315,22 +313,29 @@ def _(axis_titles, contour_levels, overlay_data, phase_data):
                mo.md("Contours with no growing segment inside this view: " + ", ".join(_hidden_levels))
                if _hidden_levels else mo.md("All requested wavelength contours have a growing segment in this view."),
                mo.ui.table(phase_data, selection=None, page_size=10),
-               mo.download(phase_data.to_csv(index=False).encode(), filename="finite_time_stability.csv")])
+               mo.download(phase_data.to_csv(index=False).encode(), filename="adaptive_stability.csv"),
+               mo.download(modal_summary.to_csv(index=False).encode(), filename="adaptive_sweep_modal_rates.csv",
+                           label="Download all per-mode rates and early windows")])
     return (phase_heatmap,)
 
 
 @app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    The zero-rate boundary is a **finite-time, selected-band** diagnostic.
-    A decaying norm can coexist with a growing mode when other seeded modes decay
-    more strongly. Compare nearby endpoints and mode ranges before interpreting
-    the instability boundary. Grey wavelength markers do not establish stability.
+def _(min_samples_ui, tolerance_ui):
+    mo.md(rf"""
+    **Adaptive early regime:** start at the first saved frame with
+    **{min_samples_ui.value} samples**, then extend one frame at a time. Stop at the
+    first prefix whose maximum absolute log residual exceeds **{tolerance_ui.value:g}**,
+    reaches the numerical floor, or changes sign. Retain the preceding prefix.
+    If the first candidate fails, there is no automatic fit; no later window is searched.
+    If every frame passes, the data have not identified the end of the regime.
 
-    Modal fits need at least five saved samples, a consistent coefficient sign,
-    log relative fit error ≤ 0.1, and a slope resolved above twice its fit standard
-    error. Mode 0 has no finite wavelength. Zero or numerically unresolved norm
-    endpoints have no reported effective rate; no epsilon is added.
+    This log-linearity heuristic does not establish physical linearity. Compare
+    tolerances, save cadence, smaller ε and smaller DT. Accepted rates also need
+    log relative fit error ≤ 0.1 and a slope resolved above twice its fit standard
+    error. Mode 0 is a conservation diagnostic and is excluded from both maps.
+    Each rate has its own fitted window. A negative maximum describes only the
+    resolved selected modes; unresolved modes can still grow. Grey cells do not
+    establish stability. The slope is the amplitude rate, without a factor of two.
     """)
     return
 
@@ -365,7 +370,13 @@ def _(available_run_ids, inspect_pair):
 
 
 @app.cell
-def _(prepared, selected_run_id, window):
+def _(results, selected_run_id):
+    selected = results[selected_run_id]
+    return (selected,)
+
+
+@app.cell
+def _(inspect_mode, prepared, selected, selected_run_id):
     _data = prepared[selected_run_id]
     _time_indices = np.unique(np.linspace(
         0, len(_data["time"]) - 1, min(2400, len(_data["time"])), dtype=int,
@@ -382,8 +393,10 @@ def _(prepared, selected_run_id, window):
         shading="nearest", cmap=get_rbc_cmap(), vmin=0, vmax=100, rasterized=True,
     )
     psi_figure.colorbar(_image, ax=_axis, label="ψ [%]")
-    for _endpoint in window.value:
-        _axis.axvline(_endpoint, color="firebrick", linestyle="--", linewidth=1.5)
+    _mode_row = selected["table"].set_index("mode").loc[inspect_mode.value]
+    if _mode_row["fit_samples"]:
+        for _endpoint in (_mode_row["fit_start_s"], _mode_row["fit_end_s"]):
+            _axis.axvline(_endpoint, color="firebrick", linestyle="--", linewidth=1.5)
     _axis.set(
         title=f"{selected_run_id}: perturbed ψ(z, t)",
         xlabel="Time [s]", ylabel="z [cm]",
@@ -394,26 +407,14 @@ def _(prepared, selected_run_id, window):
     mo.vstack([
         _output,
         mo.md("Full saved evolution of the selected perturbed run. Dashed red lines mark "
-              "the shared linear window; the field includes all spatial modes."),
+              f"the adaptive window for inspected mode **{inspect_mode.value}** when available; "
+              "the field includes all spatial modes."),
     ])
     return (psi_figure,)
 
 
 @app.cell
-def _(prepared, results, selected_run_id):
-    selected = results[selected_run_id]
-    _data = prepared[selected_run_id]
-    _modes = selected["modes"]
-    _distance = np.hypot.reduce(np.abs(_data["difference"][:, _modes]), axis=1)
-    _curve = pd.DataFrame({"time_s": _data["time"], "D": _distance})
-    _curve = _curve[_curve["D"] > 0]
-    _bounds = pd.DataFrame({"time_s": selected["time"][[0, -1]]})
-    _norm = alt.Chart(_curve).mark_line().encode(
-        x=alt.X("time_s:Q", title="Saved time [s]"),
-        y=alt.Y("D:Q", title="Selected-band D(t)", scale=alt.Scale(type="log")),
-        tooltip=[alt.Tooltip("time_s:Q"), alt.Tooltip("D:Q", format=".6e")],
-    )
-    _rules = alt.Chart(_bounds).mark_rule(color="firebrick", strokeDash=[5, 3]).encode(x="time_s:Q")
+def _(selected, selected_run_id):
     _s = selected["summary"]
     _measured = (
         f"mode {_s['fastest_mode']:g}, wavelength {_s['fastest_wavelength_cm']:.5g} cm"
@@ -425,36 +426,46 @@ def _(prepared, results, selected_run_id):
         else "no growing selected mode" if np.isfinite(_s["theory_max_rate_s_inv"])
         else "unavailable for this run"
     )
-    _endpoints = pd.DataFrame({"time_s": selected["time"][[0, -1]], "D": selected["distance"][[0, -1]]})
-    _endpoints = _endpoints[_endpoints["D"] > 0]
-    _secant = alt.Chart(_endpoints).mark_line(color="firebrick", point=True).encode(x="time_s:Q", y="D:Q")
+    _table = selected["table"]
+    _accepted = _table["status"] == "ok"
+    _fig, _ax = plt.subplots(figsize=(12, 4), constrained_layout=True)
+    _ax.errorbar(_table.loc[_accepted, "mode"], _table.loc[_accepted, "growth_s_inv"],
+                 yerr=_table.loc[_accepted, "rate_std_s_inv"], fmt="o", label="accepted adaptive fits (slope SE)")
+    _ax.plot(_table.loc[~_accepted, "mode"], _table.loc[~_accepted, "growth_s_inv"],
+             "x", label="flagged fits")
+    _ax.plot(_table["mode"], _table["theory_rate_s_inv"], "--", label="saved-parameter continuum prediction")
+    _ax.axhline(0, color="grey", linewidth=0.8)
+    _ax.set(xlabel="DCT-II mode number m", ylabel="Growth rate γₘ [s⁻¹]",
+             title=f"{selected_run_id}: growth rates with independent early windows")
+    _ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    _ax.grid(alpha=0.25)
+    _ax.legend()
+    _output = mo.as_html(_fig)
+    plt.close(_fig)
     mo.vstack([
-        mo.md(f"**{selected_run_id}: {_s['norm_status']}**, λ_eff = "
-              f"**{_s['lambda_eff_s_inv']:.6g} s⁻¹**. "
-              f"D(start) = {_s['D_start']:.6e}, D(end) = {_s['D_end']:.6e}."),
+        mo.md(f"**{selected_run_id}: {_s['growth_status']}**. Maximum accepted rate: "
+              f"**{_s['max_growth_s_inv']:.6g} s⁻¹**; "
+              f"**{_s['resolved_modes']} resolved**, **{_s['unresolved_modes']} unresolved** positive modes."),
         mo.md(f"**Measured fastest:** {_measured}.  \n"
               f"**Predicted fastest in the selected band:** {_predicted}.  \n"
               f"Predicted maximum modal rate: {_s['theory_max_rate_s_inv']:.6g} s⁻¹. "
               "Predictions evaluate the continuum dispersion at the selected DCT wavenumbers; "
               "they do not include finite-difference stencil corrections."),
-        mo.ui.altair_chart((_norm + _rules + _secant).properties(
-            width=950, height=280, title=f"{selected_run_id}: paired norm; red endpoint secant defines λ_eff"
-        ), chart_selection=False),
-        mo.ui.table(selected["table"], selection=None, page_size=10),
-        mo.download(pd.DataFrame({"time_s": selected["time"], "D": selected["distance"],
-                                  "numerical_floor": selected["norm_floor"]}).to_csv(index=False).encode(),
-                    filename=f"{selected_run_id}_distance.csv"),
+        _output,
+        mo.ui.table(_table, selection=None, page_size=10),
+        mo.download(_table.to_csv(index=False).encode(), filename=f"{selected_run_id}_adaptive_modal_rates.csv",
+                    label="Download selected pair's rates and early windows"),
     ])
-    return (selected,)
+    return
 
 
 @app.cell
 def _(selected):
-    _fastest = selected["summary"]["fastest_mode"]
+    _fastest = selected["summary"]["max_growth_mode"]
     inspect_mode = mo.ui.slider(
         steps=selected["modes"].tolist(),
         value=int(_fastest) if np.isfinite(_fastest) else int(selected["modes"][0]),
-        label="Inspect perturbed-field DCT mode", show_value=True,
+        label="Inspect paired-difference DCT mode", show_value=True,
     )
     inspect_mode
     return (inspect_mode,)
@@ -463,22 +474,52 @@ def _(selected):
 @app.cell
 def _(inspect_mode, selected, selected_run_id):
     _index = int(inspect_mode.value - selected["modes"][0])
-    _amplitude = np.abs(selected["raw"][:, _index])
+    _coefficients = selected["coefficients"][:, _index]
+    _amplitude = np.abs(_coefficients)
     _log = np.full_like(_amplitude, np.nan)
-    np.log(_amplitude, out=_log, where=_amplitude > 0)
+    np.log(_amplitude, out=_log, where=_amplitude > selected["floor"])
     _fit = selected["fits"][_index]
-    _frame = pd.DataFrame({
-        "time_s": selected["time"], "Measured ln|c_m|": _log,
-        "Log-linear fit": _fit.log_fitted if _fit is not None else np.nan,
-    }).melt(id_vars="time_s", var_name="series", value_name="log_amplitude")
-    _chart = alt.Chart(_frame).mark_line().encode(
-        x=alt.X("time_s:Q", title="Time [s]"), y=alt.Y("log_amplitude:Q", title="ln|c_m|"),
-        color="series:N",
-    ).properties(
-        width=950, height=250,
-        title=f"{selected_run_id} · mode {inspect_mode.value}: {selected['table'].iloc[_index]['status']}",
+    _row = selected["table"].iloc[_index]
+    _count = int(_row["fit_samples"])
+    _time = selected["time"]
+    _fitted = np.full_like(_amplitude, np.nan)
+    _residual = np.full_like(_amplitude, np.nan)
+    _used = np.zeros(len(_time), dtype=bool)
+    _fig, _axes = plt.subplots(2, 1, figsize=(12, 6), sharex=True, constrained_layout=True)
+    _axes[0].plot(_time, _log, label=f"ln|A_{inspect_mode.value}(t)|")
+    if selected["floor"] > 0:
+        _axes[0].axhline(np.log(selected["floor"]), ls=":", color="grey", label="roundoff floor")
+    if _fit is not None:
+        _fitted[:_count] = _fit.log_fitted
+        _used[:_count] = _fit.used_samples
+        _residual[_used] = _log[_used] - _fitted[_used]
+        for _ax in _axes:
+            _ax.axvspan(_time[0], _time[_count - 1], alpha=0.12, color="green")
+        _axes[0].plot(_time, _fitted, "--", label=f"adaptive line, γ={_fit.rate:.6g} s⁻¹")
+        _axes[1].plot(_time, _residual, ".-")
+    _axes[0].set(ylabel="ln|Aₘ|", title=f"{selected_run_id} · mode {inspect_mode.value}: {_row['status']}")
+    _axes[0].legend()
+    _axes[1].set(xlabel="Time [s]", ylabel="Fit log residual")
+    for _ax in _axes:
+        _ax.grid(alpha=0.25)
+    _output = mo.as_html(_fig)
+    plt.close(_fig)
+    _description = (
+        f"Adaptive fit: **{_row['fit_start_s']:.6g}–{_row['fit_end_s']:.6g} s**, "
+        f"**{_count} samples**; γ = **{_row['growth_s_inv']:.6g} s⁻¹**, "
+        f"slope SE = {_row['rate_std_s_inv']:.3g} s⁻¹, R² = {_row['r_squared']:.6g}. "
+        if _fit is not None else "No acceptable initial log-linear prefix. "
     )
-    mo.ui.altair_chart(_chart, chart_selection=False)
+    _download = pd.DataFrame(dict(
+        time_s=_time, signed_coefficient=_coefficients, numerical_floor=selected["floor"],
+        log_amplitude=_log, used_in_fit=_used, log_fit=_fitted, log_residual=_residual,
+    ))
+    mo.vstack([
+        mo.md(_description + _row["window_reason"]), _output,
+        mo.download(_download.to_csv(index=False).encode(),
+                    filename=f"{selected_run_id}_mode_{inspect_mode.value}_adaptive_fit.csv",
+                    label="Download inspected mode and fit samples"),
+    ])
     return
 
 

@@ -31,7 +31,7 @@ evolve independently; inspect residuals and mode mixing from the finite-domain
 stencils. `analysis/analyze_linear_growth.py` provides joint dynamic-mode
 analysis when several spatial cosines mix.
 
-## Shared-window wavelength and paired-norm phase maps
+## Adaptive paired-mode growth and wavelength phase maps
 
 ```bash
 uv run marimo edit analysis/analyze_finite_time_stability.py
@@ -39,28 +39,44 @@ uv run marimo edit analysis/analyze_finite_time_stability.py
 
 Select the sweep directory containing `runs.jsonl` and `results/`. This notebook
 matches Taylor `LINEAR_FULL_RIDGE` / `PERTURBED_LINEAR_FULL_RIDGE` runs by their
-shared settings, including exact NU/MU, and provides two Altair phase-space maps:
+shared settings, including exact NU/MU. It subtracts the reference field at each
+matching saved time, computes an orthonormal spatial DCT-II, and fits each signed
+coefficient independently with the same `early_prefix` method used in
+`analyze_paired_mode_growth.py`.
 
-- The fastest resolved growing wavelength from log-amplitude fits of the
-  **perturbed field's own DCT-II coefficients**, with wavelength `2*N*dz/m`.
-- The finite-time rate of the **time-matched paired difference**,
-  `D(t) = sqrt(sum_m |DCT_m(psi_perturbed(t) - psi_unperturbed(t))|^2)`,
-  `lambda_eff = (ln D(end) - ln D(start)) / (end - start)`.
+The sweep uses perturbed/unperturbed pairs, so its response is one-sided; the
+local notebook uses ±epsilon central differences. A constant epsilon
+normalization changes amplitudes but leaves fitted log slopes unchanged.
+Both members of each pair must have identical saved times, spatial grids, solver
+DT and saved dynamics. Missing or incompatible pairs remain in the availability
+table. Different pairs can have different saved-time grids. HDF5 loading and DCT
+computation are cached between fit-setting changes.
 
-One time range slider selects the linear window for every loaded pair; leave its
-start at zero for `lambda_eff(0, end)`. One inclusive mode range controls both
-maps and the norm, defaulting to the seeded band (1–100 for the example sweep).
-Endpoints come from saved times common to all loaded pairs. Each pair must have
-identical perturbed/reference saved-time and spatial grids; no interpolation is
-performed. Missing or incompatible pairs remain in the availability table.
-HDF5 loading and DCT computation are cached between slider changes.
+Every mode starts at its pair's first saved frame with eight samples by default.
+The fitter extends that prefix one frame at a time until the first sign change,
+numerical-floor sample, or maximum absolute log residual above 0.05, retaining
+the preceding passing prefix. Minimum samples and residual tolerance are
+adjustable. If the first candidate fails, no later window is searched; if all
+frames pass, the data have not identified the end of the early regime. Fit
+status, sample counts, endpoints, residuals and stopping reasons are included in
+the per-mode tables and CSV downloads. This is a log-linearity heuristic: compare
+tolerances, save cadence, epsilon and DT before interpreting physical linearity.
 
-Click a cell in either Altair heatmap to select a ν, μ pair and highlight it in
-both maps. The ψ(z, t) heatmap, norm curve, modal table, mode plot, and selected-run download
-update automatically; no dropdown confirmation is needed. Double-click to clear
-the selection. The run selector lists matching
-seeds when a cell contains multiple runs. Grey cells are unresolved or unavailable;
-numeric cell edges lie halfway between samples within each row.
+One inclusive mode range controls two Altair phase-space maps:
+
+- The fastest resolved growing wavelength, with wavelength `2*N*dz/m`.
+- The maximum accepted modal growth rate in the selected positive-mode band.
+  Negative values describe decay among resolved modes; unresolved modes can still
+  grow. Mode zero remains inspectable but is excluded from both maps.
+
+Click a cell in either heatmap to select a ν, μ pair and highlight it in both
+maps. The full ψ(z, t) heatmap, growth-rate-versus-mode plot, modal table and
+selected-mode log-amplitude/residual plots update automatically. The ψ heatmap
+marks the inspected mode's adaptive window. Double-click to clear the selection.
+The run selector lists matching seeds when a cell contains multiple runs.
+Grey cells are unresolved or unavailable; numeric cell edges lie halfway between
+samples within each row.
+
 The coordinate selector offers the original `(ν, μ)` view, `(ν², −μ)`, and
 the default `(|ν|/|ν_c(μ)|, −μ)` view. For the saved Taylor model, optimizing
 over continuous wavenumber gives `ν_c² = C*(-μ)`, where
@@ -87,17 +103,11 @@ predicted rate. The per-pair readout compares measured and predicted wavelengths
 and the modal table includes each mode's theoretical rate.
 These predictions sample the continuum dispersion at DCT wavenumbers and do not
 include finite-difference stencil corrections.
-Inspect individual pairs using the full-time logarithmic norm plot with window
-markers and endpoint secant, modal fit table, and selected-mode log-amplitude
-plot. Download the phase-map summary and selected-window norm as CSV. Refresh
-saved results to rescan an ongoing sweep.
 
-The first map uses raw perturbed coefficients, so background evolution can
-affect it. The second cancels the evolving reference. Its zero crossing is a
-finite-time, selected-band diagnostic, not automatically the asymptotic
-instability boundary: a growing mode can coexist with a decaying total norm.
-Compare nearby windows and bands. Unresolved modal fits, zero norm endpoints,
-and norms below numerical precision are flagged rather than labelled stable.
+Download the phase-map summary, all pairs' per-mode rates and adaptive windows,
+the selected pair's modal table, or the inspected mode's signed coefficients,
+fit samples and log residuals as CSV. Refresh saved results to rescan an ongoing
+sweep. Grey markers and missing fits do not establish stability.
 
 To exercise all cells with an analytic synthetic sweep:
 
