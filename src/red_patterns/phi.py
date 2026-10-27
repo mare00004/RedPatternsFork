@@ -208,14 +208,13 @@ def perturb_phi_single_cosine_z(
     amplitude: float,
     mode_number: int,
 ) -> Array2F:
-    r"""Apply one DCT-style cosine perturbation along the active z domain."""
+    r"""Apply one cell-centered DCT-II cosine on the active z domain."""
     result = phi.copy()
     active = slice(wing_z, phi.shape[1] - wing_z)
     z_active = z[active]
-    if z_active.size == 1:
-        x = np.zeros_like(z_active)
-    else:
-        x = (z_active - z_active[0]) / (z_active[-1] - z_active[0])
+    if not 0 <= mode_number < z_active.size:
+        raise ValueError("mode_number must be within 0 … active z sample count − 1")
+    x = (np.arange(z_active.size, dtype=float) + 0.5) / z_active.size
     multiplier = 1.0 + amplitude * np.cos(np.pi * mode_number * x)
     result[:, active] *= multiplier[np.newaxis, :]
     return result
@@ -320,6 +319,7 @@ def _remap_phi_z_by_displacement(
     seed: int,
     mode_min: int,
     mode_max: int,
+    coefficients: Array1F | None = None,
 ) -> Array2F:
     """Conservatively displace each rho row with sin(n*pi*z/L) modes.
 
@@ -333,7 +333,11 @@ def _remap_phi_z_by_displacement(
     dz = float(z[1] - z[0])
     length = N_z * dz
     modes = np.arange(mode_min, mode_max + 1, dtype=np.float64)
-    coefficients = np.random.default_rng(seed).normal(size=modes.size)
+    if coefficients is None:
+        coefficients = np.random.default_rng(seed).normal(size=modes.size)
+    coefficients = np.asarray(coefficients, dtype=np.float64)
+    if coefficients.shape != modes.shape or not np.all(np.isfinite(coefficients)):
+        raise ValueError("Need one finite displacement coefficient per mode.")
     z_faces = np.arange(N_z + 1, dtype=np.float64) * dz
     displacement_faces = epsilon * np.sum(
         coefficients[:, np.newaxis]
@@ -1053,6 +1057,7 @@ class SingleModeSmoothHomogeneousPhi(SmoothHomogeneousPhi):
         super().write_metadata(group)
         group.attrs["amplitude"] = self.amplitude
         group.attrs["mode_number"] = self.mode_number
+        group.attrs["cosine_basis"] = "cos(pi*n*(j+0.5)/N_active)"
 
     def summary(self) -> list[str]:
         return super().summary() + [
@@ -1074,7 +1079,7 @@ class SingleModeSmoothHomogeneousPhi(SmoothHomogeneousPhi):
         return {
             **super().make_ui_controls(),
             "amplitude": mo.ui.number(
-                start=0, stop=1, step=1e-6, value=1e-3, label="Amplitude"
+                start=-1, stop=1, step=1e-6, value=1e-3, label="Amplitude"
             ),
             "mode_number": mo.ui.number(
                 start=0, stop=1023, step=1, value=1, label="Mode number"
@@ -1173,6 +1178,8 @@ class LinearFullRidgePhi(PhiField):
 
 
 class SingleModeLinearFullRidgePhi(LinearFullRidgePhi):
+    """One deterministic conservative z displacement; amplitude is in metres."""
+
     phi_type = PhiType.SINGLE_MODE_LINEAR_FULL_RIDGE
     params_model = SingleModeLinearFullRidgePhiParams
 
@@ -1189,21 +1196,40 @@ class SingleModeLinearFullRidgePhi(LinearFullRidgePhi):
         }
 
     def build(self, rho: Array1F, z: Array1F) -> Array2F:
-        return perturb_phi_single_cosine_z(
+        return _remap_phi_z_by_displacement(
             super().build(rho, z),
             z,
-            self.wing_z,
-            amplitude=self.amplitude,
-            mode_number=self.mode_number,
+            epsilon=self.amplitude,
+            seed=0,
+            mode_min=self.mode_number,
+            mode_max=self.mode_number,
+            coefficients=np.ones(1),
         )
+
+    def validate(self) -> list[str]:
+        if not 1 <= self.mode_number < self.N:
+            return ["mode_number must lie between 1 and N−1 for a z displacement."]
+        if (
+            not np.isfinite(self.amplitude)
+            or abs(self.amplitude) * np.pi * self.mode_number >= self.N * self.dz
+        ):
+            return [
+                "amplitude produces a folding displacement map; "
+                "require |amplitude| * n*pi/L < 1."
+            ]
+        return []
 
     def write_metadata(self, group: h5py.Group) -> None:
         group.attrs["amplitude"] = self.amplitude
+        group.attrs["amplitude_units"] = "m"
         group.attrs["mode_number"] = self.mode_number
+        group.attrs["perturbation_length"] = self.N * self.dz
+        group.attrs["perturbation_method"] = "conservative_monotone_z_remap"
+        group.attrs["displacement_basis"] = "sin(n*pi*z/L)"
 
     def summary(self) -> list[str]:
         return [
-            f"amplitude={self.amplitude:.6e}",
+            f"amplitude={self.amplitude:.6e} m",
             f"mode_number={self.mode_number}",
         ]
 
@@ -1222,10 +1248,14 @@ class SingleModeLinearFullRidgePhi(LinearFullRidgePhi):
 
         return {
             "amplitude": mo.ui.number(
-                start=0, stop=1, step=1e-6, value=1e-3, label="Amplitude"
+                start=-1e-2,
+                stop=1e-2,
+                step=1e-12,
+                value=DEFAULT_DISPLACEMENT_EPSILON,
+                label="Displacement amplitude [m]",
             ),
             "mode_number": mo.ui.number(
-                start=0, stop=1023, step=1, value=1, label="Mode number"
+                start=1, stop=1023, step=1, value=1, label="Mode number (nπ/L)"
             ),
         }
 
@@ -1244,7 +1274,8 @@ class SingleModeLinearFullRidgePhi(LinearFullRidgePhi):
     @classmethod
     def type_description(cls) -> str:
         return (
-            r"$\varphi_{ridge}(\rho,z)[1 + A\cos(m\pi x)]$ on the active z domain"
+            r"Conservative z displacement $\xi(z)=A\sin(n\pi z/L)$, "
+            r"$A$ in metres; excites cosine mode $n$ in $\psi$ to first order."
         )
 
 
@@ -1348,9 +1379,9 @@ class PerturbedLinearFullRidgePhi(LinearFullRidgePhi):
 
         return {
             "epsilon": mo.ui.number(
-                start=0.0,
+                start=-1e-2,
                 stop=1e-2,
-                step=1e-7,
+                step=1e-12,
                 value=DEFAULT_DISPLACEMENT_EPSILON,
                 label="$\\epsilon$ [m]",
             ),
@@ -1527,9 +1558,9 @@ class PerturbedLinearFullGaussianRidgePhi(PhiField):
                 label="$\\sigma_\\rho \\; [\\frac{g}{L}]$",
             ),
             "epsilon": mo.ui.number(
-                start=0.0,
+                start=-1e-2,
                 stop=1e-2,
-                step=1e-7,
+                step=1e-12,
                 value=DEFAULT_DISPLACEMENT_EPSILON,
                 label="$\\epsilon$ [m]",
             ),

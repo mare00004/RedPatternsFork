@@ -225,7 +225,7 @@ class PhiComputeTests(unittest.TestCase):
 
         active = slice(field.wing_z, field.N - field.wing_z)
         z_active = result.z[active]
-        x = (z_active - z_active[0]) / (z_active[-1] - z_active[0])
+        x = (np.arange(z_active.size) + 0.5) / z_active.size
         raw_multiplier = 1.0 + field.amplitude * np.cos(
             np.pi * field.mode_number * x
         )

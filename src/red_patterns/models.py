@@ -109,7 +109,7 @@ class SingleModeLinearFullRidgePhiParams(PhiParamsBase):
     phi_type: Literal[PhiType.SINGLE_MODE_LINEAR_FULL_RIDGE] = (
         PhiType.SINGLE_MODE_LINEAR_FULL_RIDGE
     )
-    amplitude: float
+    amplitude: Annotated[float, Field(description="Signed z-displacement amplitude in metres.")]
     mode_number: Annotated[int, Field(ge=0)]
 
 
@@ -117,7 +117,7 @@ class PerturbedLinearFullRidgePhiParams(PhiParamsBase):
     phi_type: Literal[PhiType.PERTURBED_LINEAR_FULL_RIDGE] = (
         PhiType.PERTURBED_LINEAR_FULL_RIDGE
     )
-    epsilon: Annotated[float, Field(ge=0)]
+    epsilon: Annotated[float, Field(allow_inf_nan=False, description="Signed seeded z-displacement scale in metres.")]
     seed: Annotated[int, Field(ge=0)]
     mode_min: Annotated[int, Field(ge=1)]
     mode_max: Annotated[int, Field(ge=1)]
@@ -135,7 +135,7 @@ class PerturbedLinearFullGaussianRidgePhiParams(PhiParamsBase):
     )
     gaussian_mu: float
     gaussian_sigma: Annotated[float, Field(gt=0)]
-    epsilon: Annotated[float, Field(ge=0)]
+    epsilon: Annotated[float, Field(allow_inf_nan=False, description="Signed seeded z-displacement scale in metres.")]
     seed: Annotated[int, Field(ge=0)]
     mode_min: Annotated[int, Field(ge=1)]
     mode_max: Annotated[int, Field(ge=1)]

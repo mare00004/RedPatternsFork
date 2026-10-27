@@ -354,6 +354,96 @@ recovers both despite mixed individual DCT traces:
 uv run analysis/analyze_linear_growth.py
 ```
 
+## Local paired single-mode or seeded multimode experiment (no sweep)
+
+```bash
+uv run marimo edit analysis/workbench.py
+uv run marimo edit analysis/analyze_paired_mode_growth.py
+```
+
+In the workbench, select **Single-mode Linear Gradient Diagonal**, a mode
+number `n > 0`, and displacement amplitude `+epsilon` **in metres** (for example `1e-6`). Set both wings
+to zero, use the `linear-full` gradient, choose your Taylor or convolution
+dynamics, and save enough early frames. Run once, record the output file path,
+then run again with `-epsilon` and identical remaining settings. Each launch
+uses a separate temporary directory; copy the outputs somewhere permanent.
+Choose **Phi and psi** storage if you want to inspect the phi response too.
+
+For simultaneous random modes, select **Perturbed Linear Gradient Diagonal**
+instead, choose a seed and inclusive `mode_min`/`mode_max` range, and run once
+with `+epsilon` and once with `-epsilon`, keeping **the same seed and mode
+range**. The epsilon widgets for both constant and Gaussian perturbed ridges
+accept signed values with a `1e-12` step, including `+1e-12` and `-1e-12`.
+The validated parameter models and CLI exports also accept negative epsilon.
+For a negative scientific-notation CLI value, use `--epsilon=-1e-12`.
+The seeded displacement is
+`xi(z) = epsilon * sum_n b_n*sin(n*pi*z/L)`, with standard-normal coefficients
+from `numpy.random.default_rng(seed)`. Epsilon scales the whole displacement;
+it is not its maximum magnitude or the amplitude of each marginal cosine.
+The generator still rejects folding maps for either sign. A tiny selectable
+epsilon is not a guarantee of a resolved numerical response.
+
+The notebook picks the two `run.h5` files directly and takes positive epsilon,
+the seed, and the inclusive excited mode range as inputs. For a deterministic
+single-mode pair, set both endpoints to its injected mode. Seed and mode range
+are declared by the user; output files do not retain all phi generator metadata,
+so the notebook cannot automatically verify them.
+It checks matching grids, saved times, DT and
+saved dynamics, computes `(psi_plus - psi_minus)/(2*epsilon)` in float64 and
+an orthonormal spatial DCT-II at every saved frame. It displays modes 0–255 by
+default (clipped to available samples, extended to include the excited band).
+Side-by-side heatmaps compare psi for both runs using the same scale and show
+delta psi separately. The extracted-mode slider shows `ln(abs(A_m(t)))`, an
+early-time line fit and residual plot for whichever mode is selected.
+**Growth rate versus mode number** appears automatically for all excited modes,
+with independent automatic early windows and a per-mode rate table. Changing
+the fit tolerance or minimum sample count updates the plot; its CSV includes fit status, window
+endpoints and sample counts. The manual endpoint only affects the explorer.
+A spectrum and leakage trace compare out-of-band coefficients against an
+adjustable threshold relative to the seeded-band coefficient norm and a roundoff
+floor. This threshold is a numerical diagnostic, not statistical significance.
+Optional phi snapshots use the same central difference, reading only one frame
+from each file. An NPZ download contains all signed DCT coefficients and delta
+psi over all saved times, seed, excited mode indices, selected mode, and its
+fit count and rate.
+
+The automatic early window starts at the first saved frame with eight samples
+by default. It extends one sample at a time until the first prefix exceeds a
+maximum absolute log residual of 0.05 (about 5% amplitude deviation), changes
+sign, or reaches the roundoff floor. It retains the previous passing prefix;
+if the first candidate fails, no automatic rate is claimed. Both sample count
+and tolerance are adjustable, and a manual endpoint allows sensitivity checks.
+This identifies log-linearity, not physical linearity: compare smaller epsilon,
+smaller DT, and nearby endpoints before interpreting the slope as a growth
+rate. The rate is the log-amplitude slope directly, without a factor of two.
+The synthetic validation pair excites the selected seeded band with known
+independent growth/decay rates `gamma_n = 0.12 - 0.001*(n-7)^2` in inverse
+seconds. It is available in the UI and used in script mode, which also runs
+the full-band fitting table:
+
+```bash
+uv run python analysis/analyze_paired_mode_growth.py
+```
+
+The existing `analyze_single_mode_dct_modes.py` supports paired amplitudes but
+requires a sweep catalog and fits an offset exponential across the full trace;
+`analyze_dct_dispersion.py` instead uses a perturbed/unperturbed pair.
+
+**Ridge displacement convention:** `single_mode_linear_full_ridge` now uses
+`T(z) = z + amplitude*sin(n*pi*z/L)`, with amplitude in metres and `L=N*dz`.
+It uses the same conservative z remap as the multimode ridge, with a single
+deterministic coefficient of one. This preserves each rho row's total mass
+before optional wing masking, and never transports mass in rho.
+The induced marginal is a DCT-II cosine to first order, with negative sign
+for positive displacement amplitude. Finite remapping can generate harmonics;
+check leakage as epsilon decreases. Require `abs(amplitude)*n*pi/L < 1`.
+Regenerate old ridge files: they used multiplicative weight modulation and
+dimensionless amplitude, which is a different perturbation. Phi metadata now
+records displacement method, basis and amplitude units. Mode zero is rejected
+because its sine displacement is zero; extracted DCT mode zero is still useful
+for checking conservation. The smooth homogeneous single-mode generator keeps
+its dimensionless cell-centered cosine multiplier.
+
 ## Initial phi flow
 
 Every entry point produces the same validated Pydantic payload, constructs a
@@ -486,11 +576,11 @@ as `smooth_homogeneous`, with one longitudinal active-domain cosine mode:
 \[
 \varphi(\rho,z)=\varphi_{\rm smooth}(\rho,z)
 \left[1+\epsilon\cos(m\pi x)\right],
-\qquad x=\frac{z-z_{\rm active,0}}{z_{\rm active,end}-z_{\rm active,0}}.
+\qquad x_j=\frac{j+1/2}{N_{\rm active}}.
 \]
 
 Its additional parameters are `amplitude` (`\epsilon`) and `mode_number`
-(`m`); it accepts nonnegative mode numbers. The normal wing and normalization
+(`m`); it accepts mode numbers from zero through `N_active - 1`. The normal wing and normalization
 pipeline remains in effect.
 
 ```bash
@@ -522,23 +612,27 @@ uv run analysis/phi_init.py export \
 ## Single-mode Linear Gradient Diagonal phi
 
 `single_mode_linear_full_ridge` starts from `linear_full_ridge` and applies
-the same active-domain longitudinal cosine perturbation as
-`single_mode_smooth_homogeneous`:
+one deterministic conservative longitudinal displacement, using the same
+remapping algorithm as `perturbed_linear_full_ridge`:
 
 \[
-\varphi(\rho,z)=\varphi_{\rm ridge}(\rho,z)
-\left[1+\epsilon\cos(m\pi x)\right].
+T(z)=z+A\sin(n\pi z/L),\qquad
+\varphi(\rho,T(z))=\frac{\varphi_{\rm ridge}(\rho,z)}{1+A(n\pi/L)\cos(n\pi z/L)}.
 \]
 
-It accepts `amplitude` (`\epsilon`) and nonnegative `mode_number` (`m`), then
-uses the standard wing masking and `psi_avg` normalization pipeline.
+It accepts signed `amplitude` (`A`, in metres) and `mode_number` from 1 through
+`N-1`, and rejects folding maps (`abs(A)*n*pi/L >= 1`). The finite-volume
+implementation conserves each rho row's mass and keeps phi nonnegative.
+The standard wing masking and `psi_avg` normalization pipeline follows;
+use zero wings for the paired conservation experiment. For a uniform marginal
+`C`, the first-order response is `delta_psi = -C*(n*pi/L)*cos(n*pi*z/L)`.
 
 ```bash
 uv run analysis/phi_init.py export \
   --output initial_phi.h5 \
   --phi-type single_mode_linear_full_ridge \
   --psi-avg 0.02 \
-  --amplitude 0.001 \
+  --amplitude 1e-6 \
   --mode-number 7
 ```
 

@@ -60,7 +60,7 @@ class SingleModeLinearFullRidgePhiTests(unittest.TestCase):
         )
         self.assertEqual(args.mode_number, 3)
 
-    def test_applies_cosine_to_linear_full_ridge_and_normalizes(self) -> None:
+    def test_displaces_only_z_and_conserves_each_rho_row(self) -> None:
         base = phi_field_from_params(
             {**COMMON_PARAMS, "phi_type": PhiType.LINEAR_FULL_RIDGE.value}
         )
@@ -68,7 +68,7 @@ class SingleModeLinearFullRidgePhiTests(unittest.TestCase):
             {
                 **COMMON_PARAMS,
                 "phi_type": PhiType.SINGLE_MODE_LINEAR_FULL_RIDGE.value,
-                "amplitude": 0.1,
+                "amplitude": 1e-5,
                 "mode_number": 3,
             }
         )
@@ -77,17 +77,21 @@ class SingleModeLinearFullRidgePhiTests(unittest.TestCase):
         raw_base = base.build(rho, z)
         raw_perturbed = perturbed.build(rho, z)
         active = slice(perturbed.wing_z, perturbed.N - perturbed.wing_z)
-        x = (z[active] - z[active][0]) / (z[active][-1] - z[active][0])
-        multiplier = 1.0 + perturbed.amplitude * np.cos(
-            np.pi * perturbed.mode_number * x
-        )
+        self.assertFalse(np.array_equal(raw_base, raw_perturbed))
+        self.assertTrue(np.all(raw_perturbed >= 0))
+        # No transport across rho rows, unlike multiplicative modulation.
+        np.testing.assert_allclose(raw_perturbed.sum(axis=1), raw_base.sum(axis=1), atol=1e-14)
+        self.assertTrue(np.any((raw_base == 0) & (raw_perturbed > 0)))
 
-        self.assertTrue(
-            np.array_equal(raw_base != 0.0, raw_perturbed != 0.0)
-        )
-        np.testing.assert_allclose(
-            raw_perturbed[:, active], raw_base[:, active] * multiplier[np.newaxis, :]
-        )
+        # The shared multimode remap with one random coefficient gives the
+        # same result after rescaling epsilon to make that coefficient one.
+        coefficient = np.random.default_rng(7).normal()
+        multi = phi_field_from_params({
+            **COMMON_PARAMS, "phi_type": PhiType.PERTURBED_LINEAR_FULL_RIDGE.value,
+            "epsilon": perturbed.amplitude / coefficient, "seed": 7,
+            "mode_min": 3, "mode_max": 3,
+        })
+        np.testing.assert_allclose(raw_perturbed, multi.build(rho, z), atol=1e-14)
 
         phi_values = result.phi_values
         self.assertTrue(np.all(phi_values[: perturbed.wing_r, :] == 0.0))
@@ -96,6 +100,15 @@ class SingleModeLinearFullRidgePhiTests(unittest.TestCase):
             perturbed.N - 2 * perturbed.wing_z
         )
         self.assertAlmostEqual(active_average, perturbed.psi_avg)
+
+    def test_displacement_rejects_folding_and_unresolved_modes(self) -> None:
+        for amplitude, mode in ((0.1, 3), (-0.1, 3), (1e-5, 0), (1e-5, 32)):
+            field = phi_field_from_params({
+                **COMMON_PARAMS, "phi_type": PhiType.SINGLE_MODE_LINEAR_FULL_RIDGE.value,
+                "amplitude": amplitude, "mode_number": mode,
+            })
+            with self.assertRaises(ValueError):
+                field.compute()
 
 
 class PerturbedLinearFullGaussianRidgePhiTests(unittest.TestCase):
@@ -196,7 +209,8 @@ def test_displacement_index_excites_matching_dct_cosine(mode):
     (PhiType.PERTURBED_LINEAR_FULL_RIDGE, {}),
     (PhiType.PERTURBED_LINEAR_FULL_GAUSSIAN_RIDGE, {"gaussian_mu": 1100., "gaussian_sigma": 4.}),
 ])
-def test_displacement_folding_check_and_export_use_pi_basis(tmp_path, phi_type, extras):
+@pytest.mark.parametrize("sign", [-1, 1])
+def test_displacement_folding_check_and_export_use_pi_basis(tmp_path, phi_type, extras, sign):
     mode, seed = 3, 0
     length = COMMON_PARAMS["N"] * COMMON_PARAMS["dz"]
     b = abs(np.random.default_rng(seed).normal())
@@ -204,7 +218,7 @@ def test_displacement_folding_check_and_export_use_pi_basis(tmp_path, phi_type, 
     params = {
         **COMMON_PARAMS, **extras, "phi_type": phi_type.value,
         "wing_z": 0, "wing_r": 0,
-        "epsilon": 0.75 * critical_epsilon,
+        "epsilon": sign * 0.75 * critical_epsilon,
         "seed": seed, "mode_min": mode, "mode_max": mode,
     }
     field = phi_field_from_params(params)
@@ -215,9 +229,34 @@ def test_displacement_folding_check_and_export_use_pi_basis(tmp_path, phi_type, 
     field.write_phi_h5(tmp_path / "phi.h5", result)
     with h5py.File(tmp_path / "phi.h5") as handle:
         assert handle["phi"].attrs["displacement_basis"] == "sin(n*pi*z/L)"
-    folded = phi_field_from_params({**params, "epsilon": 1.1 * critical_epsilon})
+        assert handle["phi"].attrs["epsilon"] == params["epsilon"]
+    folded = phi_field_from_params({**params, "epsilon": sign * 1.1 * critical_epsilon})
     with pytest.raises(ValueError, match="folding"):
         folded.compute()
+
+
+@pytest.mark.parametrize("epsilon", [-1e-12, 1e-12, -1e-7, 1e-7])
+def test_seeded_multimode_signed_small_displacements(epsilon):
+    params = {
+        **COMMON_PARAMS, "N": 128, "dz": 0.07 / 128,
+        "wing_z": 0, "wing_r": 0,
+        "phi_type": PhiType.PERTURBED_LINEAR_FULL_RIDGE.value,
+        "epsilon": epsilon, "seed": 17, "mode_min": 3, "mode_max": 10,
+    }
+    result = phi_field_from_params(params).compute()
+    baseline = phi_field_from_params({**params, "epsilon": 0}).compute()
+    assert np.all(result.phi_values >= 0)
+    assert not np.array_equal(result.phi_values, baseline.phi_values)
+    np.testing.assert_allclose(result.phi_values.sum(axis=1), baseline.phi_values.sum(axis=1), atol=1e-14)
+    # Seeded weights retain the same signs for ±epsilon. The normalized response
+    # excites every requested mode with the conservative face-displacement scale.
+    coeff = dct((result.phi_values - baseline.phi_values).sum(axis=0) / epsilon, norm="ortho")
+    modes = np.arange(3, 11)
+    weights = np.random.default_rng(17).normal(size=len(modes))
+    expected = (-params["psi_avg"] * weights * 2
+                * np.sin(np.pi * modes / (2 * params["N"])) / params["dz"]
+                * np.sqrt(params["N"] / 2))
+    np.testing.assert_allclose(coeff[modes], expected, rtol=5e-3, atol=1e-4)
 
 
 if __name__ == "__main__":
