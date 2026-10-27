@@ -179,6 +179,7 @@ def extract_user_code(code_string, target_var_name):
         linspace=np.linspace,
         geomspace=np.geomspace,
         array=np.array,
+        sqrt=np.sqrt,
     )
 
     custom_tools = {
