@@ -132,6 +132,11 @@ int deriveAndValidateOrDie(SimConfig *c) {
         fprintf(stderr, "modelType has to be convolution or taylor!\n");
         return -1;
     }
+    if (c->model.modelType == TAYL &&
+        (!isfinite(c->model.variant.Tayl.NU) || !isfinite(c->model.variant.Tayl.MU))) {
+        fprintf(stderr, "Taylor NU and MU must be finite!\n");
+        return -1;
+    }
     if (strlen(c->model.initialPhiFile) > 0) {
         FILE *initialPhiFile = fopen(c->model.initialPhiFile, "rb");
         if (initialPhiFile == NULL) {

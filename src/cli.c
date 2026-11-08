@@ -131,8 +131,8 @@ int parseArguments(int argc, char **argv, SimConfig *cfg) {
     // TAYLOR - Options that are only valid for the taylor branch
     struct arg_lit *cli_tayl =
         arg_lit1("t", "use-taylor", "use taylor approximation");
-    struct arg_dbl *cli_NU = arg_dbl0(NULL, "NU", "<double>", "interaction nu");
-    struct arg_dbl *cli_MU = arg_dbl0(NULL, "MU", "<double>", "interaction mu");
+    struct arg_dbl *cli_NU = arg_dbl1(NULL, "NU", "<double>", "interaction nu (required for Taylor)");
+    struct arg_dbl *cli_MU = arg_dbl1(NULL, "MU", "<double>", "interaction mu (required for Taylor)");
     struct arg_end *endTayl = arg_end(20);
     void *argtableTayl[] = { cli_help, cli_tayl, cli_N, cli_T, cli_DT, cli_storeTime, cli_gradient, cli_store, cli_outDir, cli_phiFile, cli_NU, cli_MU, endTayl };
     int nErrorsTayl;

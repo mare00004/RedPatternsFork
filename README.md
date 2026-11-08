@@ -108,7 +108,7 @@ Explanation TODO
 Usage:
          red-patterns [COMMON...]
          red-patterns  -c|--use-convolution [COMMON...]
-         red-patterns  -t|--use-taylor [--NU=<double>] [--MU=<double>] [COMMON...]
+         red-patterns  -t|--use-taylor --NU=<double> --MU=<double> [COMMON...]
 
 COMMON:
         --T=<double>              total simulation time in seconds

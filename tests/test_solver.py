@@ -122,3 +122,19 @@ def test_final_snapshot_and_diagnostics_match_final_state(solver, duration, step
             velocity[:, 1:-1] > 0, saved_phi[-1, :, :-1], saved_phi[-1, :, 1:]
         )
         np.testing.assert_allclose(handle["fields/face_flux"][-1, :, 1:-1], expected_flux)
+
+
+@pytest.mark.parametrize("missing", [{"NU": None}, {"MU": None}, {"NU": None, "MU": None}])
+def test_taylor_requires_explicit_coefficients(solver, missing):
+    result, out = solver(**missing)
+    assert result.returncode != 0
+    assert not (out / "run.h5").exists()
+    assert "missing option" in result.stderr
+
+
+@pytest.mark.parametrize("invalid", [{"NU": "nan"}, {"MU": "inf"}])
+def test_taylor_rejects_nonfinite_coefficients(solver, invalid):
+    result, out = solver(**invalid)
+    assert result.returncode != 0
+    assert not (out / "run.h5").exists()
+    assert "finite" in result.stderr
