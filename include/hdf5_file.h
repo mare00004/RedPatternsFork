@@ -23,7 +23,7 @@ typedef struct {
     hsize_t t;              // Current Time Step [Idx]
 } TSWriter;
 
-int loadConvKernelFile(const char *path, double **kernelValues, int *kernelN);
+int loadConvKernelFile(const char *path, double **kernelValues, SimConfig *cfg);
 int loadInitialPhiFile(const char *path, double **phiValues, int expectedN);
 int ts_create(
     TSWriter *w,

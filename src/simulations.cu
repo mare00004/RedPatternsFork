@@ -154,13 +154,15 @@ int runSim(SimConfig &cfg) {
     int numKernelPoints = 0;
     std::vector<double> h_intKernel;
     if (useConvolution) {
-        M = cfg.model.variant.Conv.M;
         double *loadedKernel = NULL;
 
-        if (loadConvKernelFile(cfg.model.variant.Conv.kernelFile, &loadedKernel, &numKernelPoints) != 0) {
+        if (loadConvKernelFile(cfg.model.variant.Conv.kernelFile, &loadedKernel, &cfg) != 0) {
             fprintf(stderr, "Failed to load convolution kernel from %s\n", cfg.model.variant.Conv.kernelFile);
             return failRun("Failed to load convolution kernel", 0, 0.0, 0.0, 0.0);
         }
+
+        numKernelPoints = cfg.model.variant.Conv.kernelN;
+        M = cfg.model.variant.Conv.M;
 
         h_intKernel.assign(loadedKernel, loadedKernel + numKernelPoints);
         free(loadedKernel);
@@ -237,6 +239,8 @@ int runSim(SimConfig &cfg) {
     int currentStep = 0;
     double currentTime = 0.0;
     try {
+        // Kernel metadata may change subDiv and M; upload the resolved config.
+        checkCuda(cudaMemcpyToSymbol(d_cfg, &cfg, sizeof(SimConfig)));
         checkCuda(cudaMalloc(&d_invalidStep, sizeof(int)));
         checkCuda(cudaMalloc(&d_R, TO_BYTES(numRhoPoints)));
         checkCuda(cudaMalloc(&d_phi, TO_BYTES(numPhiPoints)));

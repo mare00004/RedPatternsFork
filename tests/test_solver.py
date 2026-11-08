@@ -171,3 +171,37 @@ def test_nonfinite_flux_fails(solver):
     progress = json.loads((out / "progress.json").read_text())
     assert progress["status"] == "failed"
     assert "Nonfinite" in progress["error"]
+
+
+@pytest.mark.parametrize("subdiv", [1, 3, 128])
+def test_convolution_uses_imported_sampling(solver, subdiv):
+    dz = 0.07 / 32
+    result, out = solver(
+        kernel=np.full(31, 1e-30),
+        kernel_attrs={"DZ": dz, "subDiv": subdiv, "spacing": dz / subdiv},
+        store="face-velocity",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    with h5py.File(out / "run.h5") as handle:
+        attrs = handle["config/model/variant/conv"].attrs
+        assert attrs["subDiv"] == subdiv
+        assert attrs["M"] == 32 * subdiv
+        expected = -7.4e23 * 0.02 * 31 * 1e-30 * dz / subdiv
+        np.testing.assert_allclose(handle["fields/face_velocity"][0, :, 16], expected, rtol=1e-12)
+
+
+@pytest.mark.parametrize("attrs", [
+    {},
+    {"DZ": 0.07 / 64, "subDiv": 256, "spacing": 0.07 / 64 / 256},
+    {"DZ": 0.07 / 32, "subDiv": 128, "spacing": 0.07 / 32 / 256},
+    {"DZ": 0.07 / 32, "subDiv": 0, "spacing": 1e-6},
+    {"DZ": 0.07 / 32, "subDiv": 1.5, "spacing": 1e-6},
+    {"DZ": 0.07 / 32, "subDiv": 1e12, "spacing": 1e-6},
+    {"DZ": 0.07 / 32, "subDiv": 256, "spacing": float("nan")},
+    {"DZ": [0.07 / 32, 0.07 / 32], "subDiv": 256, "spacing": 1e-6},
+])
+def test_convolution_rejects_ambiguous_or_incompatible_sampling(solver, attrs):
+    result, out = solver(kernel=np.zeros(31), kernel_attrs=attrs)
+    assert result.returncode != 0
+    assert not (out / "run.h5").exists()
+    assert json.loads((out / "progress.json").read_text())["status"] == "failed"

@@ -11,6 +11,7 @@
 #include "build_info.h"
 #include "sim_types.h"
 #include <hdf5.h>
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -172,19 +173,58 @@ hid_t writeF64Vec(hid_t loc_id, const char *name, hsize_t n, const double *buf) 
     return dset;
 }
 
-int loadConvKernelFile(const char *path, double **kernelValues, int *kernelN) {
+// Kernel sampling metadata must be scalar to avoid reading an array into one double.
+static int readKernelScalar(hid_t group, const char *name, double *value) {
+    if (H5Aexists(group, name) <= 0) {
+        fprintf(stderr, "Kernel is missing required sampling attribute %s\n", name);
+        return -1;
+    }
+    hid_t attr = H5Aopen(group, name, H5P_DEFAULT);
+    if (attr < 0) {
+        return -1;
+    }
+    hid_t space = H5Aget_space(attr);
+    int status = -1;
+    if (space >= 0 && H5Sget_simple_extent_type(space) == H5S_SCALAR &&
+        H5Aread(attr, H5T_NATIVE_DOUBLE, value) >= 0) {
+        status = 0;
+    }
+    if (space >= 0) {
+        H5Sclose(space);
+    }
+    H5Aclose(attr);
+    return status;
+}
+
+int loadConvKernelFile(const char *path, double **kernelValues, SimConfig *cfg) {
     hid_t file = -1;
+    hid_t group = -1;
     hid_t dset = -1;
     hid_t space = -1;
     hsize_t dims[1] = { 0 };
     double *values = NULL;
     int status = -1;
+    double dz = 0.0, spacing = 0.0, subDiv = 0.0;
 
     *kernelValues = NULL;
-    *kernelN = 0;
 
     file = H5Fopen(path, H5F_ACC_RDONLY, H5P_DEFAULT);
     if (file < 0) {
+        goto cleanup;
+    }
+
+    group = H5Gopen2(file, "/kernel", H5P_DEFAULT);
+    if (group < 0 || readKernelScalar(group, "DZ", &dz) != 0 ||
+        readKernelScalar(group, "spacing", &spacing) != 0 ||
+        readKernelScalar(group, "subDiv", &subDiv) != 0) {
+        goto cleanup;
+    }
+    if (!isfinite(dz) || !isfinite(spacing) || !isfinite(subDiv) ||
+        dz <= 0.0 || spacing <= 0.0 || subDiv < 1.0 || floor(subDiv) != subDiv ||
+        subDiv > INT_MAX / cfg->run.N ||
+        fabs(dz - cfg->run.DZ) > 1e-10 * cfg->run.DZ ||
+        fabs(spacing - dz / subDiv) > 1e-10 * spacing) {
+        fprintf(stderr, "Kernel sampling must match simulation DZ=%.17g, with positive integer subDiv and spacing=DZ/subDiv\n", cfg->run.DZ);
         goto cleanup;
     }
 
@@ -198,7 +238,8 @@ int loadConvKernelFile(const char *path, double **kernelValues, int *kernelN) {
         goto cleanup;
     }
 
-    if (H5Sget_simple_extent_dims(space, dims, NULL) < 0 || dims[0] == 0 || (dims[0] % 2) == 0) {
+    if (H5Sget_simple_extent_dims(space, dims, NULL) < 0 || dims[0] == 0 ||
+        dims[0] > INT_MAX || (dims[0] % 2) == 0) {
         goto cleanup;
     }
 
@@ -212,7 +253,10 @@ int loadConvKernelFile(const char *path, double **kernelValues, int *kernelN) {
     }
 
     *kernelValues = values;
-    *kernelN = (int)dims[0];
+    cfg->model.variant.Conv.kernelN = (int)dims[0];
+    cfg->model.variant.Conv.subDiv = (int)subDiv;
+    cfg->model.variant.Conv.M = cfg->run.N * (int)subDiv;
+    cfg->model.variant.Conv.fineDZ = cfg->run.DZ / subDiv;
     values = NULL;
     status = 0;
 
@@ -225,6 +269,9 @@ cleanup:
     }
     if (dset >= 0) {
         H5Dclose(dset);
+    }
+    if (group >= 0) {
+        H5Gclose(group);
     }
     if (file >= 0) {
         H5Fclose(file);

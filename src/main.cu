@@ -34,8 +34,6 @@ int main(int argc, char *argv[]) {
         printf("\nDevice Name: %s\n", prop.name);
         printf("Compute Capability: %d.%d\n\n", prop.major, prop.minor);
 
-        checkCuda(cudaMemcpyToSymbol(d_cfg, &cfg, sizeof(SimConfig)));
-
         printf("Starting Simulation...\n");
         return runSim(cfg) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     } catch (const std::exception &error) {
