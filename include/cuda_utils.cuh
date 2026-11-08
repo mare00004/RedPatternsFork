@@ -1,16 +1,14 @@
 #ifndef CUDA_UTILS_H
 #define CUDA_UTILS_H
-#include <cassert>
-#include <stdio.h>
+#include <cuda_runtime_api.h>
+#include <stdexcept>
+#include <string>
 
 /* check cuda device */
 inline cudaError_t checkCuda(cudaError_t result) {
-#if defined(DEBUG) || defined(_DEBUG)
     if (result != cudaSuccess) {
-        fprintf(stderr, "CUDA Runtime Error: %s\n", cudaGetErrorString(result));
-        assert(result == cudaSuccess);
+        throw std::runtime_error(std::string("CUDA Runtime Error: ") + cudaGetErrorString(result));
     }
-#endif
     return result;
 }
 

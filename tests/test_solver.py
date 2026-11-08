@@ -6,6 +6,7 @@ Optionally set RED_PATTERNS_SANITIZER to the compute-sanitizer executable.
 """
 
 import os
+import json
 from pathlib import Path
 import subprocess
 
@@ -71,3 +72,13 @@ def test_convolution_covers_last_coarse_cell(solver):
     with h5py.File(out / "run.h5") as handle:
         assert handle["config/model/variant/conv"].attrs["M"] == 32 * 256
         np.testing.assert_allclose(handle["fields/phi"][:], 0.02 / 32)
+
+
+def test_cuda_launch_failure_marks_run_failed(solver):
+    # This launch exceeds the default dynamic shared-memory allowance.
+    result, out = solver(kernel=np.zeros(7001))
+    assert result.returncode != 0
+    assert "CUDA Runtime Error" in result.stderr
+    progress = json.loads((out / "progress.json").read_text())
+    assert progress["status"] == "failed"
+    assert "CUDA" in progress["error"]

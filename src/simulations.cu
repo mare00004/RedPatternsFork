@@ -195,28 +195,17 @@ int runSim(SimConfig &cfg) {
            *d_IIntp = nullptr, *d_p = nullptr, *d_gradWing = nullptr, *d_b = nullptr, *d_c = nullptr, *d_d = nullptr, *d_Iface = nullptr,
            *d_faceVelocity = nullptr;
 
-    cudaMalloc(&d_R, TO_BYTES(numRhoPoints));
-    cudaMalloc(&d_phi, TO_BYTES(numPhiPoints));
-    cudaMalloc(&d_psi, TO_BYTES(numPsiPoints));
-    cudaMalloc(&d_I, TO_BYTES(numPsiPoints));
-    cudaMalloc(&d_F, TO_BYTES(numFluxPoints));
-    cudaMalloc(&d_p, TO_BYTES(numZCells));
-    cudaMalloc(&d_gradWing, TO_BYTES(numZCells));
-    cudaMalloc(&d_Iface, TO_BYTES(numZFaces));
-    if (BITMAP_CONTAINS(cfg.run.store, FACE_VELOCITY)) {
-        cudaMalloc(&d_faceVelocity, TO_BYTES(numFluxPoints));
-    }
-
     cudaEvent_t startEvent = nullptr;
     cudaEvent_t stopEvent = nullptr;
     bool writer_created = false;
 
+    // Cleanup is best effort and must not throw while handling a CUDA error.
     auto cleanup = [&]() {
         if (startEvent != nullptr) {
-            checkCuda(cudaEventDestroy(startEvent));
+            cudaEventDestroy(startEvent);
         }
         if (stopEvent != nullptr) {
-            checkCuda(cudaEventDestroy(stopEvent));
+            cudaEventDestroy(stopEvent);
         }
 
         cudaFree(d_R);
@@ -243,277 +232,312 @@ int runSim(SimConfig &cfg) {
         }
     };
 
-    if (cfg.model.modelType == CONV) {
-        cudaMalloc(&d_intKernel, TO_BYTES(numKernelPoints));
-        cudaMalloc(&d_psiIntp, TO_BYTES(numFineZCells));
-        cudaMalloc(&d_IIntp, TO_BYTES(numFineZCells));
-        cudaMalloc(&d_b, TO_BYTES(numZCells));
-        cudaMalloc(&d_c, TO_BYTES(numZCells));
-        cudaMalloc(&d_d, TO_BYTES(numZCells));
-    }
+    int currentStep = 0;
+    double currentTime = 0.0;
+    try {
+        checkCuda(cudaMalloc(&d_R, TO_BYTES(numRhoPoints)));
+        checkCuda(cudaMalloc(&d_phi, TO_BYTES(numPhiPoints)));
+        checkCuda(cudaMalloc(&d_psi, TO_BYTES(numPsiPoints)));
+        checkCuda(cudaMalloc(&d_I, TO_BYTES(numPsiPoints)));
+        checkCuda(cudaMalloc(&d_F, TO_BYTES(numFluxPoints)));
+        checkCuda(cudaMalloc(&d_p, TO_BYTES(numZCells)));
+        checkCuda(cudaMalloc(&d_gradWing, TO_BYTES(numZCells)));
+        checkCuda(cudaMalloc(&d_Iface, TO_BYTES(numZFaces)));
+        if (BITMAP_CONTAINS(cfg.run.store, FACE_VELOCITY)) {
+            checkCuda(cudaMalloc(&d_faceVelocity, TO_BYTES(numFluxPoints)));
+        }
 
-    printf("Initializing device memory...\n");
+        if (cfg.model.modelType == CONV) {
+            checkCuda(cudaMalloc(&d_intKernel, TO_BYTES(numKernelPoints)));
+            checkCuda(cudaMalloc(&d_psiIntp, TO_BYTES(numFineZCells)));
+            checkCuda(cudaMalloc(&d_IIntp, TO_BYTES(numFineZCells)));
+            checkCuda(cudaMalloc(&d_b, TO_BYTES(numZCells)));
+            checkCuda(cudaMalloc(&d_c, TO_BYTES(numZCells)));
+            checkCuda(cudaMalloc(&d_d, TO_BYTES(numZCells)));
+        }
 
-    // Initializing density coordinate rho.
-    for (int j = 0; j < numRhoPoints; j++) {
-        h_R[j] = RC - RL / 2 + RL * (double(j) / double(numRhoPoints - 1));
-    }
-    cudaMemcpy(d_R, h_R.data(), TO_BYTES(numRhoPoints), cudaMemcpyHostToDevice);
+        printf("Initializing device memory...\n");
 
-    // Initializing Z coordinate at cell centers
-    for (int j = 0; j < numZCells; j++) {
-        h_Z[j] = (double(j) + 0.5) * cfg.run.DZ;
-    }
+        // Initializing density coordinate rho.
+        for (int j = 0; j < numRhoPoints; j++) {
+            h_R[j] = RC - RL / 2 + RL * (double(j) / double(numRhoPoints - 1));
+        }
+        checkCuda(cudaMemcpy(d_R, h_R.data(), TO_BYTES(numRhoPoints), cudaMemcpyHostToDevice));
 
-    // Initializing phi from an external file when requested.
-    double *loadedPhi = NULL;
+        // Initializing Z coordinate at cell centers
+        for (int j = 0; j < numZCells; j++) {
+            h_Z[j] = (double(j) + 0.5) * cfg.run.DZ;
+        }
 
-    printf("Loading Initial Phi file...\n");
+        // Initializing phi from an external file when requested.
+        double *loadedPhi = NULL;
 
-    // FIX: Update N to numPhiPoints?
-    if (loadInitialPhiFile(cfg.model.initialPhiFile, &loadedPhi, N) != 0) {
-        fprintf(stderr, "Failed to load initial phi from %s\n", cfg.model.initialPhiFile);
-        cleanup();
-        return failRun("Failed to load initial phi", 0, 0.0, 0.0, 0.0);
-    }
+        printf("Loading Initial Phi file...\n");
 
-    printf("Initial Phi file loaded.\n");
+        // FIX: Update N to numPhiPoints?
+        if (loadInitialPhiFile(cfg.model.initialPhiFile, &loadedPhi, N) != 0) {
+            fprintf(stderr, "Failed to load initial phi from %s\n", cfg.model.initialPhiFile);
+            cleanup();
+            return failRun("Failed to load initial phi", 0, 0.0, 0.0, 0.0);
+        }
 
-    // FIX: Update N to numPhiPoints?
-    h_phi.assign(loadedPhi, loadedPhi + N * N);
-    free(loadedPhi);
+        printf("Initial Phi file loaded.\n");
 
-    cudaMemcpy(d_phi, h_phi.data(), TO_BYTES(numPhiPoints), cudaMemcpyHostToDevice);
-    cudaMemset(d_I, 0, TO_BYTES(numZCells));
-    cudaMemset(d_psi, 0, TO_BYTES(numPsiPoints));
-    cudaMemset(d_p, 0, TO_BYTES(numZCells));
-    cudaMemset(d_gradWing, 0, TO_BYTES(numZCells));
+        // FIX: Update N to numPhiPoints?
+        h_phi.assign(loadedPhi, loadedPhi + N * N);
+        free(loadedPhi);
 
-    if (cfg.model.modelType == CONV) {
-        cudaMemcpy(d_intKernel, h_intKernel.data(), TO_BYTES(numKernelPoints), cudaMemcpyHostToDevice);
-        cudaMemset(d_psiIntp, 0, TO_BYTES(numFineZCells));
-        cudaMemset(d_IIntp, 0, TO_BYTES(numFineZCells));
-        cudaMemset(d_b, 0, TO_BYTES(numZCells));
-        cudaMemset(d_c, 0, TO_BYTES(numZCells));
-        cudaMemset(d_d, 0, TO_BYTES(numZCells));
-    }
+        checkCuda(cudaMemcpy(d_phi, h_phi.data(), TO_BYTES(numPhiPoints), cudaMemcpyHostToDevice));
+        checkCuda(cudaMemset(d_I, 0, TO_BYTES(numZCells)));
+        checkCuda(cudaMemset(d_psi, 0, TO_BYTES(numPsiPoints)));
+        checkCuda(cudaMemset(d_p, 0, TO_BYTES(numZCells)));
+        checkCuda(cudaMemset(d_gradWing, 0, TO_BYTES(numZCells)));
 
-    printf("Creating save file...\n");
-    if (ts_create(
-            &w,
-            outFilePath,
-            &cfg,
-            h_R.data(),
-            h_Z.data(),
-            h_phi.data(),
-            useConvolution ? h_intKernel.data() : NULL,
-            useConvolution ? numKernelPoints : 0) != 0) {
-        fprintf(stderr, "Failed to create output file %s\n", outFilePath);
-        cleanup();
-        return failRun("Failed to create output file", 0, 0.0, 0.0, 0.0);
-    }
-    writer_created = true;
+        if (cfg.model.modelType == CONV) {
+            checkCuda(cudaMemcpy(d_intKernel, h_intKernel.data(), TO_BYTES(numKernelPoints), cudaMemcpyHostToDevice));
+            checkCuda(cudaMemset(d_psiIntp, 0, TO_BYTES(numFineZCells)));
+            checkCuda(cudaMemset(d_IIntp, 0, TO_BYTES(numFineZCells)));
+            checkCuda(cudaMemset(d_b, 0, TO_BYTES(numZCells)));
+            checkCuda(cudaMemset(d_c, 0, TO_BYTES(numZCells)));
+            checkCuda(cudaMemset(d_d, 0, TO_BYTES(numZCells)));
+        }
 
-    updateProgress(
-        progressPath,
-        ProgressState{
-            "running",
-            0,
-            NT,
-            0.0,
-            0.0,
-            0.0,
-            outFilePath,
-            NULL,
-        });
+        printf("Creating save file...\n");
+        if (ts_create(
+                &w,
+                outFilePath,
+                &cfg,
+                h_R.data(),
+                h_Z.data(),
+                h_phi.data(),
+                useConvolution ? h_intKernel.data() : NULL,
+                useConvolution ? numKernelPoints : 0) != 0) {
+            fprintf(stderr, "Failed to create output file %s\n", outFilePath);
+            cleanup();
+            return failRun("Failed to create output file", 0, 0.0, 0.0, 0.0);
+        }
+        writer_created = true;
 
-    printf("starting timer.\n");
-    // start time measurement
-    float milliseconds;
-    checkCuda(cudaEventCreate(&startEvent));
-    checkCuda(cudaEventCreate(&stopEvent));
+        updateProgress(
+            progressPath,
+            ProgressState{
+                "running",
+                0,
+                NT,
+                0.0,
+                0.0,
+                0.0,
+                outFilePath,
+                NULL,
+            });
 
-    printf("defining grid and starting loop.\n");
+        printf("starting timer.\n");
+        // start time measurement
+        float milliseconds;
+        checkCuda(cudaEventCreate(&startEvent));
+        checkCuda(cudaEventCreate(&stopEvent));
 
-    // TODO: Make variable
-    constexpr unsigned int one_dim_block_size = 512;
-    const dim3 cell_block_dim(one_dim_block_size, 1, 1);
-    const dim3 cell_grid_dim((numZCells + cell_block_dim.x - 1) / cell_block_dim.x, 1, 1);
-    const dim3 face_block_dim(one_dim_block_size, 1, 1);
-    const dim3 face_grid_dim((numZFaces + face_block_dim.x - 1) / face_block_dim.x, 1, 1);
+        printf("defining grid and starting loop.\n");
 
-    checkCuda(cudaEventRecord(startEvent, 0));
+        // TODO: Make variable
+        constexpr unsigned int one_dim_block_size = 512;
+        const dim3 cell_block_dim(one_dim_block_size, 1, 1);
+        const dim3 cell_grid_dim((numZCells + cell_block_dim.x - 1) / cell_block_dim.x, 1, 1);
+        const dim3 face_block_dim(one_dim_block_size, 1, 1);
+        const dim3 face_grid_dim((numZFaces + face_block_dim.x - 1) / face_block_dim.x, 1, 1);
 
-    // iteration loop
-    double storeTime = cfg.run.storeTime;
-    double lastSave = 0.0;
-    double t = 0.0;
-    for (int i = 0; i < NT; i++) {
-        /* integration */
-        CuKernelInte<<<cell_grid_dim, cell_block_dim>>>(d_phi, d_psi);
+        checkCuda(cudaEventRecord(startEvent, 0));
 
-        if (useConvolution) {
-            const int subDiv = cfg.model.variant.Conv.subDiv;
-            const dim3 fine_cell_block_dim(one_dim_block_size, 1, 1);
-            const dim3 fine_cell_grid_dim((numFineZCells + fine_cell_block_dim.x - 1) / fine_cell_block_dim.x, 1, 1);
-            const size_t spline_shared_bytes = 2ull * numZCells * sizeof(double);
+        // iteration loop
+        double storeTime = cfg.run.storeTime;
+        double lastSave = 0.0;
+        double t = 0.0;
+        for (int i = 0; i < NT; i++) {
+            currentStep = i;
+            currentTime = t;
+            /* integration */
+            CuKernelInte<<<cell_grid_dim, cell_block_dim>>>(d_phi, d_psi);
+            checkCuda(cudaGetLastError());
 
-            // FIX: Use one of the num...Points instead of `cfg.run.N`
-            CuKernelSplineCoeffs<<<1, 1, spline_shared_bytes>>>(d_psi, d_b, d_c, d_d, cfg.run.N);
-            CuKernelSplineEvalCellCentered<<<fine_cell_grid_dim, fine_cell_block_dim>>>(d_psi, d_b, d_c, d_d, d_psiIntp, cfg.run.N, cfg.model.variant.Conv.M, subDiv);
+            if (useConvolution) {
+                const int subDiv = cfg.model.variant.Conv.subDiv;
+                const dim3 fine_cell_block_dim(one_dim_block_size, 1, 1);
+                const dim3 fine_cell_grid_dim((numFineZCells + fine_cell_block_dim.x - 1) / fine_cell_block_dim.x, 1, 1);
+                const size_t spline_shared_bytes = 2ull * numZCells * sizeof(double);
 
-            CuKernelConv<<<fine_cell_grid_dim, fine_cell_block_dim, (fine_cell_block_dim.x + numKernelPoints - 1) * sizeof(double)>>>(
-                d_psiIntp,
-                d_IIntp,
-                d_intKernel,
-                numFineZCells,
-                numKernelPoints,
-                subDiv);
+                // FIX: Use one of the num...Points instead of `cfg.run.N`
+                CuKernelSplineCoeffs<<<1, 1, spline_shared_bytes>>>(d_psi, d_b, d_c, d_d, cfg.run.N);
+                checkCuda(cudaGetLastError());
+                CuKernelSplineEvalCellCentered<<<fine_cell_grid_dim, fine_cell_block_dim>>>(d_psi, d_b, d_c, d_d, d_psiIntp, cfg.run.N, cfg.model.variant.Conv.M, subDiv);
+                checkCuda(cudaGetLastError());
 
-            CuKernelDownSample<<<cell_grid_dim, cell_block_dim>>>(
-                d_IIntp,
-                d_I,
-                subDiv);
+                CuKernelConv<<<fine_cell_grid_dim, fine_cell_block_dim, (fine_cell_block_dim.x + numKernelPoints - 1) * sizeof(double)>>>(
+                    d_psiIntp,
+                    d_IIntp,
+                    d_intKernel,
+                    numFineZCells,
+                    numKernelPoints,
+                    subDiv);
+                checkCuda(cudaGetLastError());
 
-            CuKernelCellToFace<<<face_grid_dim, face_block_dim>>>(
-                d_I,
-                d_Iface);
-        } else if (cfg.model.modelType == TAYL) {
-            double dz = cfg.run.DZ;
-            double c1 = cfg.model.variant.Tayl.NU / (12.0 * dz);
-            double c3 = cfg.model.variant.Tayl.MU / (2.0 * dz * dz * dz);
+                CuKernelDownSample<<<cell_grid_dim, cell_block_dim>>>(
+                    d_IIntp,
+                    d_I,
+                    subDiv);
+                checkCuda(cudaGetLastError());
 
-            CuKernelTaylFace<<<face_grid_dim, face_block_dim>>>(
-                d_psi,
+                CuKernelCellToFace<<<face_grid_dim, face_block_dim>>>(
+                    d_I,
+                    d_Iface);
+                checkCuda(cudaGetLastError());
+            } else if (cfg.model.modelType == TAYL) {
+                double dz = cfg.run.DZ;
+                double c1 = cfg.model.variant.Tayl.NU / (12.0 * dz);
+                double c3 = cfg.model.variant.Tayl.MU / (2.0 * dz * dz * dz);
+
+                CuKernelTaylFace<<<face_grid_dim, face_block_dim>>>(
+                    d_psi,
+                    d_Iface,
+                    c1,
+                    c3);
+                checkCuda(cudaGetLastError());
+            } else {
+                printf("This branch should never be reached!");
+            }
+
+            if (cfg.model.gradientType == LINEAR) {
+                CuKernelGradLinear<<<cell_grid_dim, cell_block_dim>>>(d_p);
+                checkCuda(cudaGetLastError());
+            } else if (cfg.model.gradientType == SIGMOID) {
+                CuKernelGradSigmoid<<<cell_grid_dim, cell_block_dim>>>(d_p, t);
+                checkCuda(cudaGetLastError());
+            } else if (cfg.model.gradientType == ZERO) {
+                CuKernelGradZero<<<cell_grid_dim, cell_block_dim>>>(d_p);
+                checkCuda(cudaGetLastError());
+            } else if (cfg.model.gradientType == LINEAR_FULL) {
+                CuKernelGradLinearFull<<<cell_grid_dim, cell_block_dim>>>(d_p);
+                checkCuda(cudaGetLastError());
+            } else {
+                printf("This branch should never be reached!");
+            }
+
+            const dim3 flux_block_dim(BLOCK_SIZE, BLOCK_SIZE, 1);
+            const dim3 flux_grid_dim(
+                (numZFaces + flux_block_dim.x - 1) / flux_block_dim.x,
+                (numZCells + flux_block_dim.y - 1) / flux_block_dim.y,
+                1);
+
+            CuKernelComputeFluxFVM<<<flux_grid_dim, flux_block_dim>>>(
+                d_phi,
+                d_F,
+                d_p,
+                d_R,
                 d_Iface,
-                c1,
-                c3);
-        } else {
-            printf("This branch should never be reached!");
-        }
+                d_gradWing,
+                d_faceVelocity);
+            checkCuda(cudaGetLastError());
 
-        if (cfg.model.gradientType == LINEAR) {
-            CuKernelGradLinear<<<cell_grid_dim, cell_block_dim>>>(d_p);
-        } else if (cfg.model.gradientType == SIGMOID) {
-            CuKernelGradSigmoid<<<cell_grid_dim, cell_block_dim>>>(d_p, t);
-        } else if (cfg.model.gradientType == ZERO) {
-            CuKernelGradZero<<<cell_grid_dim, cell_block_dim>>>(d_p);
-        } else if (cfg.model.gradientType == LINEAR_FULL) {
-            CuKernelGradLinearFull<<<cell_grid_dim, cell_block_dim>>>(d_p);
-        } else {
-            printf("This branch should never be reached!");
-        }
+            const dim3 update_block_dim(BLOCK_SIZE, BLOCK_SIZE, 1);
+            const dim3 update_grid_dim(
+                (numZCells + update_block_dim.x - 1) / update_block_dim.x,
+                (numZCells + update_block_dim.y - 1) / update_block_dim.y,
+                1);
 
-        const dim3 flux_block_dim(BLOCK_SIZE, BLOCK_SIZE, 1);
-        const dim3 flux_grid_dim(
-            (numZFaces + flux_block_dim.x - 1) / flux_block_dim.x,
-            (numZCells + flux_block_dim.y - 1) / flux_block_dim.y,
-            1);
+            checkCuda(cudaDeviceSynchronize());
 
-        CuKernelComputeFluxFVM<<<flux_grid_dim, flux_block_dim>>>(
-            d_phi,
-            d_F,
-            d_p,
-            d_R,
-            d_Iface,
-            d_gradWing,
-            d_faceVelocity);
+            if ((i == 0) || (t - lastSave >= storeTime) || (i == NT)) {
+                checkCuda(cudaMemcpy(h_phi.data(), d_phi, TO_BYTES(numPhiPoints), cudaMemcpyDeviceToHost));
+                checkCuda(cudaMemcpy(h_psi.data(), d_psi, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
+                checkCuda(cudaMemcpy(h_p.data(), d_p, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
+                if (BITMAP_CONTAINS(cfg.run.store, FACE_VELOCITY)) {
+                    checkCuda(cudaMemcpy(h_faceVelocity.data(), d_faceVelocity, TO_BYTES(numFluxPoints), cudaMemcpyDeviceToHost));
+                }
+                if (BITMAP_CONTAINS(cfg.run.store, FACE_FLUX)) {
+                    checkCuda(cudaMemcpy(h_faceFlux.data(), d_F, TO_BYTES(numFluxPoints), cudaMemcpyDeviceToHost));
+                }
 
-        const dim3 update_block_dim(BLOCK_SIZE, BLOCK_SIZE, 1);
-        const dim3 update_grid_dim(
-            (numZCells + update_block_dim.x - 1) / update_block_dim.x,
-            (numZCells + update_block_dim.y - 1) / update_block_dim.y,
-            1);
+                if (ts_append(
+                        &w,
+                        t,
+                        cfg.run.store,
+                        h_phi.data(),
+                        h_psi.data(),
+                        h_p.data(),
+                        h_faceVelocity.empty() ? nullptr : h_faceVelocity.data(),
+                        h_faceFlux.empty() ? nullptr : h_faceFlux.data()) != 0) {
+                    fprintf(stderr, "Failed to append timestep data to %s\n", outFilePath);
+                    cleanup();
+                    return failRun("Failed to append timestep data", i, 0.0, 0.0, t);
+                }
 
-        cudaDeviceSynchronize();
+                // measure time
+                checkCuda(cudaEventRecord(stopEvent, 0));
+                checkCuda(cudaEventSynchronize(stopEvent));
+                checkCuda(cudaEventElapsedTime(&milliseconds, startEvent, stopEvent));
+                const double elapsedSec = milliseconds / 1000.0;
+                const double remainingSec = elapsedSec * double(NT - i) / double(i);
 
-        if ((i == 0) || (t - lastSave >= storeTime) || (i == NT)) {
-            checkCuda(cudaMemcpy(h_phi.data(), d_phi, TO_BYTES(numPhiPoints), cudaMemcpyDeviceToHost));
-            checkCuda(cudaMemcpy(h_psi.data(), d_psi, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
-            checkCuda(cudaMemcpy(h_p.data(), d_p, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
-            if (BITMAP_CONTAINS(cfg.run.store, FACE_VELOCITY)) {
-                checkCuda(cudaMemcpy(h_faceVelocity.data(), d_faceVelocity, TO_BYTES(numFluxPoints), cudaMemcpyDeviceToHost));
-            }
-            if (BITMAP_CONTAINS(cfg.run.store, FACE_FLUX)) {
-                checkCuda(cudaMemcpy(h_faceFlux.data(), d_F, TO_BYTES(numFluxPoints), cudaMemcpyDeviceToHost));
-            }
+                printf("step: %d/%d\n", i, NT);
+                printf("runtime (sec): %.5f\n", elapsedSec);
+                printf("remaining (sec): %.5f\n", remainingSec);
 
-            if (ts_append(
-                    &w,
-                    t,
-                    cfg.run.store,
-                    h_phi.data(),
-                    h_psi.data(),
-                    h_p.data(),
-                    h_faceVelocity.empty() ? nullptr : h_faceVelocity.data(),
-                    h_faceFlux.empty() ? nullptr : h_faceFlux.data()) != 0) {
-                fprintf(stderr, "Failed to append timestep data to %s\n", outFilePath);
-                cleanup();
-                return failRun("Failed to append timestep data", i, 0.0, 0.0, t);
+                updateProgress(
+                    progressPath,
+                    ProgressState{
+                        "running",
+                        i,
+                        NT,
+                        elapsedSec,
+                        remainingSec,
+                        t,
+                        outFilePath,
+                        NULL,
+                    });
+
+                lastSave = t;
             }
 
-            // measure time
-            checkCuda(cudaEventRecord(stopEvent, 0));
-            checkCuda(cudaEventSynchronize(stopEvent));
-            checkCuda(cudaEventElapsedTime(&milliseconds, startEvent, stopEvent));
-            const double elapsedSec = milliseconds / 1000.0;
-            const double remainingSec = elapsedSec * double(NT - i) / double(i);
+            CuKernelUpdatePhiFVM<<<update_grid_dim, update_block_dim>>>(
+                d_phi,
+                d_F);
+            checkCuda(cudaGetLastError());
 
-            printf("step: %d/%d\n", i, NT);
-            printf("runtime (sec): %.5f\n", elapsedSec);
-            printf("remaining (sec): %.5f\n", remainingSec);
-
-            updateProgress(
-                progressPath,
-                ProgressState{
-                    "running",
-                    i,
-                    NT,
-                    elapsedSec,
-                    remainingSec,
-                    t,
-                    outFilePath,
-                    NULL,
-                });
-
-            lastSave = t;
+            t += DT;
         }
 
-        CuKernelUpdatePhiFVM<<<update_grid_dim, update_block_dim>>>(
-            d_phi,
-            d_F);
+        printf("finished.\n\n");
 
-        t += DT;
+        // stop timer
+        checkCuda(cudaEventRecord(stopEvent, 0));
+        checkCuda(cudaEventSynchronize(stopEvent));
+        checkCuda(cudaEventElapsedTime(&milliseconds, startEvent, stopEvent));
+
+        // show stats
+        printf("   total steps: %d\n", NT);
+        printf("   total time (ms): %f\n", milliseconds);
+        printf("   average time (ms): %f\n", milliseconds / NT);
+
+        ts_postRunInfo(&w, milliseconds / 1000);
+        updateProgress(
+            progressPath,
+            ProgressState{
+                "finished",
+                NT,
+                NT,
+                milliseconds / 1000.0,
+                0.0,
+                cfg.run.T,
+                outFilePath,
+                NULL,
+            });
+
+        /****************************/
+        cleanup();
+        /****************************/
+        return 0;
+    } catch (const std::exception &error) {
+        fprintf(stderr, "%s\n", error.what());
+        cleanup();
+        return failRun(error.what(), currentStep, 0.0, 0.0, currentTime);
     }
-
-    printf("finished.\n\n");
-
-    // stop timer
-    checkCuda(cudaEventRecord(stopEvent, 0));
-    checkCuda(cudaEventSynchronize(stopEvent));
-    checkCuda(cudaEventElapsedTime(&milliseconds, startEvent, stopEvent));
-
-    // show stats
-    printf("   total steps: %d\n", NT);
-    printf("   total time (ms): %f\n", milliseconds);
-    printf("   average time (ms): %f\n", milliseconds / NT);
-
-    ts_postRunInfo(&w, milliseconds / 1000);
-    updateProgress(
-        progressPath,
-        ProgressState{
-            "finished",
-            NT,
-            NT,
-            milliseconds / 1000.0,
-            0.0,
-            cfg.run.T,
-            outFilePath,
-            NULL,
-        });
-
-    /****************************/
-    cleanup();
-    /****************************/
-    return 0;
 }
