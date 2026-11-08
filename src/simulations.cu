@@ -197,6 +197,7 @@ int runSim(SimConfig &cfg) {
 
     cudaEvent_t startEvent = nullptr;
     cudaEvent_t stopEvent = nullptr;
+    int *d_invalidStep = nullptr;
     bool writer_created = false;
 
     // Cleanup is best effort and must not throw while handling a CUDA error.
@@ -217,6 +218,7 @@ int runSim(SimConfig &cfg) {
         cudaFree(d_faceVelocity);
         cudaFree(d_p);
         cudaFree(d_gradWing);
+        cudaFree(d_invalidStep);
 
         if (cfg.model.modelType == CONV) {
             cudaFree(d_intKernel);
@@ -235,6 +237,7 @@ int runSim(SimConfig &cfg) {
     int currentStep = 0;
     double currentTime = 0.0;
     try {
+        checkCuda(cudaMalloc(&d_invalidStep, sizeof(int)));
         checkCuda(cudaMalloc(&d_R, TO_BYTES(numRhoPoints)));
         checkCuda(cudaMalloc(&d_phi, TO_BYTES(numPhiPoints)));
         checkCuda(cudaMalloc(&d_psi, TO_BYTES(numPsiPoints)));
@@ -445,7 +448,28 @@ int runSim(SimConfig &cfg) {
                 (numZCells + update_block_dim.y - 1) / update_block_dim.y,
                 1);
 
-            checkCuda(cudaDeviceSynchronize());
+            const double stepDT = fmin(DT, cfg.run.T - t);
+            if (i < NT) {
+                checkCuda(cudaMemset(d_invalidStep, 0, sizeof(int)));
+                CuKernelValidatePhiStep<<<update_grid_dim, update_block_dim>>>(
+                    d_phi,
+                    d_F,
+                    stepDT,
+                    d_invalidStep);
+                checkCuda(cudaGetLastError());
+                int invalidStep = 0;
+                checkCuda(cudaMemcpy(&invalidStep, d_invalidStep, sizeof(int), cudaMemcpyDeviceToHost));
+                if (invalidStep != 0) {
+                    const char *message = invalidStep == 1
+                                              ? "Time step violates the positivity/CFL bound; reduce DT"
+                                              : "Nonfinite field or flux encountered; reduce DT and check parameters";
+                    fprintf(stderr, "%s\n", message);
+                    cleanup();
+                    return failRun(message, i, 0.0, 0.0, t);
+                }
+            } else {
+                checkCuda(cudaDeviceSynchronize());
+            }
 
             if ((i == 0) || (i == NT) || (t - lastSave >= storeTime)) {
                 checkCuda(cudaMemcpy(h_phi.data(), d_phi, TO_BYTES(numPhiPoints), cudaMemcpyDeviceToHost));
@@ -504,7 +528,6 @@ int runSim(SimConfig &cfg) {
             }
 
             // Shorten the last step when T is not a multiple of DT.
-            const double stepDT = fmin(DT, cfg.run.T - t);
             CuKernelUpdatePhiFVM<<<update_grid_dim, update_block_dim>>>(
                 d_phi,
                 d_F,

@@ -128,6 +128,10 @@ TAYLOR:
 
 ## Analyzing the Output
 
+The solver stops with a nonzero exit status if a step violates the local
+positivity/CFL bound or produces a nonfinite field or flux. Reduce `--DT` and
+rerun; negative values are not clipped, so failed steps cannot silently add mass.
+
 The result of running the simulation with a given set of parameters will be a single [HDF5] file called `run.h5` stored inside the folder given by `--out-dir`. This file contains the data produced by the simulation as well as all the configuration to reproduce the data. That means as long as you have the `run.h5` file you can easily reproduce any simulation later by:
 
 1. Getting the commit hash

@@ -138,3 +138,36 @@ def test_taylor_rejects_nonfinite_coefficients(solver, invalid):
     assert result.returncode != 0
     assert not (out / "run.h5").exists()
     assert "finite" in result.stderr
+
+
+def test_cfl_violation_fails_before_creating_mass(solver):
+    phi = np.zeros((32, 32))
+    phi[0, 2] = 0.02
+    result, out = solver(phi=phi, gradient="linear", T=20, DT=10, storeTime=10)
+    assert result.returncode != 0
+    progress = json.loads((out / "progress.json").read_text())
+    assert progress["status"] == "failed"
+    assert progress["step"] == 0
+    assert "CFL" in progress["error"]
+
+
+def test_stable_transport_conserves_mass_and_remains_positive(solver):
+    phi = np.zeros((32, 32))
+    phi[0, 2] = 0.02
+    result, out = solver(phi=phi, gradient="linear", T=0.1, storeTime=0.01)
+    assert result.returncode == 0, result.stdout + result.stderr
+    with h5py.File(out / "run.h5") as handle:
+        values = handle["fields/phi"][:]
+        assert np.isfinite(values).all()
+        assert np.min(values) >= 0
+        np.testing.assert_allclose(values.sum(axis=(1, 2)), 0.02, rtol=1e-13)
+
+
+def test_nonfinite_flux_fails(solver):
+    phi = np.zeros((32, 32))
+    phi[0, 2] = 0.02
+    result, out = solver(phi=phi, MU=1e300)
+    assert result.returncode != 0
+    progress = json.loads((out / "progress.json").read_text())
+    assert progress["status"] == "failed"
+    assert "Nonfinite" in progress["error"]

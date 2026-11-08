@@ -331,6 +331,37 @@ __global__ void CuKernelComputeFluxFVM(
     J[fidx] = v_face * phi_up + diff_flux;
 }
 
+__global__ void CuKernelValidatePhiStep(
+    const double *__restrict__ phi,
+    const double *__restrict__ J,
+    double dt,
+    int *invalidStep) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const int j = blockIdx.y * blockDim.y + threadIdx.y;
+    const int N = d_cfg.run.N;
+    if (i >= N || j >= N) {
+        return;
+    }
+
+    const double value = phi[j * N + i];
+    const double leftFlux = J[j * (N + 1) + i];
+    const double rightFlux = J[j * (N + 1) + i + 1];
+    const double scale = dt / d_cfg.run.DZ;
+    const double nextValue = value - scale * (rightFlux - leftFlux);
+    if (!isfinite(value) || !isfinite(leftFlux) || !isfinite(rightFlux) || !isfinite(nextValue)) {
+        atomicMax(invalidStep, 2);
+        return;
+    }
+
+    // For the current upwind advective flux (D_Z = 0), outgoing flux divided
+    // by this cell's positive value is its total outgoing face velocity.
+    // This is the local positivity/CFL bound, including flow in both directions.
+    const double outgoing = fmax(rightFlux, 0.0) + fmax(-leftFlux, 0.0);
+    if (scale * outgoing > value || nextValue < 0.0) {
+        atomicMax(invalidStep, 1);
+    }
+}
+
 __global__ void CuKernelUpdatePhiFVM(
     double *__restrict__ phi,
     const double *__restrict__ J,
@@ -353,13 +384,5 @@ __global__ void CuKernelUpdatePhiFVM(
     phi[pidx] +=
         -dt / d_cfg.run.DZ * (flux_out - flux_in);
 
-    /*
-     * Be careful:
-     * This positivity clamp breaks exact mass conservation.
-     * It is okay as a debugging guard, but if it triggers often,
-     * your time step is probably too large.
-     */
-    if (phi[pidx] < 0.0) {
-        phi[pidx] = 0.0;
-    }
+    // The host validates the entire step before launching this update.
 }
