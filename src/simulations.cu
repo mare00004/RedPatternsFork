@@ -505,7 +505,9 @@ int runSim(SimConfig &cfg) {
                 checkCuda(cudaEventSynchronize(stopEvent));
                 checkCuda(cudaEventElapsedTime(&milliseconds, startEvent, stopEvent));
                 const double elapsedSec = milliseconds / 1000.0;
-                const double remainingSec = elapsedSec * double(NT - i) / double(i);
+                // No step rate is available before the first update. Keep the
+                // initial ETA finite so progress.json remains valid JSON.
+                const double remainingSec = i > 0 ? elapsedSec * double(NT - i) / double(i) : 0.0;
 
                 printf("step: %d/%d\n", i, NT);
                 printf("runtime (sec): %.5f\n", elapsedSec);

@@ -213,3 +213,15 @@ def test_store_interval_retains_fractional_seconds(solver, interval):
     assert result.returncode == 0, result.stdout + result.stderr
     with h5py.File(out / "run.h5") as handle:
         assert handle["config/run"].attrs["storeTime"] == interval
+
+
+def test_progress_eta_is_finite_from_initial_snapshot(solver):
+    result, out = solver()
+    assert result.returncode == 0, result.stdout + result.stderr
+    # The same ETA is logged and serialized for each snapshot, including t=0.
+    estimates = [float(line.split(":", 1)[1]) for line in result.stdout.splitlines()
+                 if line.startswith("remaining (sec):")]
+    assert estimates[0] == 0.0
+    assert np.isfinite(estimates).all()
+    progress = json.loads((out / "progress.json").read_text())
+    assert np.isfinite(progress["remaining_sec"])
