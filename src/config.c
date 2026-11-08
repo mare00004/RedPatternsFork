@@ -14,10 +14,8 @@ void setDefaults(SimConfig *c) {
     double wingL = 0.005;            // wing size [cm]
     double sysL = L + (2.0 * wingL); // simulation system size [cm]
 
-    /*
-     * To reproduce the old code use: `int M = (N)*subDiv + 1;`
-     */
-    int M = (N - 1) * subDiv + 1;
+    // Each coarse finite-volume cell contains subDiv fine cells.
+    int M = N * subDiv;
 
     double DZ = sysL / N;
     double fineDZ = sysL / M;
@@ -159,7 +157,7 @@ int deriveAndValidateOrDie(SimConfig *c) {
     c->run.DZ = c->run.sysL / ((double)c->run.N);
 
     if (c->model.modelType == CONV) {
-        c->model.variant.Conv.M = (c->run.N - 1) * c->model.variant.Conv.subDiv + 1;
+        c->model.variant.Conv.M = c->run.N * c->model.variant.Conv.subDiv;
         c->model.variant.Conv.fineDZ = c->run.sysL / ((double)c->model.variant.Conv.M);
     }
 
