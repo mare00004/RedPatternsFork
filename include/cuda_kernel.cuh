@@ -35,4 +35,5 @@ __global__ void CuKernelComputeFluxFVM(
     double *__restrict__ faceVelocity);
 __global__ void CuKernelUpdatePhiFVM(
     double *__restrict__ phi,
-    const double *__restrict__ J);
+    const double *__restrict__ J,
+    double dt);

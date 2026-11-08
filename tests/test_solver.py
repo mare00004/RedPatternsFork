@@ -53,10 +53,11 @@ def solver(tmp_path):
             args.update({"use-taylor": None, "NU": None, "MU": None,
                          "use-convolution": True, "kernel-file": kernel_path})
         args.update(options)
-        command = [str(binary)] + [
-            f"--{key}" if value is True else f"--{key}={value}"
-            for key, value in args.items() if value is not None
-        ]
+        command = [str(binary)]
+        for key, value in args.items():
+            for item in value if isinstance(value, tuple) else (value,):
+                if item is not None:
+                    command.append(f"--{key}" if item is True else f"--{key}={item}")
         sanitizer = os.environ.get("RED_PATTERNS_SANITIZER")
         if sanitizer:
             command = [sanitizer, "--error-exitcode=99", "--print-limit=5", *command]
@@ -93,3 +94,31 @@ def test_convolution_halo_matches_constant_field(solver, kernel_n):
         np.testing.assert_allclose(
             handle["fields/face_velocity"][0, :, 16], expected_velocity, rtol=1e-12
         )
+
+
+@pytest.mark.parametrize("duration, steps", [(0.01, 1), (0.02, 2), (0.025, 3), (0.07, 7)])
+def test_final_snapshot_and_diagnostics_match_final_state(solver, duration, steps):
+    phi = np.zeros((32, 32))
+    phi[0, 2] = 0.02
+    result, out = solver(phi=phi, T=duration, storeTime=0.5, gradient="linear",
+                         store=("face-velocity", "face-flux"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    with h5py.File(out / "run.h5") as handle:
+        np.testing.assert_array_equal(handle["time"][:], [0.0, duration])
+        assert handle["config/run"].attrs["NT"] == steps
+        saved_phi = handle["fields/phi"][:]
+        assert not np.array_equal(saved_phi[-1], saved_phi[0])
+        np.testing.assert_allclose(handle["fields/psi"][:], saved_phi.sum(axis=1))
+        # No cells upstream of the spike are populated. Its source-cell mass
+        # decays by a known factor per Euler step, including a partial last step.
+        velocity = handle["fields/face_velocity"][0]
+        dz = handle["config/run"].attrs["DZ"]
+        rate = velocity[0, 3] / dz
+        full_steps = int(duration / 0.01)
+        remainder = duration - full_steps * 0.01
+        expected_source = 0.02 * (1 - rate * 0.01)**full_steps * (1 - rate * remainder)
+        assert saved_phi[-1, 0, 2] == pytest.approx(expected_source, rel=1e-12)
+        expected_flux = velocity[:, 1:-1] * np.where(
+            velocity[:, 1:-1] > 0, saved_phi[-1, :, :-1], saved_phi[-1, :, 1:]
+        )
+        np.testing.assert_allclose(handle["fields/face_flux"][-1, :, 1:-1], expected_flux)

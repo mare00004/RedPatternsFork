@@ -352,7 +352,9 @@ int runSim(SimConfig &cfg) {
         double storeTime = cfg.run.storeTime;
         double lastSave = 0.0;
         double t = 0.0;
-        for (int i = 0; i < NT; i++) {
+        // Evaluate diagnostics and save the state after all NT updates as well.
+        for (int i = 0; i <= NT; i++) {
+            t = fmin(double(i) * DT, cfg.run.T);
             currentStep = i;
             currentTime = t;
             /* integration */
@@ -445,7 +447,7 @@ int runSim(SimConfig &cfg) {
 
             checkCuda(cudaDeviceSynchronize());
 
-            if ((i == 0) || (t - lastSave >= storeTime) || (i == NT)) {
+            if ((i == 0) || (i == NT) || (t - lastSave >= storeTime)) {
                 checkCuda(cudaMemcpy(h_phi.data(), d_phi, TO_BYTES(numPhiPoints), cudaMemcpyDeviceToHost));
                 checkCuda(cudaMemcpy(h_psi.data(), d_psi, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
                 checkCuda(cudaMemcpy(h_p.data(), d_p, TO_BYTES(numZCells), cudaMemcpyDeviceToHost));
@@ -497,12 +499,17 @@ int runSim(SimConfig &cfg) {
                 lastSave = t;
             }
 
+            if (i == NT) {
+                break;
+            }
+
+            // Shorten the last step when T is not a multiple of DT.
+            const double stepDT = fmin(DT, cfg.run.T - t);
             CuKernelUpdatePhiFVM<<<update_grid_dim, update_block_dim>>>(
                 d_phi,
-                d_F);
+                d_F,
+                stepDT);
             checkCuda(cudaGetLastError());
-
-            t += DT;
         }
 
         printf("finished.\n\n");

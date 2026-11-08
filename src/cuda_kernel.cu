@@ -333,7 +333,8 @@ __global__ void CuKernelComputeFluxFVM(
 
 __global__ void CuKernelUpdatePhiFVM(
     double *__restrict__ phi,
-    const double *__restrict__ J) {
+    const double *__restrict__ J,
+    double dt) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x; // cell index: 0 ... N-1
     const int j = blockIdx.y * blockDim.y + threadIdx.y; // rho index
 
@@ -350,7 +351,7 @@ __global__ void CuKernelUpdatePhiFVM(
     const double flux_out = J[j * (N + 1) + i + 1];
 
     phi[pidx] +=
-        -d_cfg.run.DT / d_cfg.run.DZ * (flux_out - flux_in);
+        -dt / d_cfg.run.DZ * (flux_out - flux_in);
 
     /*
      * Be careful:

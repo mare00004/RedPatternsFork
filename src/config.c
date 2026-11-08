@@ -153,6 +153,11 @@ int deriveAndValidateOrDie(SimConfig *c) {
      * DERIVE *
      **********/
     c->run.NT = ceil(c->run.T / c->run.DT);
+    // Division can round an integer ratio upward (e.g. 0.07 / 0.01).
+    // Do not schedule an empty step that already starts at the final time.
+    if (c->run.NT > 1 && (c->run.NT - 1) * c->run.DT >= c->run.T) {
+        c->run.NT--;
+    }
 
     c->run.DZ = c->run.sysL / ((double)c->run.N);
 
