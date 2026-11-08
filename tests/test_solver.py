@@ -205,3 +205,11 @@ def test_convolution_rejects_ambiguous_or_incompatible_sampling(solver, attrs):
     assert result.returncode != 0
     assert not (out / "run.h5").exists()
     assert json.loads((out / "progress.json").read_text())["status"] == "failed"
+
+
+@pytest.mark.parametrize("interval", [0.125, 2.5])
+def test_store_interval_retains_fractional_seconds(solver, interval):
+    result, out = solver(storeTime=interval)
+    assert result.returncode == 0, result.stdout + result.stderr
+    with h5py.File(out / "run.h5") as handle:
+        assert handle["config/run"].attrs["storeTime"] == interval
