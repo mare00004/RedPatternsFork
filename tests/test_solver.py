@@ -82,3 +82,14 @@ def test_cuda_launch_failure_marks_run_failed(solver):
     progress = json.loads((out / "progress.json").read_text())
     assert progress["status"] == "failed"
     assert "CUDA" in progress["error"]
+
+
+@pytest.mark.parametrize("kernel_n", [31, 1027])
+def test_convolution_halo_matches_constant_field(solver, kernel_n):
+    result, out = solver(kernel=np.full(kernel_n, 1e-30), store="face-velocity")
+    assert result.returncode == 0, result.stdout + result.stderr
+    expected_velocity = -7.4e23 * 0.02 * kernel_n * 1e-30 * (0.07 / 32 / 256)
+    with h5py.File(out / "run.h5") as handle:
+        np.testing.assert_allclose(
+            handle["fields/face_velocity"][0, :, 16], expected_velocity, rtol=1e-12
+        )

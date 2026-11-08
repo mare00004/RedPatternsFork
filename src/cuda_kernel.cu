@@ -224,31 +224,21 @@ __global__ void CuKernelSplineEvalCellCentered(
 
 /* convolution kernel */
 __global__ void CuKernelConv(double *psi, double *I, double *convKernel, int M, int kernelN, int subDiv) {
-    // Optimized 1D convolution kernel using constant memory for the kernel
-    // coefficients and shared memory tiling for input data. The convKernel
-    // parameter is unused but kept for signature compatibility.
+    // kernelN is positive and odd (validated by loadConvKernelFile).
+    // The caller allocates (blockDim.x + kernelN - 1) shared doubles and checks
+    // launch errors if this exceeds the device's shared-memory limit.
+    // Load the whole tile with zero padding outside [0, M). Each thread may
+    // load several entries, so the halo need not fit within one CUDA block.
     extern __shared__ double s_psi[];
     int tid = threadIdx.x;
     int gid = blockIdx.x * blockDim.x + tid;
     int halo = (kernelN - 1) / 2;
     int blockStart = blockIdx.x * blockDim.x;
-    // load central data
-    if (gid < M) {
-        s_psi[tid + halo] = psi[gid];
-    } else {
-        s_psi[tid + halo] = 0.0;
-    }
-    // load left halo
-    if (tid < halo) {
-        int leftIdx = blockStart + tid - halo;
-        s_psi[tid] = (leftIdx >= 0 ? psi[leftIdx] : 0.0);
-    }
-    // load right halo
-    if (tid >= blockDim.x - halo) {
-        int offset = tid - (blockDim.x - halo);
-        int rightIdx = blockStart + tid + halo;
-        int sIdx = halo + blockDim.x + offset;
-        s_psi[sIdx] = (rightIdx < M ? psi[rightIdx] : 0.0);
+    const int blockSize = blockDim.x;
+    const int tileSize = blockSize + kernelN - 1;
+    for (int sIdx = tid; sIdx < tileSize; sIdx += blockSize) {
+        const int sourceIdx = blockStart + sIdx - halo;
+        s_psi[sIdx] = (sourceIdx >= 0 && sourceIdx < M) ? psi[sourceIdx] : 0.0;
     }
     __syncthreads();
     // perform convolution if in bounds
