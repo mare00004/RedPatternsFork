@@ -25,26 +25,81 @@ with app.setup:
 
 @app.cell(hide_code=True)
 def _():
-    mo.md(r"""
-    # Paired ν, μ sweep: adaptive modal growth and wavelengths
+    mo.vstack([
+        mo.md(r"""
+        # How do ridge perturbations grow or decay?
 
-    Select a sweep containing **runs.jsonl** and **results/**. Subtract the matching
-    unperturbed field at each saved time and transform along z with an orthonormal
-    DCT-II: $A_m(t)=\mathrm{DCT}_m[\psi_\mathrm{perturbed}(t)-\psi_\mathrm{reference}(t)]$.
-    Fit $\ln|A_m(t)|=b_m+\gamma_m(t-t_0)$ independently for every mode and pair.
-    **Empirical slopes** (default) allows noisy log traces using an RMS residual
-    tolerance. **Strict** reproduces the initial-prefix method of
-    `analyze_paired_mode_growth.py` with its original quality filters.
+        This notebook compares Taylor simulations of a displaced one-cell ridge
+        with matching unperturbed ridge simulations under a **LINEAR_FULL Percoll
+        profile**. It measures how spatial cosine components of the concentration
+        difference change over time, then compares those trends across ν and μ.
 
-    **Wavelength map:** $\ell_m=2N\Delta z/m$ for the largest positive included slope.
-    **Growth map:** the maximum included slope $\gamma_m$ in the selected
-    positive-mode band, including negative maxima. These are finite-time slopes
-    of observables, not Jacobian eigenvalues or proof of linear instability.
+        1. **Load a sweep** containing `runs.jsonl` and `results/`.
+        2. **Choose the cosine modes and fit settings.** Each mode gets a straight
+           line fitted to its early log-amplitude trace.
+        3. **Click a heatmap cell**, then inspect the rates for that run and the
+           fitted time trace of an individual mode below.
 
-    This sweep contains perturbed/reference pairs, so the response is one-sided;
-    the local notebook uses ±ε central differences. Dividing by a constant ε
-    changes amplitudes but leaves these growth rates unchanged.
-    """)
+        A positive slope means the measured amplitude grows during its fitted
+        interval; a negative slope means it decays. These are empirical trends,
+        not Jacobian eigenvalues. The continuum curves are comparison guides;
+        they are not the discrete ridge's verified instability boundary.
+        """),
+        mo.accordion({
+            "What is being fitted? Symbols and physical meaning": mo.md(r"""
+            At each saved time we subtract the **matching reference at that time**,
+            then transform the difference along z using an orthonormal DCT-II:
+
+            \[
+            \delta\psi(z,t)=\psi_{\rm perturbed}(z,t)-\psi_{\rm reference}(z,t),
+            \qquad A_m(t)=\mathrm{DCT}_m[\delta\psi(z,t)].
+            \]
+
+            We fit a line by ordinary, unweighted least squares:
+
+            \[
+            y_m(t)=\ln|A_m(t)|\approx b_m+\gamma_m(t-t_0).
+            \]
+
+            | Symbol | Meaning |
+            | --- | --- |
+            | ψ(z,t) | Concentration marginal obtained by summing the density-resolved population over density. |
+            | δψ | Perturbed concentration minus reference concentration; the signal analyzed here. |
+            | z, t | Spatial coordinate and saved simulation time. Plots use cm for z and seconds for t. |
+            | m | DCT-II cosine mode number. Higher m means shorter spatial wavelength. |
+            | N, Δz, L | Number of z cells, cell spacing, and domain length L = NΔz. |
+            | Aₘ(t) | Signed cosine coefficient; its amplitude is the absolute value, \|Aₘ(t)\|. This is not power. |
+            | t₀ | First saved time in the pair, which starts every candidate fit window. |
+            | bₘ | Fitted log amplitude at t₀. Its exponential is the fitted initial amplitude. |
+            | γₘ | Fitted amplitude growth rate in s⁻¹, i.e. slope of the natural log amplitude. |
+            | ℓₘ | Wavelength 2L/m for m > 0, converted to cm in tables and maps. |
+            | ν, μ | Saved Taylor interaction parameters (`NU`, `MU`) varied across the sweep. |
+            | ε, seed | Initial displacement amplitude (`epsilon`) and random seed specifying its modal mixture. |
+
+            For example, γ = 0.01 s⁻¹ corresponds to amplitude multiplication by
+            exp(0.01 × 100) ≈ 2.72 over 100 s **if that trend continues**.
+            A negative rate has decay time 1/|γ|. There is no factor of two:
+            fitting the log of power would give twice the amplitude rate.
+
+            Mode 0 is the spatially constant component. It can be inspected but
+            is excluded from the maps. The selected analysis band can differ from
+            the modes originally seeded in the simulation. Dividing δψ by a
+            constant ε changes the intercept, not the slope.
+            """),
+            "Why a fitted slope is not a stability eigenvalue": mo.md(r"""
+            The full discrete ridge state includes both density and position.
+            A spatial cosine in its marginal need not be an eigenvector of the
+            full Jacobian. One DCT coefficient can mix several decaying modes,
+            producing curved traces or transient amplitude growth even when the
+            equilibrium is linearly stable. A good line fit is therefore a
+            useful finite-time numerical measurement, rather than proof of an
+            unstable eigenmode. Compare ε, grid spacing, timestep and fit settings
+            when assessing its reproducibility.
+            """),
+        }),
+        mo.md("## 1. Load paired simulations\n\nRefresh saved results to rescan a running sweep. "
+              "Synthetic validation sweep uses generated exponential traces to demonstrate the workflow."),
+    ])
     return
 
 
@@ -77,7 +132,7 @@ def _(demo, directory, refresh):
                     _pair["status"] = f"Cannot load: {_exc}"
     _availability = pd.DataFrame(pairs).drop(columns=["perturbed_path", "equilibrium_path"], errors="ignore")
     mo.vstack([_message, mo.md(f"**{len(prepared)} / {len(pairs)} pairs loaded.**"),
-               mo.accordion({"Pair availability": mo.ui.table(_availability, selection=None)})])
+               mo.accordion({"Loaded pairs and reasons for missing results": mo.ui.table(_availability, selection=None)})])
     return pairs, prepared
 
 
@@ -92,16 +147,18 @@ def _(pairs, prepared):
         options={"Empirical slopes": "empirical", "Strict": "strict"},
         value="Empirical slopes", label="Fit policy",
     )
-    min_samples_ui = mo.ui.number(start=5, value=8, step=1, label="Minimum early-fit samples")
+    min_samples_ui = mo.ui.number(start=5, value=8, step=1, label="Minimum saved frames per fit")
     modes = mo.ui.range_slider(
         start=0, stop=_max_mode, step=1, value=[_low, max(_low, _high)],
-        label="Inclusive DCT mode range (both maps)",
+        label="Cosine modes to analyze (inclusive; controls both maps)",
         show_value=True, full_width=True, debounce=True,
     )
-    mo.vstack([mo.hstack([fit_policy, min_samples_ui]), modes, mo.md(
+    mo.vstack([mo.md("## 2. Choose how to fit\n\nStart with Empirical slopes for approximate trends. "
+                         "Strict adds quality cutoffs. Increasing the residual tolerance permits noisier "
+                         "or more curved traces and can lengthen the fitted interval."),
+               mo.hstack([fit_policy, min_samples_ui]), modes, mo.md(
         "Each mode gets its own early window starting at its pair's first saved frame. "
-        "The table and downloads report every fitted endpoint and sample count. "
-        "DCTs are cached, so changing these sliders does not reread HDF5 files."
+        "The mode range sets which rates can enter the maps; it does not filter the full concentration heatmap."
     )])
     return fit_policy, min_samples_ui, modes
 
@@ -116,6 +173,58 @@ def _(fit_policy):
     )
     tolerance_ui
     return (tolerance_ui,)
+
+
+@app.cell(hide_code=True)
+def _(fit_policy, min_samples_ui, tolerance_ui):
+    _empirical = fit_policy.value == "empirical"
+    _metric = "RMS log residual" if _empirical else "maximum absolute log residual"
+    _quality = (
+        "Empirical mode includes all finite fitted slopes in the maps, even when "
+        "their quality status flags a poor fit or an uncertain slope. R², residuals "
+        "and slope standard errors remain visible; no R² or significance cutoff is applied. "
+        "The default RMS tolerance 0.25 permits typical multiplicative deviations of about 28%."
+        if _empirical else
+        "Strict mode includes only rates with log relative fit error ≤ 0.1 (R² ≥ 0.99) "
+        "and slope magnitude above twice its fit standard error."
+    )
+    mo.accordion({"How the fitting window and quality checks work": mo.md(rf"""
+    **Current settings:** start at the first saved frame with
+    **{min_samples_ui.value} samples**, then extend one frame at a time. Stop at the
+    first prefix whose {_metric} exceeds **{tolerance_ui.value:g}**,
+    reaches the numerical floor, or changes sign. Retain the preceding prefix.
+    If the first candidate fails, there is no automatic fit; no later window is searched.
+    If every frame passes, the data have not identified the end of the fitted trend.
+
+    {_quality}
+
+    Every extension refits the intercept and slope by minimizing the sum of
+    squared log residuals. Saved times are used directly, so irregular saved-time
+    spacing is allowed; frames receive equal weight. No smoothing is applied.
+
+    A **residual** is observed ln|Aₘ| minus the fitted line. **RMS** is the square
+    root of the mean squared residual, in natural-log units. A residual of +0.25
+    means an amplitude about exp(0.25) = 1.28 times the fitted amplitude; −0.25
+    means about 0.78 times it. RMS 0.25 is not a bound on every individual point.
+    Strict uses the largest absolute residual instead.
+
+    **Minimum saved frames** sets the shortest candidate interval, not a duration
+    in seconds. Increasing the residual tolerance can retain longer, noisier or
+    more curved intervals. Switching fit policy resets tolerance to its default.
+    A fitted interval is a numerical choice, not a certified physical linear regime.
+
+    **Numerical floor:** a conservative roundoff estimate based on float64
+    precision and the background field magnitude. Coefficients at or below it
+    are not logged or replaced with a small constant. This does not model all
+    solver errors. Sign changes stop a fit because a single signed exponential
+    cannot cross zero, even though we plot its absolute amplitude.
+
+    **Included** means the rate enters the maximum-rate and wavelength summaries.
+    Empirical mode can include a rate whose status warns of uncertainty or poor
+    fit; Strict excludes it. Mode 0 is excluded under both policies. A negative
+    maximum describes only the included modes.
+    """)})
+    return
 
 
 @app.cell
@@ -160,21 +269,52 @@ def _():
             "Original parameters: ν versus μ": "raw",
         },
         value="Normalized onset: |ν| / |ν_c(μ)| versus −μ",
-        label="Phase-space coordinates",
+        label="Heatmap axes",
     )
-    mo.vstack([coordinates, mo.md(r"""
-    For the saved Taylor model,
-    $\sigma(k)=-\alpha g-\beta\bar\psi\nu k^2+\beta\bar\psi\mu k^4$.
-    A fixed mode is neutral at
-    $\nu=-\alpha g/(\beta\bar\psi k^2)+\mu k^2$.
-    Maximizing over continuous $k>0$, for $\nu,\mu<0$, gives
-    $\nu_c^2=C(-\mu)$ with $C=4\alpha g/(\beta\bar\psi)$ and $g=30/L$.
+    mo.vstack([
+        mo.md("## 3. Compare runs in parameter space\n\nEach colored cell summarizes one run. "
+              "The left map shows the wavelength with the largest positive fitted slope; "
+              "the right shows the largest fitted slope, including negative values."),
+        coordinates,
+        mo.md("The default x axis divides |ν| by the continuum reference threshold |ν_c|. "
+              "The reference onset is at x = 1. Changing axes changes the display, not the fits."),
+        mo.accordion({"Axes, black reference curves and continuum equations": mo.md(r"""
+        **Original** displays ν against μ. **Squared** displays ν² against −μ;
+        the continuous-wavenumber onset is straight when the other parameters are
+        fixed. **Normalized** displays |ν|/|ν_c(μ)| against −μ; values above 1
+        predict growth in the continuum model. The transformed views use ν < 0
+        and μ < 0; normalization also requires valid model metadata.
 
-    Thus **ν² versus −μ has a straight predicted boundary** when C is fixed.
-    **|ν|/|ν_c| has its predicted boundary at 1**: values above 1 predict
-    instability. These are continuum predictions; the selected discrete DCT
-    band and adaptive fits can have different apparent boundaries.
-    """)])
+        The continuum reference uses
+
+        \[
+        \sigma(k)=-\alpha g-\beta\bar\psi\nu k^2+\beta\bar\psi\mu k^4,
+        \qquad k_m=m\pi/L,\qquad g=30/L.
+        \]
+
+        Here σ is the theoretical amplitude rate, k is angular wavenumber,
+        α and β are the saved buoyancy and interaction coefficients, and ψ̄ is
+        the initial reference mean concentration. The positive g is the magnitude
+        of the Percoll gradient. These predictions omit discrete stencil effects
+        and do not give the one-cell ridge's Jacobian spectrum.
+
+        **Dashed black:** onset after optimizing over all continuous k > 0:
+
+        \[
+        \nu_c=-\sqrt{C(-\mu)},\qquad C=\frac{4\alpha g}{\beta\bar\psi}.
+        \]
+
+        **Solid black:** the same continuum formula sampled only at the selected
+        positive DCT modes, with onset
+
+        \[
+        \nu_{\rm band}=\max_m\left(\mu k_m^2-\frac{C}{4k_m^2}\right).
+        \]
+
+        These curves can overlap. Neither is a boundary inferred from the fitted
+        slopes. Display units such as ν/10⁻³⁰ only rescale the axes.
+        """)}),
+    ])
     return (coordinates,)
 
 
@@ -190,9 +330,35 @@ def _():
         options={f"{_value:g} cm": _value for _value in
                  [0.1, 0.14, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 1.0, 1.4, 2.0, 3.0, 5.0, 10.0, 14.0]},
         value=["0.3 cm", "0.5 cm", "0.7 cm", "1 cm"],
-        label="Predicted fastest-wavelength contours",
+        label="Show continuum wavelength guides [cm]",
     )
-    contour_levels
+    mo.vstack([
+        contour_levels,
+        mo.md("Choose wavelengths to draw orange dotted guides on both maps. "
+              "For example, the 1 cm curve joins parameter values where the continuum "
+              "model predicts a fastest-growing wavelength of 1 cm. Removing a choice hides its curve; "
+              "this control does not change any fits or heatmap colors."),
+        mo.accordion({"How wavelength guides are calculated, and why one may be missing": mo.md(r"""
+        A guide is a contour of the **predicted** optimum wavelength, not a fit to
+        the measured wavelength map. Compare it with the colors of the left map
+        to see whether measured and predicted wavelength selection agree.
+
+        For ν, μ < 0 the continuum optimum is
+
+        \[
+        k_* = \sqrt{\nu/(2\mu)},\qquad \ell_*=2\pi/k_*.
+        \]
+
+        Selecting a wavelength ℓ draws the parameter curve
+        ν = 2μ(2π/ℓ)², converting the selected cm to meters first. Only segments
+        inside the displayed parameter range are drawn, with k* inside the
+        selected mode band and at least one selected mode predicted to grow.
+        A guide can therefore disappear when you change the mode range or axes,
+        or when the displayed region has no eligible growing segment. Missing
+        guides are listed below the maps. Black onset curves remain independent
+        of these wavelength choices.
+        """)}),
+    ])
     return (contour_levels,)
 
 
@@ -248,7 +414,8 @@ def _(axis_titles, contour_levels, modal_summary, overlay_data, phase_data):
             alt.Tooltip("seed:Q"), alt.Tooltip("epsilon:Q", format=".3e"),
             alt.Tooltip("max_growth_fit_end_s:Q", title="Max-rate mode fit end [s]"),
             alt.Tooltip("max_growth_fit_samples:Q", title="Max-rate mode fit samples"),
-            alt.Tooltip("resolved_modes:Q"), alt.Tooltip("unresolved_modes:Q"),
+            alt.Tooltip("resolved_modes:Q", title="Modes used in maps"),
+            alt.Tooltip("unresolved_modes:Q", title="Unavailable or excluded modes"),
             alt.Tooltip("mode_min:Q"), alt.Tooltip("mode_max:Q"),
             alt.Tooltip("fastest_mode:Q"), alt.Tooltip(metric + ":Q", format=".6g"),
             alt.Tooltip(status + ":N"),
@@ -278,7 +445,7 @@ def _(axis_titles, contour_levels, modal_summary, overlay_data, phase_data):
                 color="black", strokeWidth=2, clip=True,
             ).encode(
                 x="phase_x:Q", y="phase_y:Q", detail="curve_id:N", order="point_order:Q",
-                strokeDash=alt.StrokeDash("curve:N", title="Predicted onset", scale=alt.Scale(
+                strokeDash=alt.StrokeDash("curve:N", title="Continuum reference onset", scale=alt.Scale(
                     domain=["Continuum onset", "Selected-mode onset"], range=[[6, 4], [1, 0]],
                 )),
                 tooltip=[alt.Tooltip("curve:N"), alt.Tooltip("dct_length_m:Q", title="L [m]"),
@@ -317,57 +484,32 @@ def _(axis_titles, contour_levels, modal_summary, overlay_data, phase_data):
         _heatmaps, chart_selection=False, legend_selection=False,
     )
     mo.vstack([phase_heatmap,
-               mo.md("**Click a cell in either heatmap** to inspect that ν, μ pair below; "
-                     "double-click to clear the selection. **Grey cells:** unavailable or unresolved estimates. "
-                     "**Dashed black:** continuum onset. **Solid black:** continuum prediction sampled at selected DCT modes. "
-                     "**Orange dotted:** labelled continuum fastest-wavelength contours, shown where the "
-                     "optimum is inside the selected band and at least one selected mode grows. "
-                     "The two onset curves can overlap closely. Axes use numeric spacing; cell edges lie "
-                     "halfway between samples in each row and do not imply interpolated measurements. "
-                     f"**{_omitted} rows omitted** from this view because its coordinates are undefined "
-                     "(nonnegative ν/μ in transformed views, or unavailable normalization metadata). "
-                     "The rate color scale is centered on zero: red = growth, blue = decay. "
-                     "Multiple seeds at the same coordinates overlap; the selector below lists the runs in the clicked cell."),
-               mo.md("Contours with no growing segment inside this view: " + ", ".join(_hidden_levels))
-               if _hidden_levels else mo.md("All requested wavelength contours have a growing segment in this view."),
-               mo.ui.table(phase_data, selection=None, page_size=10),
+               mo.md("**Click a cell in either map to inspect its run below.** Double-click to clear. "
+                     "On the rate map, red means a positive slope and blue a negative slope. "
+                     "Grey means no value is available: on the wavelength map this also includes "
+                     "runs with no positive fitted slope."),
+               mo.accordion({
+                   "Map details and wavelength-guide visibility": mo.md(
+                       "The rate map takes the largest slope among modes used in the maps; "
+                       "it does not take the largest amplitude. The wavelength map uses that mode's "
+                       "wavelength only if its slope is positive. Each mode may have a different fit interval.\n\n"
+                       "Cell edges lie halfway between samples and do not imply interpolation or "
+                       "averaging. Runs at identical ν, μ coordinates overlap. Inspection uses the "
+                       "first loaded matching run in sweep order when several share a cell. "
+                       "Before any selection, it shows the first loaded run.\n\n"
+                       f"**{_omitted} rows omitted** because these coordinates are undefined "
+                       "(sign restrictions in transformed views or missing normalization metadata).\n\n"
+                       + ("Requested wavelength guides without a visible growing segment: "
+                          + ", ".join(_hidden_levels) + "." if _hidden_levels else
+                          "All requested wavelength guides have a visible growing segment. "
+                          "If no wavelengths are selected, no orange guides are requested.")
+                   ),
+                   "All runs: summary table": mo.ui.table(phase_data, selection=None, page_size=10),
+               }),
                mo.download(phase_data.to_csv(index=False).encode(), filename="adaptive_stability.csv"),
                mo.download(modal_summary.to_csv(index=False).encode(), filename="adaptive_sweep_modal_rates.csv",
                            label="Download all per-mode rates and early windows")])
     return (phase_heatmap,)
-
-
-@app.cell(hide_code=True)
-def _(fit_policy, min_samples_ui, tolerance_ui):
-    _empirical = fit_policy.value == "empirical"
-    _metric = "RMS log residual" if _empirical else "maximum absolute log residual"
-    _quality = (
-        "Empirical mode includes all finite fitted slopes in the maps, even when "
-        "their quality status flags a poor fit or an uncertain slope. R², residuals "
-        "and slope standard errors remain visible; no R² or significance cutoff is applied. "
-        "The default RMS tolerance 0.25 permits typical multiplicative deviations of about 28%."
-        if _empirical else
-        "Strict mode includes only rates with log relative fit error ≤ 0.1 (R² ≥ 0.99) "
-        "and slope magnitude above twice its fit standard error."
-    )
-    mo.md(rf"""
-    **Adaptive early regime:** start at the first saved frame with
-    **{min_samples_ui.value} samples**, then extend one frame at a time. Stop at the
-    first prefix whose {_metric} exceeds **{tolerance_ui.value:g}**,
-    reaches the numerical floor, or changes sign. Retain the preceding prefix.
-    If the first candidate fails, there is no automatic fit; no later window is searched.
-    If every frame passes, the data have not identified the end of the fitted trend.
-
-    {_quality}
-
-    Each rate has its own fitted window. Mode 0 is excluded from both maps.
-    A negative maximum describes only the included selected modes. Positive slopes
-    can reflect transients in a stable system; grey cells do not establish stability.
-    Compare tolerances, save cadence, ε and DT. The slope is an amplitude rate,
-    without a factor of two. Slope errors are regression diagnostics and assume
-    independent, equal-variance log residuals.
-    """)
-    return
 
 
 @app.cell
@@ -377,25 +519,17 @@ def _(phase_heatmap, results, summary):
     mo.stop(_available.empty, mo.callout(
         "This cell has no loaded pair to inspect. See its availability status above, "
         "or click another heatmap cell.", kind="warn"))
-    _options = {
-        f"{_p['run_id']} · ν={_p['NU']:.6e}, μ={_p['MU']:.6e} · seed={_p['seed']}": _p["run_id"]
-        for _p in _available.to_dict("records")
-    }
-    available_run_ids = _available["run_id"].tolist()
-    inspect_pair = mo.ui.dropdown(
-        options=_options, value=next(iter(_options)), label="Inspect a run (filtered by heatmap selection)",
-    )
-    inspect_pair
-    return available_run_ids, inspect_pair
-
-
-@app.cell
-def _(available_run_ids, inspect_pair):
-    # A heatmap click directly changes this plain reactive value. The dropdown
-    # only disambiguates multiple seeds, and cannot retain an unrelated run.
-    selected_run_id = (
-        inspect_pair.value if inspect_pair.value in available_run_ids else available_run_ids[0]
-    )
+    # No extra selector: a single heatmap click controls all run diagnostics.
+    _run = _available.iloc[0]
+    selected_run_id = _run["run_id"]
+    mo.vstack([
+        mo.md(f"## 4. Inspect the selected run\n\n**{selected_run_id}** · "
+              f"ν = {_run['NU']:.6e}, μ = {_run['MU']:.6e} · "
+              f"ε = {_run['epsilon']:.3e}, seed = {_run['seed']}"),
+        mo.md(f"{len(_available)} loaded runs match the current selection; showing the first in sweep order. "
+              "Click a heatmap cell to narrow the selection.") if len(_available) > 1 else
+        mo.md("The plots below update directly when you click another heatmap cell."),
+    ])
     return (selected_run_id,)
 
 
@@ -403,6 +537,151 @@ def _(available_run_ids, inspect_pair):
 def _(results, selected_run_id):
     selected = results[selected_run_id]
     return (selected,)
+
+
+@app.cell
+def _(selected, selected_run_id):
+    _s = selected["summary"]
+    _measured = (
+        f"mode {_s['fastest_mode']:g}, wavelength {_s['fastest_wavelength_cm']:.5g} cm"
+        if np.isfinite(_s["fastest_mode"]) else "no positive included slope"
+    )
+    _predicted = (
+        f"mode {_s['theory_fastest_mode']:g}, wavelength {_s['theory_fastest_wavelength_cm']:.5g} cm"
+        if np.isfinite(_s["theory_fastest_mode"])
+        else "no growing selected mode" if np.isfinite(_s["theory_max_rate_s_inv"])
+        else "unavailable for this run"
+    )
+    _table = selected["table"]
+    _accepted = _table["included_in_summary"]
+    _flagged = _accepted & (_table["status"] != "ok")
+    _fig, _ax = plt.subplots(figsize=(12, 4), constrained_layout=True)
+    _ax.errorbar(_table.loc[_accepted, "mode"], _table.loc[_accepted, "growth_s_inv"],
+                 yerr=_table.loc[_accepted, "rate_std_s_inv"], fmt="o", label="Fitted slope ± 1 standard error (used in maps)")
+    _ax.scatter(_table.loc[_flagged, "mode"], _table.loc[_flagged, "growth_s_inv"],
+                facecolors="none", edgecolors="tab:orange", s=90, label="Quality warning (still used in maps)")
+    _ax.plot(_table.loc[~_accepted, "mode"], _table.loc[~_accepted, "growth_s_inv"],
+             "x", label="Fits omitted from maps")
+    _ax.plot(_table["mode"], _table["theory_rate_s_inv"], "--", label="Continuum reference at each cosine wavelength")
+    _ax.axhline(0, color="grey", linewidth=0.8)
+    _ax.set(xlabel="Cosine mode number m (higher = shorter wavelength)", ylabel="Fitted log-amplitude slope γₘ [s⁻¹]",
+             title=f"{selected_run_id}: growth and decay by cosine mode")
+    _ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    _ax.grid(alpha=0.25)
+    _ax.legend()
+    _output = mo.as_html(_fig)
+    plt.close(_fig)
+    mo.vstack([
+        mo.md(f"**{_s['growth_status']}**. Maximum slope used in maps: "
+              f"**{_s['max_growth_s_inv']:.6g} s⁻¹**; "
+              f"**{_s['resolved_modes']} included**, **{_s['unresolved_modes']} unavailable/excluded** positive modes. "
+              f"Fit policy: **{_s['fit_policy']}**."),
+        mo.md(f"**Largest positive measured slope:** {_measured}."),
+        _output,
+        mo.md("Each dot is one cosine mode's fitted rate; vertical bars show **± 1 standard error "
+              "of that slope**. Orange rings mark quality warnings retained by Empirical slopes. "
+              "Crosses mark finite rates omitted from the maps; modes without a finite rate have no point."),
+        mo.accordion({
+            "How to read error bars, quality flags and the dashed curve": mo.md(r"""
+            **Standard error (SE)** estimates how much the fitted slope could vary
+            under the regression's residual-noise model. For γ = 0.010 s⁻¹ and
+            SE = 0.002 s⁻¹, the plotted bar runs from 0.008 to 0.012 s⁻¹. This is
+            a one-standard-error bar, not a 95% confidence interval or a bound on
+            the simulation's numerical error. The calculation assumes independent,
+            equal-variance log residuals; correlated solver errors or systematic
+            curvature can make that interpretation unreliable.
+
+            **Quality warnings** use the strict diagnostic thresholds even in
+            Empirical mode. `poor log-linear fit` means relative log fit error
+            exceeds 0.1. `uncertain log slope` means |γ| ≤ 2 SE. Empirical mode
+            retains those estimates; Strict omits them from the maps. `ok` means
+            the fit passes these checks, not that the mode is an eigenmode.
+
+            **The dashed curve** evaluates the continuum dispersion σ(kₘ) using
+            the run's saved parameters. It is not fitted to the dots. The discrete
+            ridge need not have these continuum rates. Dots can also use different
+            time intervals, so compare their fit endpoints in the table.
+
+            Mode 0, if selected, is always omitted from the maps; its coefficient
+            is still available in the time-trace inspector below.
+            """),
+            "Continuum comparison for this run": mo.md(
+                f"Fastest predicted growing mode in the selected band: {_predicted}.\n\n"
+                f"Largest predicted rate in that band: {_s['theory_max_rate_s_inv']:.6g} s⁻¹. "
+                "This comparison samples the continuum formula at DCT wavenumbers; "
+                "it is not the actual discrete ridge Jacobian spectrum."
+            ),
+            "Per-mode fit results": mo.ui.table(_table, selection=None, page_size=10),
+            "Fit table and CSV column definitions": mo.md(r"""
+            Each modal row describes one DCT mode in one run.
+
+            | Column | Meaning |
+            | --- | --- |
+            | `mode`, `wavelength_cm` | Cosine index m and corresponding wavelength 2L/m in cm; undefined for m = 0. |
+            | `growth_s_inv` | Estimated γ, in s⁻¹. Positive means amplitude growth over this fit interval. |
+            | `rate_std_s_inv` | Slope standard error, in s⁻¹; the half-length of the plotted error bar. |
+            | `r_squared` | R² = 1 − SSE/SST in log space: 1 is an exact line; near 0 means little improvement over a constant log amplitude. |
+            | `log_relative_rmse` | sqrt(SSE/SST), i.e. residual size relative to variation in the observed log trace. Strict requires ≤ 0.1, equivalent to R² ≥ 0.99. |
+            | `rms_log_residual` | sqrt(mean(residual²)) in natural-log units; controls the Empirical window. |
+            | `max_abs_log_residual` | Largest absolute residual; controls the Strict window. |
+            | `fit_samples` | Number of saved frames used, not the number of solver steps. |
+            | `fit_start_s`, `fit_end_s` | First and last saved times used in this mode's fit. |
+            | `fit_policy` | `empirical` or `strict`; determines window metric and inclusion rules. |
+            | `status` | Quality diagnosis for the retained fit, or the reason no fit exists. |
+            | `window_reason` | Why extension stopped, or a message that all frames passed. Separate from quality of the retained fit. |
+            | `included_in_summary` | Whether this mode's slope enters the map summaries. False for mode 0, nonfinite rates, and strict-policy failures. |
+            | `theory_rate_s_inv` | Continuum σ(kₘ) at this mode's wavelength; not the measured slope. |
+
+            SSE is the sum of squared log residuals. SST is the sum of squared
+            deviations of observed log amplitudes from their mean. Undefined or
+            unavailable numerical results are stored as NaN.
+
+            The run summary uses `max_growth_s_inv` and `max_growth_mode` for the
+            largest included slope and its mode. `max_growth_fit_end_s` and
+            `max_growth_fit_samples` describe that mode's fitting window.
+            `fastest_growth_s_inv`, `fastest_mode` and `fastest_wavelength_cm`
+            report the same winner only when its rate is positive; otherwise
+            they are undefined. `growth_status` and `wavelength_status` explain
+            availability. Historical names `resolved_modes` and `unresolved_modes`
+            count positive modes included in, or omitted from, these summaries;
+            in Empirical mode, “resolved” does not imply statistical significance.
+
+            `run_id` identifies the perturbed simulation; `reference_id` identifies
+            its matched unperturbed run. `NU`, `MU`, `epsilon`, and `seed` record
+            the simulation settings. `seeded_mode_min/max` describe the initial
+            perturbation band, while `mode_min/max` describe the selected analysis
+            band. `saved_start_s`, `saved_end_s`, `saved_samples` describe the full
+            saved evolution, not an individual fitting window.
+            `min_fit_samples`, `log_tolerance`, `window_residual_metric` and
+            `fit_policy` record how that analysis was performed.
+
+            Columns beginning `theory_` are continuum predictions for the selected
+            band: maximum rate, growing-mode count, fastest growing mode and its
+            wavelength, and onset ν. `nu_critical` is the unrestricted continuum
+            threshold; `critical_ratio` is |ν|/|ν_c|. `boundary_coefficient` is C.
+            `nu_scaled`, `mu_scaled`, `phase_x`, `phase_y` are display coordinates;
+            `x_low/high`, `y_low/high` are rectangle edges, not uncertainty bounds.
+            `notes` and pair `status` record loading or matching diagnostics.
+            """),
+        }),
+        mo.download(_table.to_csv(index=False).encode(), filename=f"{selected_run_id}_adaptive_modal_rates.csv",
+                    label="Download selected pair's rates and early windows"),
+    ])
+    return
+
+
+@app.cell
+def _(selected):
+    _fastest = selected["summary"]["max_growth_mode"]
+    inspect_mode = mo.ui.slider(
+        steps=selected["modes"].tolist(),
+        value=int(_fastest) if np.isfinite(_fastest) else int(selected["modes"][0]),
+        label="Cosine mode m to inspect in the time trace", show_value=True,
+    )
+    mo.vstack([mo.md("### Inspect one mode over time\n\nChoose a mode to see its log amplitude "
+                         "and line fit. The initial choice is the mode with the largest slope used in the maps, "
+                         "or the first selected mode if no rate is available."), inspect_mode])
+    return (inspect_mode,)
 
 
 @app.cell
@@ -435,74 +714,14 @@ def _(inspect_mode, prepared, selected, selected_run_id):
     _output = mo.as_html(psi_figure)
     plt.close(psi_figure)
     mo.vstack([
+        mo.md("**Concentration context.** This is the total perturbed concentration ψ(z,t), "
+              "including its background, rather than the subtracted signal used for fitting."),
         _output,
-        mo.md("Full saved evolution of the selected perturbed run. Dashed red lines mark "
+        mo.md("Dashed red lines mark "
               f"the adaptive window for inspected mode **{inspect_mode.value}** when available; "
               "the field includes all spatial modes."),
     ])
     return (psi_figure,)
-
-
-@app.cell
-def _(selected, selected_run_id):
-    _s = selected["summary"]
-    _measured = (
-        f"mode {_s['fastest_mode']:g}, wavelength {_s['fastest_wavelength_cm']:.5g} cm"
-        if np.isfinite(_s["fastest_mode"]) else "no positive included slope"
-    )
-    _predicted = (
-        f"mode {_s['theory_fastest_mode']:g}, wavelength {_s['theory_fastest_wavelength_cm']:.5g} cm"
-        if np.isfinite(_s["theory_fastest_mode"])
-        else "no growing selected mode" if np.isfinite(_s["theory_max_rate_s_inv"])
-        else "unavailable for this run"
-    )
-    _table = selected["table"]
-    _accepted = _table["included_in_summary"]
-    _flagged = _accepted & (_table["status"] != "ok")
-    _fig, _ax = plt.subplots(figsize=(12, 4), constrained_layout=True)
-    _ax.errorbar(_table.loc[_accepted, "mode"], _table.loc[_accepted, "growth_s_inv"],
-                 yerr=_table.loc[_accepted, "rate_std_s_inv"], fmt="o", label="included fits (slope SE)")
-    _ax.scatter(_table.loc[_flagged, "mode"], _table.loc[_flagged, "growth_s_inv"],
-                facecolors="none", edgecolors="tab:orange", s=90, label="included with quality flag")
-    _ax.plot(_table.loc[~_accepted, "mode"], _table.loc[~_accepted, "growth_s_inv"],
-             "x", label="excluded fits")
-    _ax.plot(_table["mode"], _table["theory_rate_s_inv"], "--", label="saved-parameter continuum prediction")
-    _ax.axhline(0, color="grey", linewidth=0.8)
-    _ax.set(xlabel="DCT-II mode number m", ylabel="Growth rate γₘ [s⁻¹]",
-             title=f"{selected_run_id}: growth rates with independent early windows")
-    _ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
-    _ax.grid(alpha=0.25)
-    _ax.legend()
-    _output = mo.as_html(_fig)
-    plt.close(_fig)
-    mo.vstack([
-        mo.md(f"**{selected_run_id}: {_s['growth_status']}**. Maximum accepted rate: "
-              f"**{_s['max_growth_s_inv']:.6g} s⁻¹**; "
-              f"**{_s['resolved_modes']} included**, **{_s['unresolved_modes']} unavailable/excluded** positive modes. "
-              f"Fit policy: **{_s['fit_policy']}**."),
-        mo.md(f"**Measured fastest:** {_measured}.  \n"
-              f"**Predicted fastest in the selected band:** {_predicted}.  \n"
-              f"Predicted maximum modal rate: {_s['theory_max_rate_s_inv']:.6g} s⁻¹. "
-              "Predictions evaluate the continuum dispersion at the selected DCT wavenumbers; "
-              "they do not include finite-difference stencil corrections."),
-        _output,
-        mo.ui.table(_table, selection=None, page_size=10),
-        mo.download(_table.to_csv(index=False).encode(), filename=f"{selected_run_id}_adaptive_modal_rates.csv",
-                    label="Download selected pair's rates and early windows"),
-    ])
-    return
-
-
-@app.cell
-def _(selected):
-    _fastest = selected["summary"]["max_growth_mode"]
-    inspect_mode = mo.ui.slider(
-        steps=selected["modes"].tolist(),
-        value=int(_fastest) if np.isfinite(_fastest) else int(selected["modes"][0]),
-        label="Inspect paired-difference DCT mode", show_value=True,
-    )
-    inspect_mode
-    return (inspect_mode,)
 
 
 @app.cell
@@ -529,7 +748,7 @@ def _(inspect_mode, selected, selected_run_id):
         _residual[_used] = _log[_used] - _fitted[_used]
         for _ax in _axes:
             _ax.axvspan(_time[0], _time[_count - 1], alpha=0.12, color="green")
-        _axes[0].plot(_time, _fitted, "--", label=f"adaptive line, γ={_fit.rate:.6g} s⁻¹")
+        _axes[0].plot(_time, _fitted, "--", label=f"line fitted in green interval, γ={_fit.rate:.6g} s⁻¹")
         _axes[1].plot(_time, _residual, ".-")
     _axes[0].set(ylabel="ln|Aₘ|", title=f"{selected_run_id} · mode {inspect_mode.value}: {_row['status']}")
     _axes[0].legend()
@@ -541,7 +760,7 @@ def _(inspect_mode, selected, selected_run_id):
     _description = (
         f"Adaptive fit: **{_row['fit_start_s']:.6g}–{_row['fit_end_s']:.6g} s**, "
         f"**{_count} samples**; γ = **{_row['growth_s_inv']:.6g} s⁻¹**, "
-        f"slope SE = {_row['rate_std_s_inv']:.3g} s⁻¹, R² = {_row['r_squared']:.6g}. "
+        f"slope standard error = {_row['rate_std_s_inv']:.3g} s⁻¹, R² = {_row['r_squared']:.6g}. "
         if _fit is not None else "No acceptable initial log-linear prefix. "
     )
     _download = pd.DataFrame(dict(
@@ -550,6 +769,17 @@ def _(inspect_mode, selected, selected_run_id):
     ))
     mo.vstack([
         mo.md(_description + _row["window_reason"]), _output,
+        mo.md("The green interval contains the frames used to fit the dashed line. "
+              "The lower panel shows observed log amplitude minus that line; residuals near zero "
+              "mean agreement, while a curved pattern suggests the slope changes with time. "
+              "The dotted horizontal line is the roundoff floor; no log is shown below it."),
+        mo.accordion({"Time-trace download columns": mo.md(
+            "`time_s`: saved time; `signed_coefficient`: Aₘ before taking its absolute value; "
+            "`numerical_floor`: amplitude threshold for logging; `log_amplitude`: ln|Aₘ| above that floor; "
+            "`used_in_fit`: whether a frame enters the retained regression; `log_fit`: fitted line "
+            "on its interval; `log_residual`: observed log amplitude minus the line on used frames. "
+            "Values outside the fitting interval are not extrapolated in the fit or residual columns."
+        )}),
         mo.download(_download.to_csv(index=False).encode(),
                     filename=f"{selected_run_id}_mode_{inspect_mode.value}_adaptive_fit.csv",
                     label="Download inspected mode and fit samples"),

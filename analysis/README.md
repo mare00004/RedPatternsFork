@@ -78,7 +78,7 @@ and DT. Standard errors assume independent, equal-variance log residuals.
 
 One inclusive mode range controls two Altair phase-space maps:
 
-- The fastest resolved growing wavelength, with wavelength `2*N*dz/m`.
+- The wavelength of the largest positive included slope, with wavelength `2*N*dz/m`.
 - The maximum included modal slope in the selected positive-mode band.
   Negative values describe decay among fitted observables. Mode zero remains
   inspectable but is excluded from both maps.
@@ -87,9 +87,18 @@ Click a cell in either heatmap to select a ν, μ pair and highlight it in both
 maps. The full ψ(z, t) heatmap, growth-rate-versus-mode plot, modal table and
 selected-mode log-amplitude/residual plots update automatically. The ψ heatmap
 marks the inspected mode's adaptive window. Double-click to clear the selection.
-The run selector lists matching seeds when a cell contains multiple runs.
+Inspection follows the heatmap directly, with no additional run dropdown. Before
+selection it shows the first loaded run; when several runs share a cell it shows
+the first matching run in sweep order and displays a notice.
 Grey cells are unresolved or unavailable; numeric cell edges lie halfway between
 samples within each row.
+
+The notebook includes a walkthrough and collapsible explanations of the fitting
+algorithm, symbols, quality flags, table/CSV columns, and continuum reference
+curves. Modal-plot error bars show ± one regression standard error of the slope,
+not a confidence interval or a numerical-error bound. The wavelength-guide
+selector adds orange continuum contours only; it does not change the fits or
+heatmap measurements.
 
 The coordinate selector offers the original `(ν, μ)` view, `(ν², −μ)`, and
 the default `(|ν|/|ν_c(μ)|, −μ)` view. For the saved Taylor model, optimizing
