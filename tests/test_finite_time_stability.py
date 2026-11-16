@@ -100,6 +100,38 @@ def test_unresolved_modes_do_not_establish_selected_band_decay():
     assert result["summary"]["growth_status"] == "resolved modes decay; others unresolved"
 
 
+@pytest.mark.parametrize("rate", [-0.03, 0.0001])
+def test_empirical_noisy_log_slopes_match_regression_without_quality_rejection(rate):
+    p, e = demo_pair()
+    data = prepare_pair(p, e)
+    time = data["time"]
+    log_signal = rate * time + 0.1 * np.cos(2 * np.pi * np.arange(len(time)) / 8)
+    data["difference"][:, 5] = 1e-6 * np.exp(log_signal)
+    strict = analyze_adaptive(data, 5, 5)
+    assert np.isnan(strict["summary"]["max_growth_s_inv"])
+
+    result = analyze_adaptive(data, 5, 5, empirical=True, log_tolerance=0.25)
+    row = result["table"].iloc[0]
+    expected = np.polyfit(time, log_signal, 1)[0]
+    assert row["fit_samples"] == len(time)
+    assert row["growth_s_inv"] == pytest.approx(expected, abs=1e-12)
+    assert row["status"] != "ok"
+    assert row["included_in_summary"]
+    assert result["summary"]["max_growth_s_inv"] == pytest.approx(expected, abs=1e-12)
+    assert result["summary"]["fit_policy"] == "empirical"
+    assert row["rms_log_residual"] < 0.25
+
+
+@pytest.mark.parametrize("bad_value", [0., -1e-6])
+def test_empirical_window_still_stops_at_floor_or_sign_change(bad_value):
+    p, e = demo_pair()
+    data = prepare_pair(p, e)
+    data["difference"][20, 5] = -np.sign(data["difference"][0, 5]) * abs(bad_value)
+    result = analyze_adaptive(data, 5, 5, empirical=True, log_tolerance=0.25)
+    assert result["table"].iloc[0]["fit_samples"] == 20
+    assert "noise-floor sample or a sign change" in result["table"].iloc[0]["window_reason"]
+
+
 def test_mode_zero_is_inspectable_but_excluded_from_growth_maps():
     p, e = demo_pair()
     data = prepare_pair(p, e)

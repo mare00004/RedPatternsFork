@@ -51,13 +51,16 @@ def prepare_pair(perturbed, reference):
     )
 
 
-def analyze_adaptive(prepared, mode_min, mode_max, *, min_samples=8, log_tolerance=0.05):
+def analyze_adaptive(prepared, mode_min, mode_max, *, min_samples=8, log_tolerance=0.05,
+                     empirical=False):
     """Fit signed paired-difference modes with independent initial prefixes.
 
     Use the same early_prefix fitter as the local ±epsilon notebook. Existing
     sweeps have a perturbed/unperturbed pair, so their response is one-sided.
     A constant epsilon normalization changes amplitudes but not log slopes.
     Mode zero is retained for inspection but excluded from growth summaries.
+    Empirical mode uses RMS window residuals and includes all finite slopes,
+    preserving strict quality flags in the modal table.
     """
     time = prepared["time"]
     n = prepared["raw"].shape[1]
@@ -71,7 +74,8 @@ def analyze_adaptive(prepared, mode_min, mode_max, *, min_samples=8, log_toleran
     rows, fits = [], []
     for index, mode in enumerate(modes):
         early = early_prefix(coefficients[:, index], time, floor=floor,
-                             min_samples=min_samples, log_tolerance=log_tolerance)
+                             min_samples=min_samples, log_tolerance=log_tolerance,
+                             empirical=empirical)
         fit, count = early["fit"], early["count"]
         fits.append(fit)
         rows.append(dict(
@@ -87,12 +91,19 @@ def analyze_adaptive(prepared, mode_min, mode_max, *, min_samples=8, log_toleran
             max_abs_log_residual=float(np.max(np.abs(
                 np.log(np.abs(coefficients[:count, index])) - fit.log_fitted
             ))) if fit else np.nan,
+            rms_log_residual=float(np.sqrt(np.mean((
+                np.log(np.abs(coefficients[:count, index])) - fit.log_fitted
+            )**2))) if fit else np.nan,
+            fit_policy="empirical" if empirical else "strict",
             status=fit.status if fit else early["reason"],
             window_reason=early["reason"],
         ))
     table = pd.DataFrame(rows)
-    resolved = table[(table["status"] == "ok") & (table["mode"] > 0)
-                     & np.isfinite(table["growth_s_inv"])]
+    table["included_in_summary"] = (
+        ((table["status"] == "ok") | empirical) & (table["mode"] > 0)
+        & np.isfinite(table["growth_s_inv"])
+    )
+    resolved = table[table["included_in_summary"]]
     growing = resolved[resolved["growth_s_inv"] > 0]
     fastest = growing.loc[growing["growth_s_inv"].idxmax()] if len(growing) else None
     maximum = resolved.loc[resolved["growth_s_inv"].idxmax()] if len(resolved) else None
@@ -103,6 +114,13 @@ def analyze_adaptive(prepared, mode_min, mode_max, *, min_samples=8, log_toleran
         "resolved modes decay; others unresolved" if unresolved_modes else
         "selected modes decay"
     )
+    if empirical:
+        growth_status = (
+            "positive empirical slope" if fastest is not None else
+            "no fitted modal rate" if maximum is None else
+            "fitted slopes nonpositive; others unavailable" if unresolved_modes else
+            "fitted slopes nonpositive"
+        )
     prediction = predict_selected_modes(
         prepared["theory_nu"], prepared["theory_mu"], prepared["length"],
         prepared["boundary_coefficient"], mode_min, mode_max,
@@ -113,11 +131,14 @@ def analyze_adaptive(prepared, mode_min, mode_max, *, min_samples=8, log_toleran
     summary = dict(
         saved_start_s=float(time[0]), saved_end_s=float(time[-1]), saved_samples=len(time),
         min_fit_samples=int(min_samples), log_tolerance=float(log_tolerance),
+        fit_policy="empirical" if empirical else "strict",
+        window_residual_metric="rms" if empirical else "maximum_absolute",
         mode_min=int(mode_min), mode_max=int(mode_max),
         fastest_mode=int(fastest["mode"]) if fastest is not None else np.nan,
         fastest_wavelength_cm=float(fastest["wavelength_cm"]) if fastest is not None else np.nan,
         fastest_growth_s_inv=float(fastest["growth_s_inv"]) if fastest is not None else np.nan,
-        wavelength_status="resolved growth" if fastest is not None else "no resolved growing mode",
+        wavelength_status=("positive empirical slope" if fastest is not None else "no positive fitted slope")
+        if empirical else ("resolved growth" if fastest is not None else "no resolved growing mode"),
         max_growth_s_inv=float(maximum["growth_s_inv"]) if maximum is not None else np.nan,
         max_growth_mode=int(maximum["mode"]) if maximum is not None else np.nan,
         max_growth_fit_end_s=float(maximum["fit_end_s"]) if maximum is not None else np.nan,

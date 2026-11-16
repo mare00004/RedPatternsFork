@@ -32,12 +32,16 @@ def paired_response(positive, negative, epsilon):
     return delta, coefficients, float(floor)
 
 
-def early_prefix(values, time, *, floor=0., min_samples=8, log_tolerance=0.05):
+def early_prefix(values, time, *, floor=0., min_samples=8, log_tolerance=0.05,
+                 empirical=False):
     """Extend the initial contiguous prefix until its first log-linear failure.
 
     Every prefix must remain above the floor, retain one sign and have maximum
     absolute log residual <= log_tolerance. No late-window search or saturation
     model is used. A successful prefix is a diagnostic, not proof of linearity.
+    Empirical mode uses RMS log residual instead of the maximum and preserves
+    uncertain slope estimates. Sign changes and the precision floor still stop
+    either method.
     """
     values, time = np.asarray(values, dtype=float), np.asarray(time, dtype=float)
     if min_samples < 5 or log_tolerance <= 0 or not np.isfinite(log_tolerance):
@@ -52,13 +56,15 @@ def early_prefix(values, time, *, floor=0., min_samples=8, log_tolerance=0.05):
         if np.any(np.abs(v) <= floor) or np.any(np.sign(v) != np.sign(v[0])):
             reason = "Stopped at a noise-floor sample or a sign change."
             break
-        fit = fit_log_mode(v, time[:end], amplitude_floor=floor)
+        fit = fit_log_mode(v, time[:end], amplitude_floor=floor, empirical=empirical)
         if not np.all(np.isfinite(fit.log_fitted)):
             reason = "Initial prefix is constant or unresolved."
             break
-        residual = np.max(np.abs(np.log(np.abs(v)) - fit.log_fitted))
+        errors = np.log(np.abs(v)) - fit.log_fitted
+        residual = np.sqrt(np.mean(errors**2)) if empirical else np.max(np.abs(errors))
         if residual > log_tolerance:
-            reason = f"Next prefix exceeds max |log residual| = {log_tolerance:g}."
+            metric = "RMS log residual" if empirical else "max |log residual|"
+            reason = f"Next prefix exceeds {metric} = {log_tolerance:g}."
             break
         best, count = fit, end
     return {"fit": best, "count": count, "reason": reason}

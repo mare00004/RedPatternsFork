@@ -53,21 +53,35 @@ table. Different pairs can have different saved-time grids. HDF5 loading and DCT
 computation are cached between fit-setting changes.
 
 Every mode starts at its pair's first saved frame with eight samples by default.
-The fitter extends that prefix one frame at a time until the first sign change,
-numerical-floor sample, or maximum absolute log residual above 0.05, retaining
-the preceding passing prefix. Minimum samples and residual tolerance are
-adjustable. If the first candidate fails, no later window is searched; if all
-frames pass, the data have not identified the end of the early regime. Fit
-status, sample counts, endpoints, residuals and stopping reasons are included in
-the per-mode tables and CSV downloads. This is a log-linearity heuristic: compare
-tolerances, save cadence, epsilon and DT before interpreting physical linearity.
+The notebook defaults to **Empirical slopes**: ordinary least squares in log
+amplitude with an adjustable RMS log-residual tolerance of 0.25. It includes
+finite slopes even when strict quality checks flag poor fits or uncertainty.
+R², slope standard error, RMS and maximum residuals, quality status, and an
+`included_in_summary` flag remain in the per-mode tables and CSV downloads.
+Orange rings mark included fits with quality flags in the modal plot. These are
+finite-time slopes of observables, not Jacobian eigenvalues; a positive slope can
+occur in a linearly stable system. See
+[`ridge_growth_rate_interpretation.md`](../docs/ridge_growth_rate_interpretation.md).
+
+**Strict** restores the original method: maximum absolute log residual at most
+0.05, relative log fit error at most 0.1 (R² at least 0.99), and slope magnitude
+above twice its standard error. Switching policy resets the residual tolerance
+to that policy's default. The shared helper functions retain strict defaults
+for other notebooks and programmatic callers.
+
+Both policies extend the prefix one frame at a time until the first sign change,
+numerical-floor sample, or residual-tolerance failure, retaining the preceding
+passing prefix. Minimum samples and tolerance are adjustable. If the first
+candidate fails, no later window is searched; if all frames pass, the data have
+not identified the end of the trend. Compare tolerances, save cadence, epsilon
+and DT. Standard errors assume independent, equal-variance log residuals.
 
 One inclusive mode range controls two Altair phase-space maps:
 
 - The fastest resolved growing wavelength, with wavelength `2*N*dz/m`.
-- The maximum accepted modal growth rate in the selected positive-mode band.
-  Negative values describe decay among resolved modes; unresolved modes can still
-  grow. Mode zero remains inspectable but is excluded from both maps.
+- The maximum included modal slope in the selected positive-mode band.
+  Negative values describe decay among fitted observables. Mode zero remains
+  inspectable but is excluded from both maps.
 
 Click a cell in either heatmap to select a ν, μ pair and highlight it in both
 maps. The full ψ(z, t) heatmap, growth-rate-versus-mode plot, modal table and

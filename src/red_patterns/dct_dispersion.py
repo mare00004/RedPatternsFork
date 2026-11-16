@@ -22,13 +22,15 @@ class LogModeFit:
     status: str
 
 
-def fit_log_mode(values, time, *, amplitude_floor=0.0):
+def fit_log_mode(values, time, *, amplitude_floor=0.0, empirical=False):
     """Unweighted least squares of ln|c| = b + gamma*(t-t0), without offset.
 
     Use original times and only amplitudes strictly above the precision floor.
     Never replace zeros with epsilon or fit across resolved sign changes.
     Errors and R² refer to log amplitude; the slope standard error assumes
     independent, equal-variance log residuals (multiplicative amplitude noise).
+    With empirical=True, keep uncertain slopes as numerical estimates; their
+    status remains a quality diagnostic rather than a reason to erase the rate.
     """
     values, time = np.asarray(values, dtype=float), np.asarray(time, dtype=float)
     if values.ndim != 1 or time.shape != values.shape or time.size < 5:
@@ -70,8 +72,9 @@ def fit_log_mode(values, time, *, amplitude_floor=0.0):
     rate_std = float(np.sqrt(ss / (len(x) - 2) / sxx) / duration)
     rate = slope / duration
     if abs(rate) <= 2 * rate_std:
-        status = "uncertain log slope; rate unresolved"
-        rate = np.nan
+        status = "uncertain log slope" if empirical else "uncertain log slope; rate unresolved"
+        if not empirical:
+            rate = np.nan
     elif relative_rmse > 0.1:
         status = "poor log-linear fit"
     else:

@@ -225,3 +225,42 @@ def test_progress_eta_is_finite_from_initial_snapshot(solver):
     assert np.isfinite(estimates).all()
     progress = json.loads((out / "progress.json").read_text())
     assert np.isfinite(progress["remaining_sec"])
+
+
+@pytest.mark.parametrize("forced", [False, True])
+def test_jacobian_replica_matches_cuda_flux_update_and_derivative(solver, forced):
+    from red_patterns.jacobian import (
+        TaylorFVM, homogeneous_state, ridge_direction, ridge_state,
+    )
+
+    model = TaylorFVM(n=32, alpha=2e-5 if forced else 0)
+    base = ridge_state(model) if forced else homogeneous_state(model)
+    if forced:
+        q = ridge_direction(model)
+    else:
+        # Preserve class masses and positivity while exciting multiple spatial modes.
+        q = base * (np.cos(7*np.pi*model.z/model.length)
+                    + 0.3*np.cos(13*np.pi*model.z/model.length))
+        q /= np.max(abs(q))
+    action = model.jacobian_action(base, q)
+    saved_rhs = []
+    for eps in [0, 1e-5, 1e-7]:
+        phi = base + eps*q
+        assert phi.min() >= 0
+        result, out = solver(phi=phi, NU=model.nu, MU=model.mu,
+                             gradient="linear-full" if forced else "zero",
+                             T=0.005, DT=0.005, storeTime=0.005,
+                             store=("face-velocity", "face-flux"))
+        assert result.returncode == 0, result.stdout + result.stderr
+        with h5py.File(out / "run.h5") as handle:
+            flux = handle["fields/face_flux"][0]
+            velocity = handle["fields/face_velocity"][0, :, 1:-1]
+            np.testing.assert_allclose(velocity, model.velocity(phi), rtol=2e-10, atol=2e-16)
+            np.testing.assert_allclose(flux, model.flux(phi), rtol=2e-10, atol=2e-18)
+            np.testing.assert_allclose(handle["fields/phi"][-1], phi+0.005*model.rhs(phi),
+                                       rtol=2e-12, atol=2e-18)
+            saved_rhs.append(-np.diff(flux, axis=1)/model.h)
+    errors = [np.linalg.norm((rhs-saved_rhs[0])/eps-action)/np.linalg.norm(action)
+              for rhs, eps in zip(saved_rhs[1:], [1e-5, 1e-7])]
+    assert errors[1] < errors[0]/50
+    assert errors[1] < 1e-4
