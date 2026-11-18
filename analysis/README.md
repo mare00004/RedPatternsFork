@@ -54,9 +54,15 @@ computation are cached between fit-setting changes.
 
 Every mode starts at its pair's first saved frame with eight samples by default.
 The notebook defaults to **Empirical slopes**: ordinary least squares in log
-amplitude with an adjustable RMS log-residual tolerance of 0.25. It includes
+amplitude with an adjustable log residual standard deviation tolerance of 0.25.
+The stopping metric is `sqrt(SSE/(n-2))`, accounting for n saved frames and the
+two fitted line parameters. It avoids accumulated error growth with sample count
+and corrects the small-window variance bias of ordinary RMS. It can still rise
+or fall as the interval extends and the line is refitted; the algorithm keeps
+the longest passing prefix **before the first failure**, without searching for
+later windows that might pass again. It includes
 finite slopes even when strict quality checks flag poor fits or uncertainty.
-R², slope standard error, RMS and maximum residuals, quality status, and an
+R², slope standard error, residual standard deviation, RMS and maximum residuals, quality status, and an
 `included_in_summary` flag remain in the per-mode tables and CSV downloads.
 Orange rings mark included fits with quality flags in the modal plot. These are
 finite-time slopes of observables, not Jacobian eigenvalues; a positive slope can

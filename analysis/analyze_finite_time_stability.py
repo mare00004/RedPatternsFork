@@ -168,22 +168,27 @@ def _(fit_policy):
     _empirical = fit_policy.value == "empirical"
     tolerance_ui = mo.ui.number(
         start=0.001, value=0.25 if _empirical else 0.05, step=0.005,
-        label=("RMS log residual tolerance" if _empirical else
+        label=("Log residual standard deviation tolerance" if _empirical else
                "Maximum absolute log residual tolerance"),
     )
-    tolerance_ui
+    mo.vstack([
+        tolerance_ui,
+        mo.md("A straight line is fitted to log amplitude. Starting at the first saved frame, "
+              "the window grows until its first failed error check; the preceding passing window is kept. "
+              "The Empirical error metric is normalized for the number of frames and the two fitted parameters."),
+    ])
     return (tolerance_ui,)
 
 
 @app.cell(hide_code=True)
 def _(fit_policy, min_samples_ui, tolerance_ui):
     _empirical = fit_policy.value == "empirical"
-    _metric = "RMS log residual" if _empirical else "maximum absolute log residual"
+    _metric = "log residual standard deviation" if _empirical else "maximum absolute log residual"
     _quality = (
         "Empirical mode includes all finite fitted slopes in the maps, even when "
         "their quality status flags a poor fit or an uncertain slope. R², residuals "
         "and slope standard errors remain visible; no R² or significance cutoff is applied. "
-        "The default RMS tolerance 0.25 permits typical multiplicative deviations of about 28%."
+        "The default residual standard deviation tolerance is 0.25 in natural-log units."
         if _empirical else
         "Strict mode includes only rates with log relative fit error ≤ 0.1 (R² ≥ 0.99) "
         "and slope magnitude above twice its fit standard error."
@@ -195,6 +200,9 @@ def _(fit_policy, min_samples_ui, tolerance_ui):
     reaches the numerical floor, or changes sign. Retain the preceding prefix.
     If the first candidate fails, there is no automatic fit; no later window is searched.
     If every frame passes, the data have not identified the end of the fitted trend.
+    This is the **longest passing prefix before the first failure**, not a global
+    search for the longest passing window: a longer window might pass again after
+    a failure, but the algorithm does not look for it.
 
     {_quality}
 
@@ -202,11 +210,33 @@ def _(fit_policy, min_samples_ui, tolerance_ui):
     squared log residuals. Saved times are used directly, so irregular saved-time
     spacing is allowed; frames receive equal weight. No smoothing is applied.
 
-    A **residual** is observed ln|Aₘ| minus the fitted line. **RMS** is the square
-    root of the mean squared residual, in natural-log units. A residual of +0.25
+    A **residual** is observed ln|Aₘ| minus the fitted line. Empirical mode measures
+    its size using the **residual standard deviation**:
+
+    \[
+    r_i=\ln|A_m(t_i)|-[b_m+\gamma_m(t_i-t_0)],\qquad
+    s_{{\rm residual}}=\sqrt{{\frac{{\sum_{{i=1}}^n r_i^2}}{{n-2}}}}.
+    \]
+
+    Here n is the number of saved frames in the candidate window. We divide by
+    **n − 2** because the line fits two parameters: intercept and slope. This is
+    a normalization, not a growing sum of errors. For independent noise with
+    constant variance around a true line, the expected squared metric estimates
+    that variance regardless of n. Ordinary RMS divides by n instead and is
+    slightly biased downward for short fitted windows; it remains available in
+    the table for comparison.
+
+    The metric can still increase **or** decrease as frames are added: we refit
+    the line, and the extended trace may have different noise or curvature. It
+    has no enforced monotonic trend. More densely sampling a region can also
+    change its weight because regression gives every frame equal weight; this
+    metric does not guarantee invariance to save cadence or correlated errors.
+
+    A residual of +0.25
     means an amplitude about exp(0.25) = 1.28 times the fitted amplitude; −0.25
-    means about 0.78 times it. RMS 0.25 is not a bound on every individual point.
-    Strict uses the largest absolute residual instead.
+    means about 0.78 times it. The tolerance is not a bound on every individual
+    point. Strict uses the largest absolute residual instead, which can be more
+    sensitive to the number of frames and isolated outliers.
 
     **Minimum saved frames** sets the shortest candidate interval, not a duration
     in seconds. Increasing the residual tolerance can retain longer, noisier or
@@ -622,7 +652,8 @@ def _(selected, selected_run_id):
             | `rate_std_s_inv` | Slope standard error, in s⁻¹; the half-length of the plotted error bar. |
             | `r_squared` | R² = 1 − SSE/SST in log space: 1 is an exact line; near 0 means little improvement over a constant log amplitude. |
             | `log_relative_rmse` | sqrt(SSE/SST), i.e. residual size relative to variation in the observed log trace. Strict requires ≤ 0.1, equivalent to R² ≥ 0.99. |
-            | `rms_log_residual` | sqrt(mean(residual²)) in natural-log units; controls the Empirical window. |
+            | `residual_std_log` | sqrt(SSE/(n − 2)) in natural-log units, with n = fit_samples; controls the Empirical window and accounts for fitting intercept and slope. |
+            | `rms_log_residual` | sqrt(SSE/n) in natural-log units; retained as a diagnostic, not the Empirical stopping metric. |
             | `max_abs_log_residual` | Largest absolute residual; controls the Strict window. |
             | `fit_samples` | Number of saved frames used, not the number of solver steps. |
             | `fit_start_s`, `fit_end_s` | First and last saved times used in this mode's fit. |
